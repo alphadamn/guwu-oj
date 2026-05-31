@@ -197,4 +197,4 @@ MIT License
 
 如有问题或建议，欢迎提 Issue。
 
-# guwu-oj
+![Star History Chart](https://api.star-history.com/svg?repos=alphadamn/guwu-oj&type=Date)
