@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+
+{% block title %}上传题目 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+    .test-case-card { border-left: 3px solid #3498db; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header bg-success text-white">
+        <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> 上传题目</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted">上传题目时至少需要提供 <strong>3 个</strong> 完整测试用例（输入与期望输出均不能为空）。题面支持 <strong>Markdown</strong> 与 LaTeX 公式（行内 <code>$...$</code>，块级 <code>$$...$$</code>）。</p>
+
+        <form method="post" id="problem-form">
+            {% csrf_token %}
+
+            <h6 class="mb-3">基本信息</h6>
+            <div class="row">
+                <div class="col-md-8 mb-3">
+                    <label class="form-label">题目标题</label>
+                    {{ form.title }}
+                    {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors }}</div>{% endif %}
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">难度</label>
+                    {{ form.difficulty }}
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">题目描述</label>
+                {{ form.description }}
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">输入格式</label>
+                    {{ form.input_format }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">输出格式</label>
+                    {{ form.output_format }}
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">样例输入（展示用）</label>
+                    {{ form.sample_input }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">样例输出（展示用）</label>
+                    {{ form.sample_output }}
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">提示</label>
+                {{ form.hint }}
+            </div>
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">时间限制 (ms)</label>
+                    {{ form.time_limit }}
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">内存限制 (MB)</label>
+                    {{ form.memory_limit }}
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">标签</label>
+                    {{ form.tags }}
+                </div>
+                <!-- <div class="col-md-2 mb-3 d-flex align-items-end">
+                    <div class="form-check">
+                        {{ form.is_public }}
+                        <label class="form-check-label">公开</label>
+                    </div>
+                </div> -->
+            </div>
+
+            <hr>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0">测试用例 <span class="badge bg-primary" id="case-count">3</span></h6>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="add-case-btn">
+                    <i class="bi bi-plus"></i> 添加用例
+                </button>
+            </div>
+            <div id="test-cases-container"></div>
+
+            <div class="mt-4">
+                <button type="submit" class="btn btn-success">
+                    <i class="bi bi-check-lg"></i> 提交题目
+                </button>
+                <a href="{% url 'problem_list' %}" class="btn btn-secondary">取消</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const MIN_CASES = 3;
+    let caseIndex = 0;
+    const container = document.getElementById('test-cases-container');
+    const countBadge = document.getElementById('case-count');
+
+    function updateCount() {
+        countBadge.textContent = container.children.length;
+    }
+
+    function createCaseCard(index) {
+        const card = document.createElement('div');
+        card.className = 'card test-case-card mb-3';
+        card.dataset.index = index;
+        card.innerHTML = `
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <span class="fw-bold">测试用例 #${index + 1}</span>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-case-btn" ${index < MIN_CASES ? 'disabled title="至少保留3个用例"' : ''}>
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">输入</label>
+                        <textarea class="form-control font-monospace" name="test_input_${index}" rows="4" required></textarea>
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">期望输出</label>
+                        <textarea class="form-control font-monospace" name="test_output_${index}" rows="4" required></textarea>
+                    </div>
+                </div>
+            </div>`;
+        card.querySelector('.remove-case-btn').addEventListener('click', () => {
+            if (container.children.length <= MIN_CASES) return;
+            card.remove();
+            renumberCases();
+        });
+        return card;
+    }
+
+    function renumberCases() {
+        Array.from(container.children).forEach((card, i) => {
+            card.querySelector('.card-header span').textContent = `测试用例 #${i + 1}`;
+            const inp = card.querySelector('textarea[name^="test_input_"]');
+            const out = card.querySelector('textarea[name^="test_output_"]');
+            const idx = card.dataset.index;
+            inp.name = `test_input_${idx}`;
+            out.name = `test_output_${idx}`;
+            const btn = card.querySelector('.remove-case-btn');
+            btn.disabled = container.children.length <= MIN_CASES;
+        });
+        updateCount();
+    }
+
+    document.getElementById('add-case-btn').addEventListener('click', () => {
+        container.appendChild(createCaseCard(caseIndex++));
+        renumberCases();
+    });
+
+    for (let i = 0; i < MIN_CASES; i++) {
+        container.appendChild(createCaseCard(caseIndex++));
+    }
+    updateCount();
+})();
+</script>
+{% endblock %}

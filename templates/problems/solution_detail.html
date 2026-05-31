@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ solution.title }} - 题解 - 洛谷风格 OJ{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-book"></i> {{ solution.title }}
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <span class="badge bg-secondary">{{ solution.problem.title }}</span>
+                    {% if not solution.is_approved %}
+                        <span class="badge bg-warning">待审核</span>
+                    {% endif %}
+                </div>
+                
+                <div class="mb-3">
+                    <p class="text-muted">
+                        <i class="bi bi-person"></i> <a href="{% url 'profile' solution.author.username %}">{{ solution.author.username }}</a>
+                        <span class="mx-2">|</span>
+                        <i class="bi bi-clock"></i> {{ solution.created_at|date:"Y-m-d H:i" }}
+                        <span class="mx-2">|</span>
+                        <i class="bi bi-heart"></i> {{ solution.like_count }}
+                    </p>
+                </div>
+                
+                <hr>
+                
+                <div class="mb-4">
+                    <h6>题解内容</h6>
+                    <div class="problem-content">{{ solution.content|linebreaks }}</div>
+                </div>
+                
+                <div class="mb-4">
+                    {% if user.is_authenticated %}
+                        <form method="post" action="{% url 'like_solution' solution.problem.id solution.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn {% if is_liked %}btn-danger{% else %}btn-outline-danger{% endif %}">
+                                <i class="bi bi-heart"></i> {% if is_liked %}已点赞{% else %}点赞{% endif %} ({{ solution.like_count }})
+                            </button>
+                        </form>
+                    {% else %}
+                        <a href="{% url 'login' %}" class="btn btn-outline-danger">
+                            <i class="bi bi-heart"></i> 点赞 ({{ solution.like_count }})
+                        </a>
+                    {% endif %}
+                </div>
+                
+                <div>
+                    <a href="{% url 'solution_list' solution.problem.id %}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> 返回题解列表
+                    </a>
+                    <a href="{% url 'problem_detail' solution.problem.id %}" class="btn btn-primary">
+                        <i class="bi bi-book"></i> 查看题目
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>题号</td>
+                        <td>P{{ solution.problem.id }}</td>
+                    </tr>
+                    <tr>
+                        <td>标题</td>
+                        <td><a href="{% url 'problem_detail' solution.problem.id %}">{{ solution.problem.title }}</a></td>
+                    </tr>
+                    <tr>
+                        <td>难度</td>
+                        <td><span class="badge difficulty-badge difficulty-{{ solution.problem.difficulty }}">{{ solution.problem.difficulty }}</span></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-person"></i> 作者信息</h5>
+            </div>
+            <div class="card-body">
+                <p><a href="{% url 'profile' solution.author.username %}">{{ solution.author.username }}</a></p>
+                <p class="text-muted mb-0">提交于 {{ solution.created_at|date:"Y-m-d H:i" }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

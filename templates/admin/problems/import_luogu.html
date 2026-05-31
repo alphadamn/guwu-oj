@@ -1,0 +1,31 @@
+{% extends "admin/base_site.html" %}
+
+{% block title %}从洛谷导入题目{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">首页</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:problems_problem_changelist' %}">题目</a>
+    &rsaquo; 从洛谷导入
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>从洛谷导入题目</h1>
+<p>通过洛谷公开接口拉取题面（Markdown），并自动创建题目与测试用例。导入后题目默认为<strong>未公开</strong>，请在编辑页核对后发布。</p>
+<p class="help">说明：洛谷不公开全部测试数据；若样例不足 3 个，将用样例重复补齐以满足评测要求。请遵守洛谷服务条款，仅用于个人学习 OJ。</p>
+
+<form method="post" style="max-width: 480px; margin-top: 1.5rem;">
+    {% csrf_token %}
+    <div style="margin-bottom: 1rem;">
+        <label for="luogu_pid" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">洛谷题号</label>
+        <input type="text" name="luogu_pid" id="luogu_pid" placeholder="P1000 或 1000"
+               style="width: 100%; padding: 8px; font-size: 1rem;" required autofocus>
+    </div>
+    <div>
+        <input type="submit" value="一键导入" class="default" style="padding: 8px 20px;">
+        <a href="{% url 'admin:problems_problem_changelist' %}" style="margin-left: 12px;">返回题目列表</a>
+    </div>
+</form>
+{% endblock %}

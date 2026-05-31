@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block title %}我的提交 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-list-check"></i> 我的提交记录</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>提交ID</th>
+                        <th>题目</th>
+                        <th>状态</th>
+                        <th>语言</th>
+                        <th>运行时间</th>
+                        <th>内存</th>
+                        <th>提交时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for submission in submissions %}
+                    <tr>
+                        <td><a href="{% url 'submission_detail' submission.id %}">#{{ submission.id }}</a></td>
+                        <td><a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a></td>
+                        <td class="status-{{ submission.status }}">{{ submission.status }}</td>
+                        <td>{{ submission.language }}</td>
+                        <td>{% if submission.runtime %}{{ submission.runtime }} ms{% else %}--{% endif %}</td>
+                        <td>{% if submission.memory %}{{ submission.memory }} KB{% else %}--{% endif %}</td>
+                        <td>{{ submission.created_at|date:"Y-m-d H:i" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted">暂无提交记录</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

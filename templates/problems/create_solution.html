@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+
+{% block title %}写题解 - {{ problem.title }} - 洛谷风格 OJ{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-pencil"></i> 写题解 - {{ problem.title }}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="title" class="form-label">标题</label>
+                        <input type="text" class="form-control" name="title" id="title" required placeholder="请输入题解标题">
+                    </div>
+                    <div class="mb-3">
+                        <label for="content" class="form-label">内容</label>
+                        <textarea class="form-control" name="content" id="content" rows="15" required placeholder="请输入题解内容，可以使用 Markdown 格式"></textarea>
+                        <small class="form-text text-muted">支持 Markdown 格式</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-send"></i> 提交题解
+                    </button>
+                    <a href="{% url 'solution_list' problem.id %}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> 取消
+                    </a>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>题号</td>
+                        <td>P{{ problem.id }}</td>
+                    </tr>
+                    <tr>
+                        <td>标题</td>
+                        <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
+                    </tr>
+                    <tr>
+                        <td>难度</td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightbulb"></i> 写题解提示</h5>
+            </div>
+            <div class="card-body">
+                <ul class="mb-0">
+                    <li>请确保题解内容清晰易懂</li>
+                    <li>可以使用 Markdown 格式排版</li>
+                    <li>可以包含代码示例和解释</li>
+                    <li>题解提交后需要管理员审核</li>
+                    <li>请勿抄袭他人题解</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

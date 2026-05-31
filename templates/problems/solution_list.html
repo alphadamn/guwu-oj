@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ problem.title }} - 题解 - 洛谷风格 OJ{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-book"></i> {{ problem.title }} - 题解
+                </h5>
+                {% if user.is_authenticated %}
+                    <a href="{% url 'create_solution' problem.id %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-plus-circle"></i> 写题解
+                    </a>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if solutions %}
+                    {% for solution in solutions %}
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <a href="{% url 'solution_detail' problem.id solution.id %}">{{ solution.title }}</a>
+                                {% if not solution.is_approved %}
+                                    <span class="badge bg-warning">待审核</span>
+                                {% endif %}
+                            </h5>
+                            <p class="card-text text-muted">
+                                <i class="bi bi-person"></i> {{ solution.author.username }}
+                                <span class="mx-2">|</span>
+                                <i class="bi bi-clock"></i> {{ solution.created_at|date:"Y-m-d H:i" }}
+                                <span class="mx-2">|</span>
+                                <i class="bi bi-heart"></i> {{ solution.like_count }}
+                            </p>
+                            <p class="card-text">{{ solution.content|truncatewords:30 }}</p>
+                            <a href="{% url 'solution_detail' problem.id solution.id %}" class="btn btn-primary btn-sm">
+                                查看详情
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-book" style="font-size: 3rem; color: #ccc;"></i>
+                        <p class="mt-3 text-muted">暂无题解</p>
+                        {% if user.is_authenticated %}
+                            <a href="{% url 'create_solution' problem.id %}" class="btn btn-primary">
+                                <i class="bi bi-plus-circle"></i> 写第一篇题解
+                            </a>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>题号</td>
+                        <td>P{{ problem.id }}</td>
+                    </tr>
+                    <tr>
+                        <td>标题</td>
+                        <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
+                    </tr>
+                    <tr>
+                        <td>难度</td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <a href="{% url 'problem_detail' problem.id %}" class="btn btn-primary w-100">
+                    <i class="bi bi-arrow-left"></i> 返回题目
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ user_profile.username }} 的主页 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-body text-center">
+                {% if user_profile.avatar %}
+                    <img src="{{ user_profile.avatar.url }}" class="rounded-circle mb-3" alt="Avatar" style="width: 150px; height: 150px; object-fit: cover;">
+                {% else %}
+                    <div class="rounded-circle mb-3 bg-secondary d-flex align-items-center justify-content-center" style="width: 150px; height: 150px; margin: 0 auto;">
+                        <i class="bi bi-person" style="font-size: 4rem; color: white;"></i>
+                    </div>
+                {% endif %}
+                <h4>{{ user_profile.nickname|default:user_profile.username }}</h4>
+                <p class="text-muted">@{{ user_profile.username }}</p>
+                {% if user_profile.bio %}
+                    <p class="text-muted">{{ user_profile.bio }}</p>
+                {% endif %}
+                {% if user_profile == user %}
+                    <a href="{% url 'edit_profile' %}" class="btn btn-primary btn-sm">编辑资料</a>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-trophy"></i> 统计信息</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <h3>{{ user_profile.solved_problems.count }}</h3>
+                        <p class="text-muted mb-0">已解决</p>
+                    </div>
+                    <div class="col-6">
+                        <h3>{{ user_profile.submissions.count }}</h3>
+                        <p class="text-muted mb-0">提交次数</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-clock-history"></i> 最近提交</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>提交ID</th>
+                                <th>题目</th>
+                                <th>状态</th>
+                                <th>语言</th>
+                                <th>时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for submission in user_profile.submissions.all|slice:":10" %}
+                            <tr>
+                                <td><a href="{% url 'submission_detail' submission.id %}">#{{ submission.id }}</a></td>
+                                <td><a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a></td>
+                                <td class="status-{{ submission.status }}">{{ submission.status }}</td>
+                                <td>{{ submission.language }}</td>
+                                <td>{{ submission.created_at|date:"Y-m-d H:i" }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">暂无提交记录</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-check-circle"></i> 已解决的题目</h5>
+            </div>
+            <div class="card-body">
+                {% if user_profile.solved_problems.all %}
+                    <div class="row">
+                        {% for problem in user_profile.solved_problems.all %}
+                        <div class="col-md-4 mb-2">
+                            <a href="{% url 'problem_detail' problem.id %}" class="btn btn-outline-primary btn-sm w-100">
+                                P{{ problem.id }} - {{ problem.title }}
+                            </a>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted">暂未解决任何题目</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

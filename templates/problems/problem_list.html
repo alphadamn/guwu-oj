@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+
+{% block title %}题库 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-book"></i> 题库</h5>
+    </div>
+    <div class="card-body">
+        <form method="get" class="mb-4">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <input type="text" class="form-control" name="search" placeholder="搜索题目或题号" value="{{ request.GET.search }}">
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" name="difficulty">
+                        <option value="">所有难度</option>
+                        <option value="入门" {% if request.GET.difficulty == '入门' %}selected{% endif %}>入门</option>
+                        <option value="普及-" {% if request.GET.difficulty == '普及-' %}selected{% endif %}>普及-</option>
+                        <option value="普及" {% if request.GET.difficulty == '普及' %}selected{% endif %}>普及</option>
+                        <option value="普及+" {% if request.GET.difficulty == '普及+' %}selected{% endif %}>普及+</option>
+                        <option value="提高-" {% if request.GET.difficulty == '提高-' %}selected{% endif %}>提高-</option>
+                        <option value="提高" {% if request.GET.difficulty == '提高' %}selected{% endif %}>提高</option>
+                        <option value="提高+" {% if request.GET.difficulty == '提高+' %}selected{% endif %}>提高+</option>
+                        <option value="省选" {% if request.GET.difficulty == '省选' %}selected{% endif %}>省选</option>
+                        <option value="NOI" {% if request.GET.difficulty == 'NOI' %}selected{% endif %}>NOI</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <input type="text" class="form-control" name="tags" placeholder="标签" value="{{ request.GET.tags }}">
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">搜索</button>
+                </div>
+            </div>
+        </form>
+        
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>题号</th>
+                        <th>标题</th>
+                        <th>难度</th>
+                        <th>标签</th>
+                        <th>通过率</th>
+                        <th>提交数</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for problem in problems %}
+                    <tr>
+                        <td><span class="badge bg-secondary">P{{ problem.id }}</span></td>
+                        <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                        <td>
+                            {% if problem.tags %}
+                                {% for tag in problem.tags.split|slice:":3" %}
+                                    <span class="badge bg-light text-dark me-1">{{ tag }}</span>
+                                {% endfor %}
+                            {% endif %}
+                        </td>
+                        <td>--</td>
+                        <td>{{ problem.submissions.count }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted">暂无题目</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

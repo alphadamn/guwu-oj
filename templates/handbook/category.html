@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ category.title }} - OIer 手册{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/handbook.css' %}">
+{% endblock %}
+
+{% block content %}
+<nav class="handbook-breadcrumb">
+    <a href="{% url 'handbook_index' %}">OIer 手册</a>
+    <span class="text-muted"> / {{ category.title }}</span>
+</nav>
+
+<div class="card animate-in visible">
+    <div class="card-header card-header-gradient d-flex align-items-center gap-2">
+        <i class="bi {{ category.icon }} text-primary fs-5"></i>
+        <div>
+            <h5 class="mb-0">{{ category.title }}</h5>
+            <small class="text-muted">{{ category.description }}</small>
+        </div>
+    </div>
+    <div class="list-group list-group-flush">
+        {% for item in grouped_items %}
+            {% if item.type == 'header' %}
+            <div class="handbook-group-header">{{ item.title }}</div>
+            {% else %}
+            <a href="{% url 'handbook_article' category.slug item.slug %}"
+               class="list-group-item list-group-item-action article-list-item py-3">
+                <div class="d-flex w-100 justify-content-between align-items-center">
+                    <h6 class="mb-1">{{ item.title }}</h6>
+                    <i class="bi bi-chevron-right text-muted"></i>
+                </div>
+                {% if item.summary %}
+                <p class="mb-0 small text-muted">{{ item.summary }}</p>
+                {% endif %}
+            </a>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

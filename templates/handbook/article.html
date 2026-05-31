@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ article.title }} - OIer 手册{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/problem-markdown.css' %}">
+<link rel="stylesheet" href="{% static 'css/handbook.css' %}">
+{% endblock %}
+
+{% block content %}
+<nav class="handbook-breadcrumb">
+    <a href="{% url 'handbook_index' %}">OIer 手册</a>
+    <span class="text-muted"> / </span>
+    <a href="{% url 'handbook_category' category.slug %}">{{ category.title }}</a>
+    <span class="text-muted"> / {{ article.title }}</span>
+</nav>
+
+<div class="handbook-layout">
+    <aside class="handbook-sidebar card animate-in delay-1">
+        <div class="card-body p-2">
+            {% if sidebar_groups %}
+                {% for group in sidebar_groups %}
+                <div class="category-label">{{ group.title }}</div>
+                <div class="list-group list-group-flush mb-2">
+                    {% for item in group.articles %}
+                    <a href="{% url 'handbook_article' category.slug item.slug %}"
+                       class="list-group-item list-group-item-action {% if item.active %}active{% endif %}">
+                        {{ item.title }}
+                    </a>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            {% else %}
+                {% for cat in categories %}
+                <div class="category-label">{{ cat.title }}</div>
+                <div class="list-group list-group-flush mb-2">
+                    {% for item in cat.article_list %}
+                    <a href="{% url 'handbook_article' cat.slug item.slug %}"
+                       class="list-group-item list-group-item-action {% if cat.slug == category.slug and item.slug == article.slug %}active{% endif %}">
+                        {{ item.title }}
+                    </a>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            {% endif %}
+        </div>
+    </aside>
+
+    <article class="card animate-in delay-2">
+        <div class="card-header card-header-gradient">
+            <h4 class="mb-1">{{ article.title }}</h4>
+            {% if article.summary %}
+            <p class="mb-0 small text-muted">{{ article.summary }}</p>
+            {% endif %}
+        </div>
+        <div class="card-body handbook-article-body problem-markdown">
+            {{ article.html_content|safe }}
+        </div>
+        <div class="card-footer bg-light d-flex justify-content-between">
+            <a href="{% url 'handbook_category' category.slug %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回 {{ category.title }}
+            </a>
+            <a href="{% url 'problem_list' %}" class="btn btn-sm btn-primary">
+                <i class="bi bi-book"></i> 去刷题
+            </a>
+        </div>
+    </article>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% include 'problems/_mathjax.html' %}
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block title %}提交记录 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-list-check"></i> 提交记录</h5>
+    </div>
+    <div class="card-body">
+        <form method="get" class="mb-4">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <input type="text" class="form-control" name="problem" placeholder="题号" value="{{ request.GET.problem }}">
+                </div>
+                <div class="col-md-3">
+                    <input type="text" class="form-control" name="user" placeholder="用户名" value="{{ request.GET.user }}">
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" name="status">
+                        <option value="">所有状态</option>
+                        <option value="Pending" {% if request.GET.status == 'Pending' %}selected{% endif %}>Pending</option>
+                        <option value="Accepted" {% if request.GET.status == 'Accepted' %}selected{% endif %}>Accepted</option>
+                        <option value="Wrong Answer" {% if request.GET.status == 'Wrong Answer' %}selected{% endif %}>Wrong Answer</option>
+                        <option value="Time Limit Exceeded" {% if request.GET.status == 'Time Limit Exceeded' %}selected{% endif %}>Time Limit Exceeded</option>
+                        <option value="Memory Limit Exceeded" {% if request.GET.status == 'Memory Limit Exceeded' %}selected{% endif %}>Memory Limit Exceeded</option>
+                        <option value="Runtime Error" {% if request.GET.status == 'Runtime Error' %}selected{% endif %}>Runtime Error</option>
+                        <option value="Compile Error" {% if request.GET.status == 'Compile Error' %}selected{% endif %}>Compile Error</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100">筛选</button>
+                </div>
+            </div>
+        </form>
+        
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>提交ID</th>
+                        <th>提交者</th>
+                        <th>题目</th>
+                        <th>状态</th>
+                        <th>语言</th>
+                        <th>运行时间</th>
+                        <th>内存</th>
+                        <th>提交时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for submission in submissions %}
+                    <tr>
+                        <td><a href="{% url 'submission_detail' submission.id %}">#{{ submission.id }}</a></td>
+                        <td><a href="{% url 'profile' submission.user.username %}">{{ submission.user.username }}</a></td>
+                        <td><a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a></td>
+                        <td class="status-{{ submission.status }}">{{ submission.status }}</td>
+                        <td>{{ submission.language }}</td>
+                        <td>{% if submission.runtime %}{{ submission.runtime }} ms{% else %}--{% endif %}</td>
+                        <td>{% if submission.memory %}{{ submission.memory }} KB{% else %}--{% endif %}</td>
+                        <td>{{ submission.created_at|date:"Y-m-d H:i" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center text-muted">暂无提交记录</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

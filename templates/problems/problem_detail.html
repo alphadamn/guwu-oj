@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load problem_extras %}
+
+{% block title %}{{ problem.title }} - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/problem-markdown.css' %}">
+<style>
+    .code-block {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <span class="badge bg-secondary me-2">P{{ problem.id }}</span>
+                    {{ problem.title }}
+                </h5>
+                <span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span>
+            </div>
+            <div class="card-body">
+                <div class="mb-4">
+                    <h6>题目描述</h6>
+                    <div class="problem-markdown">{{ problem.description|markdown }}</div>
+                </div>
+                
+                <div class="mb-4">
+                    <h6>输入格式</h6>
+                    <div class="problem-markdown">{{ problem.input_format|markdown }}</div>
+                </div>
+                
+                <div class="mb-4">
+                    <h6>输出格式</h6>
+                    <div class="problem-markdown">{{ problem.output_format|markdown }}</div>
+                </div>
+                
+                {% if problem.sample_input %}
+                <div class="mb-4">
+                    <h6>样例输入</h6>
+                    <div class="code-block">{{ problem.sample_input }}</div>
+                </div>
+                {% endif %}
+                
+                {% if problem.sample_output %}
+                <div class="mb-4">
+                    <h6>样例输出</h6>
+                    <div class="code-block">{{ problem.sample_output }}</div>
+                </div>
+                {% endif %}
+                
+                {% if problem.hint %}
+                <div class="mb-4">
+                    <h6>提示</h6>
+                    <div class="problem-markdown">{{ problem.hint|markdown }}</div>
+                </div>
+                {% endif %}
+                
+                {% if problem.luogu_pid %}
+                <p class="text-muted small mb-0">
+                    本题源自洛谷
+                    <a href="https://www.luogu.com.cn/problem/{{ problem.luogu_pid }}" target="_blank" rel="noopener">{{ problem.luogu_pid }}</a>
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>时间限制</td>
+                        <td>{{ problem.time_limit }} ms</td>
+                    </tr>
+                    <tr>
+                        <td>内存限制</td>
+                        <td>{{ problem.memory_limit }} MB</td>
+                    </tr>
+                    <tr>
+                        <td>难度</td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                    </tr>
+                    <tr>
+                        <td>提交数</td>
+                        <td>{{ problem.submissions.count }}</td>
+                    </tr>
+                    <tr>
+                        <td>通过数</td>
+                        <td>{{ count }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-tags"></i> 标签</h5>
+            </div>
+            <div class="card-body">
+                {% if problem.tags %}
+                    {% for tag in problem.tags.split %}
+                        <span class="badge bg-light text-dark me-1 mb-1">{{ tag }}</span>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted mb-0">暂无标签</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <a href="{% url 'solution_list' problem.id %}" class="btn btn-info w-100 mb-2">
+                    <i class="bi bi-book"></i> 查看题解
+                </a>
+                {% if user.is_authenticated %}
+                <a href="{% url 'submit_solution' problem.id %}" class="btn btn-primary w-100">
+                    <i class="bi bi-send"></i> 提交代码
+                </a>
+                {% else %}
+                <a href="{% url 'login' %}" class="btn btn-primary w-100">
+                    <i class="bi bi-box-arrow-in-right"></i> 登录后提交
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% include 'problems/_mathjax.html' %}
+{% endblock %}

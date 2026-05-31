@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}OIer 手册 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/handbook.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="handbook-hero animate-in visible">
+    <h1><i class="bi bi-journal-bookmark me-2"></i>OIer 手册</h1>
+    <p class="mb-0 opacity-75">竞赛语言语法、经典算法与优化技巧的系统教程，助力刷题与比赛。</p>
+</div>
+
+<div class="row g-4">
+    {% for cat in categories %}
+    <div class="col-md-4 animate-in delay-{{ forloop.counter }}">
+        <a href="{% url 'handbook_category' cat.slug %}" class="card handbook-category-card h-100">
+            <div class="card-body p-4">
+                <div class="icon-wrap bg-primary bg-opacity-10 text-primary">
+                    <i class="bi {{ cat.icon }}"></i>
+                </div>
+                <h5 class="card-title">{{ cat.title }}</h5>
+                <p class="card-text text-muted small mb-0">{{ cat.description }}</p>
+            </div>
+        </a>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+.problem-markdown {
+    line-height: 1.7;
+    word-wrap: break-word;
+}
+
+.problem-markdown h1,
+.problem-markdown h2,
+.problem-markdown h3,
+.problem-markdown h4 {
+    margin-top: 1.25rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+}
+
+.problem-markdown h2 { font-size: 1.25rem; }
+.problem-markdown h3 { font-size: 1.1rem; }
+
+.problem-markdown p {
+    margin-bottom: 0.75rem;
+}
+
+.problem-markdown pre {
+    background-color: #f6f8fa;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    padding: 12px;
+    overflow-x: auto;
+}
+
+.problem-markdown code {
+    font-family: 'Courier New', Consolas, monospace;
+    font-size: 0.9em;
+    background-color: #f0f0f0;
+    padding: 0.15em 0.35em;
+    border-radius: 3px;
+}
+
+.problem-markdown pre code {
+    background: none;
+    padding: 0;
+}
+
+.problem-markdown table {
+    width: 100%;
+    margin-bottom: 1rem;
+    border-collapse: collapse;
+}
+
+.problem-markdown th,
+.problem-markdown td {
+    border: 1px solid #dee2e6;
+    padding: 8px 12px;
+}
+
+.problem-markdown blockquote {
+    border-left: 4px solid #3498db;
+    padding-left: 1rem;
+    color: #555;
+    margin-bottom: 1rem;
+}
+
+.problem-markdown img {
+    max-width: 100%;
+    height: auto;
+}
+
+.problem-markdown a {
+    color: #3498db;
+}
+
+/* MathJax rendered formulas */
+.problem-markdown mjx-container {
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+}
+
+.problem-markdown mjx-container[display="true"] {
+    display: block;
+    margin: 1rem 0;
+    text-align: center;
+}
+
+.problem-markdown mjx-container[jax="CHTML"] {
+    font-size: 110%;
+}

@@ -1,0 +1,192 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}提交 #{{ submission.id }} - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+    .code-block {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-height: 500px;
+        overflow-y: auto;
+    }
+    .case-overview {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 24px 20px;
+    }
+    .case-badge {
+        min-width: 4.5rem;
+        font-weight: 700;
+        font-size: 1.25rem;
+        padding: 14px 18px !important;
+        border-radius: 8px !important;
+    }
+    .case-Accepted { background-color: #2ecc71; color: #fff; }
+    .case-Wrong { background-color: #e74c3c; color: #fff; }
+    .case-Time { background-color: #f39c12; color: #fff; }
+    .case-Runtime { background-color: #9b59b6; color: #fff; }
+    .case-Memory { background-color: #34495e; color: #fff; }
+    .case-Skipped { background-color: #95a5a6; color: #fff; }
+    .case-points {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        justify-content: flex-start;
+    }
+    .case-point {
+        text-align: center;
+        min-width: 88px;
+    }
+    .case-point .case-label {
+        display: block;
+        font-size: 0.85rem;
+        color: #6c757d;
+        margin-top: 8px;
+        font-weight: 500;
+    }
+    .case-point .case-runtime {
+        display: block;
+        font-size: 1rem;
+        color: #495057;
+        margin-top: 6px;
+        font-weight: 600;
+    }
+    .status-Accepted { color: #2ecc71; font-weight: bold; }
+    .status-Wrong { color: #e74c3c; font-weight: bold; }
+    .status-Time { color: #f39c12; font-weight: bold; }
+    .status-Runtime { color: #9b59b6; font-weight: bold; }
+    .status-Pending { color: #f39c12; font-weight: bold; }
+    .status-Error { color: #c0392b; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="submission-detail-root"
+     data-poll="{% if should_poll %}true{% else %}false{% endif %}"
+     data-status-url="{% url 'submission_status_api' submission.id %}">
+<div class="card">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0">
+            <i class="bi bi-file-code"></i> 提交 #{{ submission.id }}
+        </h5>
+    </div>
+    <div class="card-body">
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <table class="table table-sm">
+                    <tr>
+                        <td>提交者</td>
+                        <td><a href="{% url 'profile' submission.user.username %}">{{ submission.user.username }}</a></td>
+                    </tr>
+                    <tr>
+                        <td>题目</td>
+                        <td><a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a></td>
+                    </tr>
+                    <tr>
+                        <td>语言</td>
+                        <td>{{ submission.language }}</td>
+                    </tr>
+                    <tr>
+                        <td>提交时间</td>
+                        <td>{{ submission.created_at|date:"Y-m-d H:i:s" }}</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h3 id="submission-status-text" class="status-{% if submission.status == 'Accepted' %}Accepted{% elif submission.status == 'Wrong Answer' %}Wrong{% elif submission.status == 'Time Limit Exceeded' %}Time{% elif submission.status == 'Memory Limit Exceeded' %}Runtime{% elif submission.status == 'Runtime Error' %}Runtime{% elif submission.status == 'Pending' %}Pending{% else %}Error{% endif %}">
+                            {% if should_poll %}
+                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            {% endif %}
+                            {{ submission.status }}
+                        </h3>
+                        <div id="submission-status-summary">
+                            {% if test_results %}
+                                <p class="mb-1">测试点: <strong>{{ passed_count }}/{{ total_cases }}</strong> 通过</p>
+                            {% endif %}
+                            {% if submission.runtime %}
+                                <p class="mb-0">最大运行时间: {{ submission.runtime }} ms</p>
+                            {% endif %}
+                            {% if submission.memory %}
+                                <p class="mb-0">内存使用: {{ submission.memory }} KB</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if should_poll and not test_results %}
+        <div id="submission-judge-progress" class="mb-4 text-center py-3">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="text-muted mt-2 mb-0">正在评测，请稍候…</p>
+        </div>
+        {% endif %}
+
+        <div id="submission-test-results" class="mb-4 {% if not test_results %}d-none{% endif %}">
+            <h5 class="mb-3"><i class="bi bi-grid-3x3-gap"></i> 测试点总览</h5>
+            <div class="case-overview">
+                <div class="case-points">
+                    {% for result in test_results %}
+                    <div class="case-point">
+                        {% if result.status == 'Accepted' %}
+                            <span class="badge case-badge case-Accepted" title="{{ result.status }}">AC</span>
+                        {% elif result.status == 'Wrong Answer' %}
+                            <span class="badge case-badge case-Wrong" title="{{ result.status }}">WA</span>
+                        {% elif result.status == 'Time Limit Exceeded' %}
+                            <span class="badge case-badge case-Time" title="{{ result.status }}">TLE</span>
+                        {% elif result.status == 'Memory Limit Exceeded' %}
+                            <span class="badge case-badge case-Memory" title="{{ result.status }}">MLE</span>
+                        {% elif result.status == 'Runtime Error' %}
+                            <span class="badge case-badge case-Runtime" title="{{ result.status }}">RE</span>
+                        {% else %}
+                            <span class="badge case-badge case-Skipped" title="{{ result.status }}">#{{ result.case_index }}</span>
+                        {% endif %}
+                        <span class="case-label">#{{ result.case_index }}</span>
+                        {% if result.runtime %}
+                            <span class="case-runtime">{{ result.runtime }} ms</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        {% if not test_results and not should_poll and submission.status != 'Pending' and submission.status != 'Compile Error' %}
+        <div class="alert alert-info mb-4">
+            <i class="bi bi-info-circle"></i> 暂无测试点明细（该提交在记录明细功能之前产生，或题目无测试用例）。
+        </div>
+        {% endif %}
+        
+        <div class="mb-4">
+            <h6>代码</h6>
+            <div class="code-block">{{ submission.code }}</div>
+        </div>
+        
+        <div>
+            <a href="{% url 'problem_detail' submission.problem.id %}" class="btn btn-primary">
+                <i class="bi bi-arrow-left"></i> 返回题目
+            </a>
+            {% if submission.user == user %}
+                <a href="{% url 'my_submissions' %}" class="btn btn-secondary">
+                    <i class="bi bi-list"></i> 我的提交
+                </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if should_poll %}
+<script src="{% static 'js/submission-detail.js' %}"></script>
+{% endif %}
+{% endblock %}

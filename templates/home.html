@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+
+{% block title %}首页 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<section class="home-hero animate-in visible">
+    <div class="hero-content">
+        <h1 class="hero-title">欢迎来到 <span>谷物 OJ</span></h1>
+        <p class="hero-subtitle">
+            在线算法评测平台 — 刷题、提交、即时反馈。在简洁流畅的体验中提升编程与算法能力。
+        </p>
+        <div class="hero-actions d-flex flex-wrap gap-2">
+            <a href="{% url 'problem_list' %}" class="btn btn-hero-primary btn-lg">
+                <i class="bi bi-book me-1"></i> 开始刷题
+            </a>
+            {% if user.is_authenticated %}
+                <a href="{% url 'leaderboard' %}" class="btn btn-hero-accent btn-lg">
+                    <i class="bi bi-trophy me-1"></i> 排行榜
+                </a>
+            {% else %}
+                <a href="{% url 'register' %}" class="btn btn-hero-accent btn-lg">
+                    <i class="bi bi-person-plus me-1"></i> 免费注册
+                </a>
+                <a href="{% url 'login' %}" class="btn btn-outline-light btn-lg">
+                    <i class="bi bi-box-arrow-in-right me-1"></i> 登录
+                </a>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<div class="stats-row">
+    <div class="stat-card animate-in delay-1">
+        <div class="stat-value" data-count="{{ stats.problem_count }}">0</div>
+        <div class="stat-label"><i class="bi bi-journal-code me-1"></i> 公开题目</div>
+    </div>
+    <div class="stat-card animate-in delay-2">
+        <div class="stat-value" data-count="{{ stats.submission_count }}">0</div>
+        <div class="stat-label"><i class="bi bi-send me-1"></i> 总提交数</div>
+    </div>
+    <div class="stat-card animate-in delay-3">
+        <div class="stat-value" data-count="{{ stats.user_count }}">0</div>
+        <div class="stat-label"><i class="bi bi-people me-1"></i> 注册用户</div>
+    </div>
+</div>
+
+<div class="feature-grid">
+    <div class="feature-card animate-in delay-1">
+        <div class="feature-icon blue"><i class="bi bi-collection"></i></div>
+        <h5>丰富题库</h5>
+        <p class="text-muted mb-0 small">涵盖多种难度，支持 Markdown 与 LaTeX 题面</p>
+    </div>
+    <div class="feature-card animate-in delay-2">
+        <div class="feature-icon amber"><i class="bi bi-lightning-charge"></i></div>
+        <h5>沙箱评测</h5>
+        <p class="text-muted mb-0 small">主流语言均支持自动评测，逐点反馈结果</p>
+    </div>
+    <div class="feature-card animate-in delay-3">
+        <div class="feature-icon rose"><i class="bi bi-trophy"></i></div>
+        <h5>排行榜</h5>
+        <p class="text-muted mb-0 small">记录通过题目，与其他选手一同进步</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card animate-in delay-4">
+            <div class="card-header card-header-gradient">
+                <h5 class="mb-0 section-header">
+                    <i class="bi bi-clock-history text-primary"></i> 最新题目
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                {% if recent_problems %}
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 recent-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-4">题号</th>
+                                    <th>标题</th>
+                                    <th class="pe-4">难度</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for problem in recent_problems %}
+                                <tr>
+                                    <td class="ps-4"><span class="badge bg-secondary">P{{ problem.id }}</span></td>
+                                    <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
+                                    <td class="pe-4">
+                                        <span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="p-3 border-top text-end">
+                        <a href="{% url 'problem_list' %}" class="btn btn-sm btn-outline-primary">
+                            查看全部 <i class="bi bi-arrow-right"></i>
+                        </a>
+                    </div>
+                {% else %}
+                    <p class="text-muted p-4 mb-0">暂无题目，成为第一个上传者吧。</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card animate-in delay-4">
+            <div class="card-header card-header-gradient">
+                <h5 class="mb-0 section-header"><i class="bi bi-link-45deg text-primary"></i> 快速链接</h5>
+            </div>
+            <div class="card-body py-2">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item quick-link-item">
+                        <a href="{% url 'problem_list' %}"><i class="bi bi-book"></i> 题库</a>
+                    </li>
+                    <li class="list-group-item quick-link-item">
+                        <a href="{% url 'all_submissions' %}"><i class="bi bi-list-check"></i> 提交记录</a>
+                    </li>
+                    <li class="list-group-item quick-link-item">
+                        <a href="{% url 'leaderboard' %}"><i class="bi bi-trophy"></i> 排行榜</a>
+                    </li>
+                    <li class="list-group-item quick-link-item">
+                        <a href="{% url 'handbook_index' %}"><i class="bi bi-journal-bookmark"></i> OIer 手册</a>
+                    </li>
+                    {% if user.is_authenticated %}
+                    <li class="list-group-item quick-link-item">
+                        <a href="{% url 'my_submissions' %}"><i class="bi bi-person"></i> 我的提交</a>
+                    </li>
+                    <li class="list-group-item quick-link-item">
+                        <a href="{% url 'create_problem' %}"><i class="bi bi-cloud-upload"></i> 上传题目</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+
+        <div class="card animate-in delay-5">
+            <div class="card-header card-header-gradient">
+                <h5 class="mb-0 section-header"><i class="bi bi-lightbulb text-warning"></i> 使用说明</h5>
+            </div>
+            <div class="card-body">
+                <ol class="steps-list">
+                    <li>浏览题库，选择感兴趣的题目</li>
+                    <li>阅读题面，理解输入输出要求</li>
+                    <li>在 IDE 中编写代码并提交</li>
+                    <li>查看评测结果，根据反馈改进</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

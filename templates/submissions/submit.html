@@ -1,0 +1,131 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}提交代码 - {{ problem.title }} - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/code-editor.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-send"></i> 提交代码 - {{ problem.title }}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="post" id="submit-form">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="language" class="form-label">编程语言</label>
+                        <select class="form-select" name="language" id="language" required>
+                            <option value="C">C</option>
+                            <option value="C++" selected>C++</option>
+                            <option value="Python">Python</option>
+                            <option value="Java">Java</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">代码</label>
+                        <div class="monaco-editor-toolbar">
+                            <span class="toolbar-label">Monaco IDE</span>
+                            <button type="button" class="btn btn-outline-light btn-sm btn-toolbar" id="btn-format-code" title="格式化">
+                                <i class="bi bi-braces"></i> 格式化
+                            </button>
+                            <button type="button" class="btn btn-outline-light btn-sm btn-toolbar" id="btn-reset-template" title="载入模板">
+                                <i class="bi bi-file-earmark-code"></i> 模板
+                            </button>
+                            <span id="code-editor-status"></span>
+                        </div>
+                        <div id="monaco-editor" class="monaco-editor-host" aria-label="代码编辑器"></div>
+                        <textarea name="code" id="code" class="d-none" required></textarea>
+                        <div class="form-text mt-2">
+                            支持语法高亮、自动补全、括号配对、Ctrl+F 查找、Ctrl+S 保存草稿（按题目与语言分别存储）。
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-send"></i> 提交
+                    </button>
+                    <a href="{% url 'problem_detail' problem.id %}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> 返回题目
+                    </a>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>题号</td>
+                        <td>P{{ problem.id }}</td>
+                    </tr>
+                    <tr>
+                        <td>标题</td>
+                        <td>{{ problem.title }}</td>
+                    </tr>
+                    <tr>
+                        <td>时间限制</td>
+                        <td>{{ problem.time_limit }} ms</td>
+                    </tr>
+                    <tr>
+                        <td>内存限制</td>
+                        <td>{{ problem.memory_limit }} MB</td>
+                    </tr>
+                    <tr>
+                        <td>难度</td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-keyboard"></i> 编辑器快捷键</h5>
+            </div>
+            <div class="card-body">
+                <ul class="mb-0 small">
+                    <li><kbd>Ctrl</kbd> + <kbd>F</kbd> 查找</li>
+                    <li><kbd>Ctrl</kbd> + <kbd>H</kbd> 替换</li>
+                    <li><kbd>Ctrl</kbd> + <kbd>/</kbd> 切换注释</li>
+                    <li><kbd>Alt</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> 移动行</li>
+                    <li><kbd>Ctrl</kbd> + <kbd>S</kbd> 保存草稿</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/code-editor.js' %}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    initOJCodeEditor({
+        containerId: 'monaco-editor',
+        textareaId: 'code',
+        languageSelectId: 'language',
+        problemId: {{ problem.id }},
+        initialLanguage: document.getElementById('language').value,
+    }).catch(function (err) {
+        console.error(err);
+        var ta = document.getElementById('code');
+        ta.classList.remove('d-none');
+        ta.classList.add('form-control', 'code-editor');
+        ta.style.minHeight = '400px';
+        ta.rows = 20;
+        document.getElementById('monaco-editor').style.display = 'none';
+        alert('代码编辑器加载失败，已回退为普通文本框。请检查网络后刷新页面。');
+    });
+});
+</script>
+{% endblock %}
