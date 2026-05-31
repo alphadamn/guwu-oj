@@ -42,7 +42,7 @@
 ### 1. 克隆项目
 
 ```bash
-cd /Users/oscar.liu/Desktop/oj/CascadeProjects/windsurf-project
+cd /Users/oscar.liu/Desktop/guwu-oj
 ```
 
 ### 2. 创建虚拟环境
