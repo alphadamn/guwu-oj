@@ -173,8 +173,8 @@ windsurf-project/
 
 ## 注意事项
 
-1. 本项目使用 SQLite 作为默认数据库，适合开发和测试。生产环境建议使用 PostgreSQL 或 MySQL。
-2. 评测功能目前仅实现了提交和记录展示，实际的代码评测需要集成评测机（如 Sandboxing、Docker 等）。
+1. 本项目使用 PostgreSQL 作为默认数据库。
+2. 评测目前使用docker image进行环境隔离。
 3. SECRET_KEY 需要在生产环境中更改。
 4. 建议在生产环境中配置 ALLOWED_HOSTS。
 
