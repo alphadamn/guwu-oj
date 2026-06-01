@@ -173,17 +173,16 @@ windsurf-project/
 
 ## 注意事项
 
-1. 本项目使用 SQLite 作为默认数据库，适合开发和测试。生产环境建议使用 PostgreSQL 或 MySQL。
-2. 评测功能目前仅实现了提交和记录展示，实际的代码评测需要集成评测机（如 Sandboxing、Docker 等）。
-3. SECRET_KEY 需要在生产环境中更改。
-4. 建议在生产环境中配置 ALLOWED_HOSTS。
+1. 本项目使用 PostgreSQL 作为默认数据库。
+2. SECRET_KEY 需要在生产环境中更改。
+3. 建议在生产环境中配置 ALLOWED_HOSTS。
 
 ## 开发计划
 
-- [ ] 集成实际的代码评测系统
+- [x] 实现自动化代码评测系统
 - [ ] 添加比赛功能
-- [ ] 添加讨论区
-- [ ] 添加题解功能
+- [ ] 植入AI解题功能+文档搜索引擎
+- [x] 添加题解功能
 - [ ] 优化移动端体验
 - [ ] 添加更多编程语言支持
 
@@ -195,4 +194,10 @@ MIT License
 
 如有问题或建议，欢迎提 Issue。
 
-# guwu-oj
+<a href="https://www.star-history.com/?repos=alphadamn%2Falphadamn&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=alphadamn/alphadamn&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=alphadamn/alphadamn&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=alphadamn/alphadamn&type=date&legend=top-left" />
+ </picture>
+</a>
