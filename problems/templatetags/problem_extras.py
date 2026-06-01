@@ -11,5 +11,5 @@ def markdown_filter(value):
     return mark_safe(render_markdown(value))
 
 @register.filter(name='percentage')
-def percentage(a,b):
-    return a / b * 100
+def percentage(a1, a2):
+    return a1/a2*100

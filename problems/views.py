@@ -1,7 +1,8 @@
+from django.db.models.functions import Cast
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Q, Count
+from django.db.models import Q, Count, ExpressionWrapper, When, Case, Value, F, FloatField
 from django.views.decorators.http import require_POST
 from .models import Problem, Solution
 from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
@@ -80,8 +81,17 @@ def leaderboard(request):
     users = User.objects.annotate(
         solved_count=Count('solved_problems', distinct=True),
         submission_count=Count('submissions', distinct=True)
-    ).order_by('-solved_count', 'created_at')
-    
+    ).annotate(
+        ratio=Case(
+            When(submission_count=0, then=Value(None, output_field=FloatField())),
+            default=(
+                    Cast(F('solved_count'), FloatField()) * 100.0 /
+                    Cast(F('submission_count'), FloatField())
+            ),
+            output_field=FloatField()
+        )
+    ).order_by(F('ratio').desc(nulls_last=True))  # highest first, nulls at bottom
+
     return render(request, 'leaderboard.html', {'users': users})
 
 
