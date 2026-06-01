@@ -9,3 +9,7 @@ register = template.Library()
 @register.filter(name='markdown')
 def markdown_filter(value):
     return mark_safe(render_markdown(value))
+
+@register.filter(name='percentage')
+def percentage(a,b):
+    return a / b * 100
