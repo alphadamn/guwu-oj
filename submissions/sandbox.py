@@ -53,7 +53,7 @@ def _runtime_user_flags():
 
 def _base_docker_args(work_dir, timeout_sec, memory_mb):
     work_dir = str(Path(work_dir).resolve())
-    base_dir = Path(__file__).resolve().parent.parent.parent
+    base_dir = Path(__file__).resolve().parent.parent
     
     return [
         'docker', 'run', '--rm', '-i',

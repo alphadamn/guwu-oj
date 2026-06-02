@@ -1,6 +1,7 @@
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -103,6 +104,7 @@ class SandboxRunner:
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or 'Runtime error').strip()
+            # print(err)
             return None, elapsed_ms, ('Runtime Error', err)
         return result.stdout, elapsed_ms, None
 
