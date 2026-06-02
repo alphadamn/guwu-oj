@@ -134,11 +134,11 @@ class SandboxRunner:
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or 'Runtime error').strip()
-            print(f"Command failed: {cmd}")
-            print(f"Return code: {result.returncode}")
-            print(f"Stderr: {result.stderr}")
-            print(f"Stdout: {result.stdout}")
-            print(f"Error: {err}")
+            # print(f"Command failed: {cmd}")
+            # print(f"Return code: {result.returncode}")
+            # print(f"Stderr: {result.stderr}")
+            # print(f"Stdout: {result.stdout}")
+            # print(f"Error: {err}")
             return None, elapsed_ms, ('Runtime Error', err)
         return result.stdout, elapsed_ms, None
 
@@ -155,7 +155,7 @@ class SandboxRunner:
         # Compile and execute in the same container session to avoid binary persistence issues
         src = Path(self.work_dir) / 'main.cpp'
         src.write_text(code, encoding='utf-8')
-        start = time.perf_counter()
+        # start = time.perf_counter()
         try:
             # Compile first
             compile_result = self._run(
@@ -182,10 +182,43 @@ class SandboxRunner:
             print(f"Binary exists on host: {binary_path}")
             
             # Execute using absolute path
-            result = self._run(['/sandbox/main'], self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            # start = time.perf_counter()
+            try:
+                cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
+                wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+                result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+                elapsed_sec = None
+                if result.stderr:
+                    first_line = result.stderr.splitlines()[1].strip()
+                    # print(first_line)
+                    try:
+                        # elapsed_sec = float(first_line)
+                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                        if match:
+                            minutes = int(match.group(1))
+                            seconds = float(match.group(2))
+                            elapsed_sec = minutes * 60 + seconds
+                    except ValueError:
+                        pass
+                elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+            except subprocess.TimeoutExpired:
+                return None, None, 'Time Limit Exceeded'
+
+            if exit_indicates_memory_limit(result.returncode):
+                return None, elapsed_ms, 'Memory Limit Exceeded'
+
+            if result.returncode != 0:
+                err = (result.stderr or result.stdout or 'Runtime error').strip()
+                # print(f"Command failed: {wrapped_cmd}")
+                # print(f"Return code: {result.returncode}")
+                # print(f"Stderr: {result.stderr}")
+                # print(f"Stdout: {result.stdout}")
+                # print(f"Error: {err}")
+                return None, elapsed_ms, ('Runtime Error', err)
+            return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
             return None, None, 'Time Limit Exceeded'
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        # elapsed_ms = int((time.perf_counter() - start) * 1000)
 
         if exit_indicates_memory_limit(result.returncode):
             return None, elapsed_ms, 'Memory Limit Exceeded'
@@ -204,7 +237,7 @@ class SandboxRunner:
         # Compile and execute in the same container session to avoid binary persistence issues
         src = Path(self.work_dir) / 'main.c'
         src.write_text(code, encoding='utf-8')
-        start = time.perf_counter()
+        # start = time.perf_counter()
         try:
             # Compile first
             compile_result = self._run(
@@ -231,23 +264,45 @@ class SandboxRunner:
             print(f"Binary exists on host: {binary_path}")
 
             # Execute using absolute path
-            result = self._run(['/sandbox/main'], self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            # start = time.perf_counter()
+            try:
+                cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
+                wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+                result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+                elapsed_sec = None
+                if result.stderr:
+                    first_line = result.stderr.splitlines()[1].strip()
+                    # print(first_line)
+                    try:
+                        # elapsed_sec = float(first_line)
+                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                        if match:
+                            minutes = int(match.group(1))
+                            seconds = float(match.group(2))
+                            elapsed_sec = minutes * 60 + seconds
+                    except ValueError:
+                        pass
+                try:
+                    elapsed_ms = int(elapsed_sec * 1000)
+                except Exception:
+                    elapsed_sec = None
+            except subprocess.TimeoutExpired:
+                return None, None, 'Time Limit Exceeded'
+
+            if exit_indicates_memory_limit(result.returncode):
+                return None, elapsed_ms, 'Memory Limit Exceeded'
+
+            if result.returncode != 0:
+                err = (result.stderr or result.stdout or 'Runtime error').strip()
+                # print(f"Command failed: {wrapped_cmd}")
+                # print(f"Return code: {result.returncode}")
+                # print(f"Stderr: {result.stderr}")
+                # print(f"Stdout: {result.stdout}")
+                # print(f"Error: {err}")
+                return None, elapsed_ms, ('Runtime Error', err)
+            return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
             return None, None, 'Time Limit Exceeded'
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            print(f"Command failed")
-            print(f"Return code: {result.returncode}")
-            print(f"Stderr: {result.stderr}")
-            print(f"Stdout: {result.stdout}")
-            print(f"Error: {err}")
-            return None, elapsed_ms, ('Runtime Error', err)
-        return result.stdout, elapsed_ms, None
 
     def run_java(self, class_name, stdin_data):
         return self.run_executable(['java', class_name], stdin_data)

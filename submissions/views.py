@@ -79,6 +79,7 @@ def submission_status_api(request, submission_id):
         raise Http404('Submission not found')
 
     test_results = list(submission.test_results.order_by('case_index'))
+    # print(test_results[0].runtime)
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
     total_cases = submission.problem.test_cases.count()
     judging = (
@@ -98,7 +99,7 @@ def submission_status_api(request, submission_id):
             {
                 'case_index': r.case_index,
                 'status': r.status,
-                'runtime': r.runtime,
+                'runtime': r.runtime if r.runtime > 1 else 1,
             }
             for r in test_results
         ],

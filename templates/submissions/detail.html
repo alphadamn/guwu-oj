@@ -150,9 +150,7 @@
                             <span class="badge case-badge case-Skipped" title="{{ result.status }}">#{{ result.case_index }}</span>
                         {% endif %}
                         <span class="case-label">#{{ result.case_index }}</span>
-                        {% if result.runtime %}
-                            <span class="case-runtime">{{ result.runtime }} ms</span>
-                        {% endif %}
+                        <span class="case-runtime">{{ result.runtime }} ms</span>
                     </div>
                     {% endfor %}
                 </div>
