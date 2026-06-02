@@ -4,12 +4,15 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q, Count, ExpressionWrapper, When, Case, Value, F, FloatField
 from django.views.decorators.http import require_POST
+from django.views.decorators.cache import cache_page
+from django.core.cache import cache
 from .models import Problem, Solution
 from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
 from users.models import User
 from submissions.models import Submission
 
 
+@cache_page(60 * 5)  # Cache for 5 minutes
 def home(request):
     recent_problems = Problem.objects.filter(is_public=True)[:10]
     public_problems = Problem.objects.filter(is_public=True)
@@ -25,6 +28,13 @@ def home(request):
 
 
 def problem_list(request):
+    # Generate cache key based on query parameters
+    cache_key = f'problem_list_{request.GET.urlencode()}'
+    cached_response = cache.get(cache_key)
+    
+    if cached_response:
+        return cached_response
+    
     problems = Problem.objects.filter(is_public=True)
     
     # Filter by difficulty
@@ -45,9 +55,12 @@ def problem_list(request):
         problems = problems.filter(tags__icontains=tags)
     
     problems = problems.order_by('-created_at')
-    return render(request, 'problems/problem_list.html', {'problems': problems})
+    response = render(request, 'problems/problem_list.html', {'problems': problems})
+    cache.set(cache_key, response, 60 * 10)  # Cache for 10 minutes
+    return response
 
 
+@cache_page(60 * 15)  # Cache for 15 minutes
 def problem_detail(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
     return render(request, 'problems/problem_detail.html', {'problem': problem, 'count': problem.submissions.filter(status='Accepted').count()})
@@ -77,6 +90,7 @@ def create_problem(request):
     return render(request, 'problems/create_problem.html', {'form': form})
 
 
+@cache_page(60 * 30)  # Cache for 30 minutes (complex query)
 def leaderboard(request):
     users = User.objects.annotate(
         solved_count=Count('solved_problems', distinct=True),

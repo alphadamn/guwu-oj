@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from problems.models import Problem
 
 User = get_user_model()
@@ -37,6 +38,11 @@ class Submission(models.Model):
     
     def __str__(self):
         return f"Submission {self.id} - {self.user.username} - {self.problem.title}"
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Clear relevant caches when submission is saved
+        cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
 
 
 class SubmissionTestResult(models.Model):

@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 
 User = get_user_model()
 
@@ -45,6 +46,16 @@ class Problem(models.Model):
     
     def __str__(self):
         return f"P{self.id} - {self.title}"
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Clear relevant caches when problem is saved
+        cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
+    
+    def delete(self, *args, **kwargs):
+        # Clear relevant caches before deletion
+        cache.delete_pattern('views.decorators.cache.*')
+        super().delete(*args, **kwargs)
 
 
 class TestCase(models.Model):

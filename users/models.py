@@ -4,6 +4,7 @@ from pathlib import Path
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from django.core.cache import cache
 
 
 def avatar_upload_to(instance, filename):
@@ -26,3 +27,8 @@ class User(AbstractUser):
     
     def __str__(self):
         return self.username
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Clear relevant caches when user is saved
+        cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
