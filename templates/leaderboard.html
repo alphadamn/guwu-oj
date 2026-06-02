@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{ % load problem_extras % }
+{% load mathfilters %}
 
 {% block title %}排行榜 - 谷物 OJ{% endblock %}
 
@@ -48,7 +48,7 @@
                         <td>{{ user.submission_count }}</td>
                         <td>
                             {% if user.submission_count > 0 %}
-                                {{ user.solved_count|percentage:user.submission_count }}
+                                {{ user.solved_count|div:user.submission_count|mul:100|floatformat:1 }}%
                             {% else %}
                                 --
                             {% endif %}
