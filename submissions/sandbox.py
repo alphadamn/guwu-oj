@@ -53,6 +53,8 @@ def _runtime_user_flags():
 
 def _base_docker_args(work_dir, timeout_sec, memory_mb):
     work_dir = str(Path(work_dir).resolve())
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    
     return [
         'docker', 'run', '--rm', '-i',
         '--network', 'none',
@@ -60,7 +62,15 @@ def _base_docker_args(work_dir, timeout_sec, memory_mb):
         *_runtime_user_flags(),
         '--pids-limit', str(getattr(settings, 'OJ_DOCKER_PIDS_LIMIT', 64)),
         '--security-opt', 'no-new-privileges',
+        '--security-opt', f'seccomp={base_dir}/docker/judge/seccomp-profile.json',
+        '--security-opt', 'apparmor=oj-judge',
         '--cap-drop', 'ALL',
+        '--read-only',
+        '--tmpfs', '/tmp',
+        '--device', '/dev/null:r',
+        '--device', '/dev/zero:r',
+        '--device', '/dev/random:r',
+        '--device', '/dev/urandom:r',
         '-v', f'{work_dir}:/sandbox:rw',
         '-w', '/sandbox',
         getattr(settings, 'OJ_DOCKER_IMAGE', 'oj-judge:latest'),

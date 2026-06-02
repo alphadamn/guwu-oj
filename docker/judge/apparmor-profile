@@ -1,0 +1,82 @@
+#include <tunables/global>
+
+profile oj-judge flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Deny all capabilities
+  capability,
+  deny capability,
+
+  # Allow basic file operations in /sandbox
+  /sandbox/** rw,
+  /sandbox/ r,
+
+  # Allow read access to system libraries
+  /usr/lib/** r,
+  /usr/lib/x86_64-linux-gnu/** r,
+  /lib/** r,
+  /lib/x86_64-linux-gnu/** r,
+
+  # Allow read access to compiler and runtime binaries
+  /usr/bin/g++ rix,
+  /usr/bin/python3 rix,
+  /usr/bin/java rix,
+  /usr/lib/jvm/** rix,
+
+  # Allow read access to locale and timezone data
+  /usr/share/locale/** r,
+  /usr/share/zoneinfo/** r,
+
+  # Allow access to /proc/self for basic process info
+  /proc/self/maps r,
+  /proc/self/stat r,
+  /proc/self/status r,
+
+  # Deny access to other processes
+  deny /proc/[0-9]*/** rw,
+
+  # Deny access to sensitive system files
+  deny /etc/passwd rw,
+  deny /etc/shadow rw,
+  deny /etc/group rw,
+  deny /etc/gshadow rw,
+  deny /etc/hosts rw,
+  deny /etc/hostname rw,
+  deny /etc/resolv.conf rw,
+
+  # Deny network access
+  deny network,
+
+  # Deny device access
+  deny /dev/** rw,
+
+  # Deny sysctl access
+  deny /proc/sys/** rw,
+
+  # Deny access to other users' files
+  deny /home/** rw,
+  deny /root/** rw,
+
+  # Deny access to system directories
+  deny /var/** rw,
+  deny /tmp/** rw,
+  deny /run/** rw,
+
+  # Allow temporary directory access (will be mounted as tmpfs)
+  /tmp/** rw,
+
+  # Deny ptrace and process manipulation
+  deny ptrace (read, write),
+  deny signal,
+
+  # Deny mount operations
+  deny mount,
+  deny umount,
+
+  # Deny module operations
+  deny /sys/module/** rw,
+
+  # Allow standard library access
+  /usr/share/** r,
+}
