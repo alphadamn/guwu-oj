@@ -1,8 +1,8 @@
-from django.db.models.functions import Cast
+from django.db.models.functions import Cast, RowNumber
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Q, Count, ExpressionWrapper, When, Case, Value, F, FloatField
+from django.db.models import Q, Count, ExpressionWrapper, When, Case, Value, F, FloatField, Window
 from django.views.decorators.http import require_POST
 from django.views.decorators.cache import cache_page
 from django.core.cache import cache
@@ -12,7 +12,6 @@ from users.models import User
 from submissions.models import Submission
 
 
-@cache_page(60 * 5)  # Cache for 5 minutes
 def home(request):
     recent_problems = Problem.objects.filter(is_public=True)[:10]
     public_problems = Problem.objects.filter(is_public=True)
@@ -112,22 +111,29 @@ def leaderboard(request):
 def solution_list(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
     solutions = problem.solutions.filter(is_approved=True)
-    
+
+
     # Show user's own solutions even if not approved
     if request.user.is_authenticated:
         user_solutions = problem.solutions.filter(author=request.user, is_approved=False)
         solutions = solutions | user_solutions
-    
-    solutions = solutions.order_by('-likes')
 
-    s = []
+    solutions = solutions.annotate(
+        rn=Window(
+            expression=RowNumber(),
+            partition_by=[F('id')],
+            order_by=F('likes').desc()
+        )
+    ).filter(rn=1).order_by('likes')
 
-    for i in range(len(solutions), 0, -1):
-        if solutions[i-1] not in s:
-            s.append(solutions[i-1])
+    # s = []
+    #
+    # for i in range(len(solutions), 0, -1):
+    #     if solutions[i-1] not in s:
+    #         s.append(solutions[i-1])
     
-    solutions = s
-    
+    # solutions = s
+
     return render(request, 'problems/solution_list.html', {
         'problem': problem,
         'solutions': solutions

@@ -56,7 +56,7 @@ class UserUpdateForm(forms.ModelForm):
             return avatar
 
         if avatar.size > self.MAX_AVATAR_SIZE:
-            raise ValidationError('头像大小不能超过 2MB。')
+            raise ValidationError('头像大小不能超过 5MB。')
 
         content_type = getattr(avatar, 'content_type', '')
         if content_type not in self.ALLOWED_CONTENT_TYPES:

@@ -102,23 +102,23 @@ class SandboxRunner:
         return class_name, None
 
     def run_executable(self, cmd, stdin_data):
-        start = time.perf_counter()
         try:
+            start = time.perf_counter()
             result = self._run(cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            elapsed_ms = int((time.perf_counter() - start) * 1000)
         except subprocess.TimeoutExpired:
             return None, None, 'Time Limit Exceeded'
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
 
         if exit_indicates_memory_limit(result.returncode):
             return None, elapsed_ms, 'Memory Limit Exceeded'
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or 'Runtime error').strip()
-            print(f"Command failed: {cmd}")
-            print(f"Return code: {result.returncode}")
-            print(f"Stderr: {result.stderr}")
-            print(f"Stdout: {result.stdout}")
-            print(f"Error: {err}")
+            # print(f"Command failed: {cmd}")
+            # print(f"Return code: {result.returncode}")
+            # print(f"Stderr: {result.stderr}")
+            # print(f"Stdout: {result.stdout}")
+            # print(f"Error: {err}")
             return None, elapsed_ms, ('Runtime Error', err)
         return result.stdout, elapsed_ms, None
 
