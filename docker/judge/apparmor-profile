@@ -9,7 +9,7 @@ profile oj-judge flags=(attach_disconnected,mediate_deleted) {
   deny capability,
 
   # Allow basic file operations in /sandbox
-  /sandbox/** rwx,
+  /sandbox/** rw,
   /sandbox/ r,
 
   # Allow read access to system libraries
