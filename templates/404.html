@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="404 错误 - 页面未找到">
+  <title>404 | 页面未找到</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Noto Sans', sans-serif;
+      background: linear-gradient(145deg, #f4f7fc 0%, #e9eef4 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow-x: hidden;
+      padding: 2rem;
+    }
+
+    /* 装饰背景光晕 */
+    body::before {
+      content: "";
+      position: absolute;
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(79, 70, 229, 0.08) 0%, rgba(79, 70, 229, 0) 70%);
+      border-radius: 50%;
+      top: 10%;
+      left: -100px;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    body::after {
+      content: "";
+      position: absolute;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(236, 72, 153, 0.06) 0%, rgba(236, 72, 153, 0) 70%);
+      border-radius: 50%;
+      bottom: -10%;
+      right: -120px;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* 主卡片容器 */
+    .error-card {
+      position: relative;
+      z-index: 2;
+      max-width: 660px;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(0px);
+      border-radius: 3rem;
+      padding: 3rem 2.5rem;
+      box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.2), 0 8px 18px rgba(0, 0, 0, 0.05);
+      text-align: center;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+
+    .error-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 30px 55px -15px rgba(0, 0, 0, 0.25);
+    }
+
+    /* 404 超大文字 + 渐变动效 */
+    .error-code {
+      font-size: clamp(6rem, 18vw, 10rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #1E2A5E, #4F46E5, #9b4dff);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: textGlow 8s ease infinite;
+      margin-bottom: 0.5rem;
+      text-shadow: 0 2px 10px rgba(79, 70, 229, 0.1);
+    }
+
+    @keyframes textGlow {
+      0% {
+        background-position: 0% 50%;
+      }
+      50% {
+        background-position: 100% 50%;
+      }
+      100% {
+        background-position: 0% 50%;
+      }
+    }
+
+    /* 表情装饰 */
+    .error-icon {
+      font-size: 4rem;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+      display: inline-block;
+      filter: drop-shadow(0 4px 6px rgba(0,0,0,0.05));
+    }
+
+    .error-message {
+      font-size: clamp(1.6rem, 5vw, 2.2rem);
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0.75rem 0 0.75rem 0;
+      letter-spacing: -0.3px;
+    }
+
+    .error-description {
+      font-size: 1.05rem;
+      color: #4b5563;
+      line-height: 1.5;
+      max-width: 460px;
+      margin: 1rem auto 0 auto;
+      padding: 0 0.5rem;
+    }
+
+    .suggestion {
+      font-size: 0.9rem;
+      color: #6c7283;
+      margin-top: 0.75rem;
+      background: #f3f4f6;
+      display: inline-block;
+      padding: 0.2rem 1rem;
+      border-radius: 40px;
+      backdrop-filter: blur(2px);
+    }
+
+    /* 按钮组 */
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      margin: 2.5rem 0 1.2rem 0;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.8rem;
+      font-size: 1rem;
+      font-weight: 500;
+      font-family: inherit;
+      border-radius: 60px;
+      text-decoration: none;
+      transition: all 0.25s ease;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      backdrop-filter: blur(2px);
+    }
+
+    .btn-primary {
+      background: #4F46E5;
+      color: white;
+      box-shadow: 0 4px 10px rgba(79, 70, 229, 0.25);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .btn-primary:hover {
+      background: #4338ca;
+      transform: translateY(-3px);
+      box-shadow: 0 10px 20px -5px rgba(79, 70, 229, 0.4);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.85);
+      color: #1f2937;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    .btn-secondary:hover {
+      background: white;
+      border-color: #cbd5e1;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    /* 底部小提示 */
+    .footer-note {
+      margin-top: 2rem;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      border-top: 1px solid #edf2f7;
+      padding-top: 1.5rem;
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .footer-note a {
+      color: #5b6e8c;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-note a:hover {
+      color: #4F46E5;
+      text-decoration: underline;
+    }
+
+    /* 微型搜索提示 */
+    .hint {
+      background: #f8fafc;
+      border-radius: 30px;
+      padding: 0.6rem 1.2rem;
+      font-size: 0.85rem;
+      color: #475569;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+      border: 1px solid #eef2ff;
+    }
+
+    /* 响应式 */
+    @media (max-width: 640px) {
+      .error-card {
+        padding: 2rem 1.5rem;
+        border-radius: 2rem;
+      }
+
+      .button-group {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.9rem;
+      }
+
+      .btn {
+        justify-content: center;
+        padding: 0.75rem 1rem;
+      }
+
+      .error-description {
+        font-size: 0.95rem;
+      }
+
+      .hint {
+        font-size: 0.75rem;
+        padding: 0.4rem 1rem;
+      }
+    }
+
+    .btn:focus-visible {
+      outline: 2px solid #4F46E5;
+      outline-offset: 2px;
+    }
+
+    a, button {
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="error-card" role="main" aria-labelledby="error-message-title">
+    <div class="error-icon">
+      🧭🔍
+    </div>
+    <div class="error-code" aria-label="404 错误代码">
+      404
+    </div>
+    <div class="error-message" id="error-message-title">
+      页面未找到
+    </div>
+    <p class="error-description">
+      哎呀！你要找的页面似乎溜进了数字荒野。<br>
+      它可能已被移动、重命名，或者从未存在过。
+    </p>
+    <div class="hint">
+      <span>💡</span> 小贴士：检查网址是否输错，或返回首页重新开始
+    </div>
+    <div class="button-group">
+      <a href="/" class="btn btn-primary">
+        🏠 返回首页
+      </a>
+      <button class="btn btn-secondary" onclick="history.back();" type="button">
+        ⟵ 返回上一页
+      </button>
+    </div>
+  </div>
+</body>
+</html>
