@@ -46,9 +46,10 @@ def _memory_flags(memory_mb):
 
 
 def _runtime_user_flags():
-    # Run as root to avoid permission issues with execution
-    # TODO: Consider running as unprivileged user for better security
-    return []
+    # Run as unprivileged "nobody" by default (uid/gid 65534).
+    container_uid = str(getattr(settings, 'OJ_DOCKER_UID', 65534))
+    container_gid = str(getattr(settings, 'OJ_DOCKER_GID', 65534))
+    return ['--user', f'{container_uid}:{container_gid}']
 
 
 def _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False):
