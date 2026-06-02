@@ -4,14 +4,39 @@ This directory contains security profiles for the Docker judge container.
 
 ## Security Features
 
-### Seccomp Profile (seccomp-profile.json)
-- Restricts system calls available to the container
-- Blocks network-related syscalls
-- Blocks filesystem manipulation (mount, umount, pivot_root, chroot)
-- Blocks kernel module loading
-- Blocks process manipulation (ptrace, process_vm_readv, process_vm_writev)
-- Blocks key management syscalls
-- Blocks privilege escalation syscalls
+### Two-Step Seccomp Approach
+
+The judge uses a two-step seccomp approach for optimal security:
+
+1. **Compilation Phase** (`seccomp-compile.json`):
+   - Relaxed seccomp profile that allows compilers to function properly
+   - Allows process creation (clone, fork, vfork) for compiler processes
+   - Allows file write operations for creating compiled binaries
+   - Allows execve for running compiler tools
+   - Still blocks network access
+   - Blocks filesystem manipulation (mount, umount, pivot_root, chroot)
+   - Blocks kernel module loading
+
+2. **Execution Phase** (`seccomp-execute.json`):
+   - Tight seccomp profile that blocks dangerous syscalls
+   - Blocks process creation (clone, fork, vfork, clone3)
+   - Blocks execution of other programs (execve, execveat)
+   - Blocks file modification operations (write, truncate, unlink, etc.)
+   - Blocks network access
+   - Blocks filesystem manipulation
+   - Blocks kernel module loading
+   - Blocks process manipulation (ptrace, process_vm_readv, process_vm_writev)
+   - Blocks key management syscalls
+   - Blocks privilege escalation syscalls
+   - Blocks IPC operations (semaphores, shared memory, message queues)
+   - Blocks inotify and fanotify operations
+   - Blocks BPF operations
+   - Blocks perf events
+
+This approach ensures that:
+- Compilers can work normally with necessary permissions
+- Executed code runs in a highly restricted environment
+- Security is maximized without breaking functionality
 
 ### AppArmor Profile (apparmor-profile)
 - Provides additional confinement beyond Docker's default security
