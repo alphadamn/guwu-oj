@@ -9,3 +9,5 @@ requests>=2.31.0
 dotenv
 django-redis
 django-mathfilters
+gunicorn
+whitenoise

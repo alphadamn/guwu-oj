@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import shlex
 from pathlib import Path
 
 from django.utils.crypto import get_random_string
@@ -102,10 +103,29 @@ class SandboxRunner:
         return class_name, None
 
     def run_executable(self, cmd, stdin_data):
+        # Execute the command inside the container and measure runtime using the container's own timer to avoid Docker startup overhead.
+        # We wrap the command with `/usr/bin/time -f %e` via a bash shell, which prints elapsed seconds to stderr.
+        # The command's stdout is captured as usual; the first line of stderr contains the elapsed time.
         try:
-            start = time.perf_counter()
-            result = self._run(cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-            elapsed_ms = int((time.perf_counter() - start) * 1000)
+            # Build a single string command for bash -c
+            cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            # Parse elapsed time from stderr (first line)
+            elapsed_sec = None
+            if result.stderr:
+                first_line = result.stderr.splitlines()[1].strip()
+                # print(first_line)
+                try:
+                    # elapsed_sec = float(first_line)
+                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                    if match:
+                        minutes = int(match.group(1))
+                        seconds = float(match.group(2))
+                        elapsed_sec = minutes * 60 + seconds
+                except ValueError:
+                    pass
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
         except subprocess.TimeoutExpired:
             return None, None, 'Time Limit Exceeded'
 
@@ -114,11 +134,11 @@ class SandboxRunner:
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or 'Runtime error').strip()
-            # print(f"Command failed: {cmd}")
-            # print(f"Return code: {result.returncode}")
-            # print(f"Stderr: {result.stderr}")
-            # print(f"Stdout: {result.stdout}")
-            # print(f"Error: {err}")
+            print(f"Command failed: {cmd}")
+            print(f"Return code: {result.returncode}")
+            print(f"Stderr: {result.stderr}")
+            print(f"Stdout: {result.stdout}")
+            print(f"Error: {err}")
             return None, elapsed_ms, ('Runtime Error', err)
         return result.stdout, elapsed_ms, None
 

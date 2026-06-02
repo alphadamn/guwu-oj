@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     python3 \
     openjdk-17-jdk-headless \
+    time \
     && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/usr/bin/tini", "--"]

@@ -50,6 +50,7 @@ def submission_detail(request, submission_id):
     if submission.user_id != request.user.id and not request.user.is_staff:
         raise Http404('Submission not found')
     test_results = list(submission.test_results.all())
+    # print(test_results)
     for result in test_results:
         result.expected_output = ''
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
