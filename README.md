@@ -99,7 +99,7 @@ python manage.py collectstatic
 ```bash
 python manage.py runserver
 ```
-# 或
+#### 或
 
 ```bash
 gunicorn oj_project.wsgi --bind 0.0.0.0:8000
