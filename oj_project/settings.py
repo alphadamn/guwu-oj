@@ -25,7 +25,7 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
+    # 'django.contrib.staticfiles',
     'crispy_forms',
     'crispy_bootstrap5',
     'users',
@@ -117,6 +117,7 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # MEDIA_ROOT = BASE_DIR / 'media'
 # MEDIAFILES_DIRS = [BASE_DIR / 'media']
 
+WHITENOISE_ROOT = BASE_DIR / 'static'
 WHITENOISE_USE_FINDERS = True
 WHITENOISE_AUTOREFRESH = True
 
