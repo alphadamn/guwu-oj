@@ -370,6 +370,35 @@ def judge_submission(submission_id):
     try:
         runner = SandboxRunner(work_dir, problem.time_limit, problem.memory_limit)
 
+        # Warm‑up: compile and run a minimal hello‑world program in the submission's language.
+        # This pre‑initialises the Docker container without affecting scoring.
+        try:
+            if submission.language == 'C++':
+                exe, err = runner.compile_cpp('int main(){return 0;}')
+                if exe:
+                    runner.run_executable([exe], None)
+            elif submission.language == 'C':
+                # Create a simple C source file
+                src = Path(work_dir) / 'hello.c'
+                src.write_text('int main(){return 0;}', encoding='utf-8')
+                compile_res = runner._run(['gcc', '-O2', '-o', 'hello', 'hello.c'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                if compile_res.returncode == 0:
+                    runner.run_executable(['./hello'], None)
+            elif submission.language == 'Python':
+                src = Path(work_dir) / 'hello.py'
+                src.write_text('pass', encoding='utf-8')
+                runner.run_executable(['python3', src.name], None)
+            elif submission.language == 'Java':
+                class_name = 'Hello'
+                src = Path(work_dir) / f'{class_name}.java'
+                src.write_text('public class Hello { public static void main(String[] args) {} }', encoding='utf-8')
+                compiled_name, err = runner.compile_java(src.read_text())
+                if compiled_name:
+                    runner.run_executable(['java', compiled_name], None)
+        except Exception:
+            # Ignore any warm‑up failures; real test cases will surface problems.
+            pass
+
         if submission.language == 'C++':
             # For C++, compile and execute in the same container session to avoid binary persistence issues
             src = Path(work_dir) / 'main.cpp'

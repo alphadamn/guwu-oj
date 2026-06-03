@@ -99,7 +99,7 @@ def submission_status_api(request, submission_id):
             {
                 'case_index': r.case_index,
                 'status': r.status,
-                'runtime': r.runtime if r.runtime > 1 else 1,
+                'runtime': str(r.runtime),
             }
             for r in test_results
         ],

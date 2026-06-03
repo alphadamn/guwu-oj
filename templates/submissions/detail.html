@@ -111,7 +111,7 @@
                             {% if test_results %}
                                 <p class="mb-1">测试点: <strong>{{ passed_count }}/{{ total_cases }}</strong> 通过</p>
                             {% endif %}
-                            {% if submission.runtime %}
+                            {% if submission.runtime is not None %}
                                 <p class="mb-0">最大运行时间: {{ submission.runtime }} ms</p>
                             {% endif %}
                             {% if submission.memory %}
@@ -150,7 +150,9 @@
                             <span class="badge case-badge case-Skipped" title="{{ result.status }}">#{{ result.case_index }}</span>
                         {% endif %}
                         <span class="case-label">#{{ result.case_index }}</span>
-                        <span class="case-runtime">{{ result.runtime }} ms</span>
+                        {% if submission.runtime is not None %}
+                            <span class="case-runtime">{{ result.runtime }} ms</span>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>

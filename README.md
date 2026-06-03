@@ -34,8 +34,23 @@
 - Django 4.2+
 - Bootstrap 5
 - PostgreSQL
+- Docker (用于沙箱评测环境)
 - django-crispy-forms
 - crispy-bootstrap5
+- Redis缓存页面
+- Whitenoise处理静态文件
+
+## 安装步骤
+
+### 使用 Docker（推荐）
+
+```bash
+# 构建评测容器镜像（一次性）
+cd docker/judge
+docker build -t oj-judge:latest .
+```
+
+如果你更倾向于本地直接运行而非 Docker，可跳过此段，继续使用常规的 Python 环境。
 
 ## 安装步骤
 
@@ -73,12 +88,22 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-### 6. 启动开发服务器
+### 6. 处理静态文件
+
+```bash
+python manage.py collectstatic
+```
+
+### 7. 启动开发服务器
 
 ```bash
 python manage.py runserver
 ```
+# 或
 
+```bash
+gunicorn oj_project.wsgi --bind 0.0.0.0:8000
+```
 访问 http://127.0.0.1:8000 查看网站。
 
 ## 项目结构
@@ -135,16 +160,32 @@ windsurf-project/
 └── static/                  # 静态文件目录
 ```
 
-## 使用说明
+### Redis 缓存与后台任务
+
+项目已在 `settings.py` 中配置了 **django‑redis**，默认使用 `redis://127.0.0.1:6379/1`。在生产环境建议使用独立的 Redis 实例，并通过环境变量覆盖 `REDIS_URL` 或直接修改 `CACHES` 配置。
+
+```python
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"),
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
+}
+```
+
+### WhiteNoise 静态文件服务
+
+`WhiteNoise` 已加入 `MIDDLEWARE`，无需额外配置即可在 Gunicorn/uwsgi 等 WSGI 服务器上直接提供压缩和缓存的静态文件。若需要自定义缓存时间，可在 `settings.py` 添加：
+
+```python
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+WHITENOISE_MAX_AGE = 31536000  # 1 year
+```
 
 ### 管理后台
 
 访问 http://127.0.0.1:8000/admin 进入管理后台，使用超级用户账号登录。
-
-在管理后台中可以：
-- 创建和管理题目
-- 管理用户
-- 查看提交记录
 
 ### 添加题目
 
