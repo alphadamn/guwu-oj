@@ -17,6 +17,3 @@ urlpatterns = [
     path('submissions/', include('submissions.urls')),
     path('handbook/', include('handbook.urls')),
 ]
-
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

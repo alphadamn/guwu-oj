@@ -7,8 +7,8 @@
     <div class="col-lg-4">
         <div class="card">
             <div class="card-body text-center">
-                {% if user_profile.avatar %}
-                    <img src="{{ user_profile.avatar.url }}" class="rounded-circle mb-3" alt="Avatar" style="width: 150px; height: 150px; object-fit: cover;">
+                {% if user_profile.has_avatar %}
+                    <img src="{{ user_profile.avatar_url }}" class="rounded-circle mb-3" alt="Avatar" style="width: 150px; height: 150px; object-fit: cover;">
                 {% else %}
                     <div class="rounded-circle mb-3 bg-secondary d-flex align-items-center justify-content-center" style="width: 150px; height: 150px; margin: 0 auto;">
                         <i class="bi bi-person" style="font-size: 4rem; color: white;"></i>

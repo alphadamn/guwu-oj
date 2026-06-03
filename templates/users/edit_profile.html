@@ -14,19 +14,19 @@
                 <form method="post" enctype="multipart/form-data">
                     {% csrf_token %}
                     <div class="mb-3">
-                        <label for="id_nickname" class="form-label">昵称</label>
+                        <label class="form-label">昵称</label>
                         {{ form.nickname|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <label for="id_bio" class="form-label">个人简介</label>
+                        <label class="form-label">个人简介</label>
                         {{ form.bio|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <label for="id_avatar" class="form-label">头像</label>
+                        <label class="form-label">头像</label>
                         {{ form.avatar|as_crispy_field }}
-                        {% if user.avatar %}
+                        {% if user.has_avatar %}
                             <div class="mt-2">
-                                <img src="{{ user.avatar.url }}" class="rounded-circle" alt="Current avatar" style="width: 100px; height: 100px; object-fit: cover;">
+                                <img src="{{ user.avatar_url }}" class="rounded-circle" alt="Current avatar" style="width: 100px; height: 100px; object-fit: cover;">
                             </div>
                         {% endif %}
                     </div>
