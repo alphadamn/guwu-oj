@@ -8,6 +8,52 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    <style>
+        .navbar-search-form .form-control,
+        .navbar-search-form .input-group-text,
+        .navbar-search-form .btn {
+            transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+        }
+        .navbar-search-form:focus-within .input-group-text,
+        .navbar-search-form:focus-within .form-control {
+            border-color: #0d6efd;
+            box-shadow: 0 0 0 .15rem rgba(13, 110, 253, .25);
+        }
+        .navbar-search-form.is-searching .form-control {
+            background-image: linear-gradient(90deg, transparent 0%, rgba(13,110,253,.18) 50%, transparent 100%);
+            background-size: 200% 100%;
+            animation: navbar-search-shimmer 1.2s linear infinite;
+        }
+        .navbar-search-form.is-searching .btn .navbar-search-label,
+        .navbar-search-form.is-searching .btn i {
+            display: none;
+        }
+        .navbar-search-form.is-searching .btn .navbar-search-spinner {
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+        }
+        .navbar-search-form .navbar-search-spinner {
+            display: none;
+        }
+        .navbar-search-form .navbar-search-spinner::before {
+            content: "";
+            width: .85rem;
+            height: .85rem;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: navbar-search-spin .8s linear infinite;
+            display: inline-block;
+        }
+        @keyframes navbar-search-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        @keyframes navbar-search-spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -42,6 +88,20 @@
                     </li>
                     {% endif %}
                 </ul>
+                <form class="d-flex mx-lg-3 navbar-search-form" role="search" action="{% url 'search:search' %}" method="get">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-white border-end-0">
+                            <i class="bi bi-search text-muted"></i>
+                        </span>
+                        <input class="form-control border-start-0" type="search" name="q"
+                               placeholder="搜索题目/手册/网络…" aria-label="搜索"
+                               value="{{ request.GET.q }}" autocomplete="off">
+                        <button class="btn btn-primary" type="submit">
+                            <span class="navbar-search-label"><i class="bi bi-search"></i> 搜索</span>
+                            <span class="navbar-search-spinner">搜索中</span>
+                        </button>
+                    </div>
+                </form>
                 <ul class="navbar-nav">
                     {% if user.is_authenticated %}
                         <li class="nav-item dropdown">
@@ -91,6 +151,23 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{% static 'js/main.js' %}"></script>
+    <script>
+    (function () {
+        const form = document.querySelector('form.navbar-search-form');
+        if (!form) return;
+        const input = form.querySelector('input[name="q"]');
+        function start() {
+            if (input && input.value && input.value.trim()) {
+                form.classList.add('is-searching');
+            }
+        }
+        function stop() { form.classList.remove('is-searching'); }
+        form.addEventListener('submit', start);
+        window.addEventListener('pageshow', stop);
+        // Stop the spinner after 20s as a safety net.
+        setTimeout(() => { if (form.classList.contains('is-searching')) stop(); }, 20000);
+    })();
+    </script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

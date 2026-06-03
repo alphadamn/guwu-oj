@@ -1,0 +1,16 @@
+<div class="list-group mb-3">
+    {% for item in items %}
+        <a href="{{ item.url }}" class="list-group-item list-group-item-action" target="_blank" rel="noopener noreferrer">
+            <div class="d-flex w-100 justify-content-between">
+                <h6 class="mb-1 text-truncate">{{ item.title }}</h6>
+                <small class="text-muted text-nowrap ms-2">{{ item.source }}</small>
+            </div>
+            {% if item.snippet %}
+                <p class="mb-1 small text-muted">{{ item.snippet|truncatechars:200 }}</p>
+            {% endif %}
+            {% if item.url %}
+                <small class="text-primary text-break">{{ item.url }}</small>
+            {% endif %}
+        </a>
+    {% endfor %}
+</div>

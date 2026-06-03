@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+
+{% block title %}搜索 · 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+    #search-loading-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.75);
+        backdrop-filter: blur(2px);
+        z-index: 1080;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    #search-loading-overlay.is-visible {
+        display: flex;
+    }
+    .search-spinner {
+        width: 64px;
+        height: 64px;
+        border: 6px solid #e2e6ea;
+        border-top-color: #0d6efd;
+        border-radius: 50%;
+        animation: search-spin 0.9s linear infinite;
+    }
+    .search-dots {
+        display: inline-flex;
+        gap: 6px;
+    }
+    .search-dots span {
+        width: 10px;
+        height: 10px;
+        background: #0d6efd;
+        border-radius: 50%;
+        animation: search-bounce 1.2s ease-in-out infinite;
+    }
+    .search-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .search-dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes search-spin {
+        to { transform: rotate(360deg); }
+    }
+    @keyframes search-bounce {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+        40% { transform: scale(1); opacity: 1; }
+    }
+    .search-error {
+        background: #fff5f5;
+        color: #a94442;
+        border: 1px solid #f5c2c2;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="search-loading-overlay" {% if query %}class="is-visible"{% endif %}>
+    <div class="search-spinner"></div>
+    <div class="text-center">
+        <div class="fw-semibold">正在聚合搜索结果…</div>
+        <div class="search-dots mt-2"><span></span><span></span><span></span></div>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="card mb-4">
+            <div class="card-body">
+                <form id="search-source-form" method="get" action="{% url 'search:search' %}">
+                    <input type="hidden" name="q" value="{{ query }}">
+
+                    <div class="mb-2 text-muted small">选择数据源：</div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        {% for src in available_sources %}
+                            <div class="form-check form-check-inline mb-0">
+                                <input class="form-check-input" type="checkbox" name="src"
+                                       id="src_{{ forloop.counter }}" value="{{ src }}"
+                                       {% if src in active_sources %}checked{% endif %}>
+                                <label class="form-check-label" for="src_{{ forloop.counter }}">
+                                    {{ src }}
+                                </label>
+                            </div>
+                        {% endfor %}
+                        <button class="btn btn-sm btn-primary ms-auto" type="submit">应用</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="search-results">
+            {% if not query %}
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-search" style="font-size: 3rem;"></i>
+                    <p class="mt-3">输入关键字开始搜索，聚合本地题库、手册与外部网络资源。</p>
+                </div>
+            {% endif %}
+        </div>
+        <div id="search-error" class="alert alert-danger mt-3" style="display:none;"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    function init() {
+        const overlay = document.getElementById('search-loading-overlay');
+        const resultsEl = document.getElementById('search-results');
+        const errorEl = document.getElementById('search-error');
+        const sourceForm = document.getElementById('search-source-form');
+        const queryInput = sourceForm && sourceForm.querySelector('input[name="q"]');
+
+        // Prefer the URL query string – this is the source of truth after a
+        // menubar submission. Fall back to the hidden form field for safety.
+        const urlQuery = (new URLSearchParams(window.location.search)).get('q') || '';
+        let query = (queryInput && queryInput.value && queryInput.value.trim())
+            ? queryInput.value
+            : urlQuery;
+        if (queryInput) queryInput.value = query;
+
+        function showLoading() {
+            if (overlay) overlay.classList.add('is-visible');
+            if (errorEl) errorEl.style.display = 'none';
+        }
+        function hideLoading() {
+            if (overlay) overlay.classList.remove('is-visible');
+        }
+        function showError(message) {
+            if (!errorEl) return;
+            errorEl.textContent = message || '搜索失败，请稍后再试。';
+            errorEl.style.display = 'block';
+        }
+
+        function activeSources() {
+            if (!sourceForm) return [];
+            return Array.from(
+                sourceForm.querySelectorAll('input[name="src"]:checked')
+            ).map(el => el.value);
+        }
+
+        function buildUrl(q, sources) {
+            const params = new URLSearchParams();
+            if (q) params.set('q', q);
+            sources.forEach(s => params.append('src', s));
+            return `{% url 'search:results_api' %}?${params.toString()}`;
+        }
+
+        async function fetchResults() {
+            if (!query) {
+                if (resultsEl) resultsEl.innerHTML = '';
+                hideLoading();
+                return;
+            }
+            showLoading();
+            try {
+                const resp = await fetch(buildUrl(query, activeSources()), {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    cache: 'no-store',
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                if (resultsEl) resultsEl.innerHTML = data.html || '';
+                if (!data.html) showError('没有收到搜索结果，请稍后再试。');
+            } catch (err) {
+                showError(err.message || '搜索失败，请稍后再试。');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Load results via AJAX on first render so the loading overlay shows on /search.
+        fetchResults();
+
+        // Re-fetch when the user toggles sources, without a full navigation.
+        if (sourceForm) {
+            sourceForm.addEventListener('submit', function (e) {
+                e.preventDefault();
+                fetchResults();
+                const params = new URLSearchParams();
+                if (query) params.set('q', query);
+                activeSources().forEach(s => params.append('src', s));
+                history.replaceState(null, '', `{% url 'search:search' %}?${params.toString()}`);
+            });
+        }
+
+        // Only hide the overlay on BFCache restore – NOT on initial page load,
+        // which would prematurely hide it while the AJAX fetch is still pending.
+        window.addEventListener('pageshow', function (e) {
+            if (e.persisted) hideLoading();
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+{% endblock %}

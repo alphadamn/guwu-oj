@@ -32,7 +32,8 @@ INSTALLED_APPS = [
     'problems',
     'submissions',
     'handbook',
-    'mathfilters'
+    'mathfilters',
+    'search',
 ]
 
 MIDDLEWARE = [

@@ -1,0 +1,22 @@
+{% if query %}
+    <div class="alert alert-light border small text-muted">
+        共找到 <strong>{{ total }}</strong> 条与 <em>{{ query }}</em> 相关的结果。
+    </div>
+
+    {% for group in groups %}
+        {% if group.items %}
+            <h5 class="mt-3">
+                <i class="bi {{ group.icon }}"></i> {{ group.name }}
+                {% if group.error %}
+                    <span class="badge bg-warning text-dark ms-2" title="{{ group.error }}">出错</span>
+                {% endif %}
+            </h5>
+            {% include 'search/_results.html' with items=group.items %}
+        {% endif %}
+    {% endfor %}
+{% else %}
+    <div class="text-center text-muted py-5">
+        <i class="bi bi-search" style="font-size: 3rem;"></i>
+        <p class="mt-3">输入关键字开始搜索，聚合本地题库、手册与外部网络资源。</p>
+    </div>
+{% endif %}
