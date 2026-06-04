@@ -18,7 +18,7 @@ from .sandbox import (
     run_in_container,
 )
 
-JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C'}
+JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C', 'Assembly'}
 COMPILE_TIMEOUT_SEC = 30
 MAX_STORED_OUTPUT_LEN = 4000
 
@@ -101,6 +101,26 @@ class SandboxRunner:
         if result.returncode != 0:
             return None, (result.stderr or result.stdout or 'Compilation failed').strip()
         return class_name, None
+
+    def compile_assembly(self, code):
+        src = Path(self.work_dir) / 'main.s'
+        src.write_text(code, encoding='utf-8')
+        try:
+            result = run_commands_in_container(
+                self.work_dir,
+                [
+                    ['as', '-o', 'main.o', 'main.s'],
+                    ['ld', '-o', 'main', 'main.o'],
+                    ['chmod', '+x', 'main'],
+                ],
+                COMPILE_TIMEOUT_SEC,
+                memory_mb=self.memory_limit_mb,
+            )
+        except subprocess.TimeoutExpired:
+            return None, 'Compile timeout'
+        if result.returncode != 0:
+            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
+        return './main', None
 
     def run_executable(self, cmd, stdin_data):
         # Execute the command inside the container and measure runtime using the container's own timer to avoid Docker startup overhead.
@@ -304,6 +324,76 @@ class SandboxRunner:
         except subprocess.TimeoutExpired:
             return None, None, 'Time Limit Exceeded'
 
+    def run_assembly_combined(self, code, stdin_data):
+        # Compile and execute assembly in the same container session to avoid binary persistence issues
+        src = Path(self.work_dir) / 'main.s'
+        src.write_text(code, encoding='utf-8')
+        try:
+            # Assemble first
+            compile_result = self._run(
+                ['as', '-o', 'main.o', 'main.s'],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if compile_result.returncode != 0:
+                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
+                return None, 0, ('Runtime Error', err)
+
+            # Link
+            link_result = self._run(
+                ['ld', '-o', 'main', 'main.o'],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if link_result.returncode != 0:
+                err = (link_result.stderr or link_result.stdout or 'Link failed').strip()
+                return None, 0, ('Runtime Error', err)
+
+            # Set execute permission
+            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
+
+            # Verify the binary exists on the host filesystem
+            binary_path = Path(self.work_dir) / 'main'
+            if not binary_path.exists():
+                print(f"Binary NOT found on host after compilation: {binary_path}")
+                return None, 0, ('Runtime Error', 'Binary not found after compilation')
+
+            os.chmod(binary_path, 0o755)
+            print(f"Binary exists on host: {binary_path}")
+
+            # Execute using absolute path
+            try:
+                cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
+                wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+                result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+                elapsed_sec = None
+                if result.stderr:
+                    first_line = result.stderr.splitlines()[1].strip()
+                    try:
+                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                        if match:
+                            minutes = int(match.group(1))
+                            seconds = float(match.group(2))
+                            elapsed_sec = minutes * 60 + seconds
+                    except ValueError:
+                        pass
+                try:
+                    elapsed_ms = int(elapsed_sec * 1000)
+                except Exception:
+                    elapsed_sec = None
+            except subprocess.TimeoutExpired:
+                return None, None, 'Time Limit Exceeded'
+
+            if exit_indicates_memory_limit(result.returncode):
+                return None, elapsed_ms, 'Memory Limit Exceeded'
+
+            if result.returncode != 0:
+                err = (result.stderr or result.stdout or 'Runtime error').strip()
+                return None, elapsed_ms, ('Runtime Error', err)
+            return result.stdout, elapsed_ms, None
+        except subprocess.TimeoutExpired:
+            return None, None, 'Time Limit Exceeded'
+
     def run_java(self, class_name, stdin_data):
         return self.run_executable(['java', class_name], stdin_data)
 
@@ -395,6 +485,14 @@ def judge_submission(submission_id):
                 compiled_name, err = runner.compile_java(src.read_text())
                 if compiled_name:
                     runner.run_executable(['java', compiled_name], None)
+            elif submission.language == 'Assembly':
+                src = Path(work_dir) / 'hello.s'
+                src.write_text('.section .text\n.global _start\n_start:\n    mov x0, #0\n    mov x8, #93\n    svc #0', encoding='utf-8')
+                compile_res = runner._run(['as', '-o', 'hello.o', 'hello.s'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                if compile_res.returncode == 0:
+                    link_res = runner._run(['ld', '-o', 'hello', 'hello.o'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                    if link_res.returncode == 0:
+                        runner.run_executable(['./hello'], None)
         except Exception:
             # Ignore any warm‑up failures; real test cases will surface problems.
             pass
@@ -420,6 +518,11 @@ def judge_submission(submission_id):
                 submission.save(update_fields=['status'])
                 return submission
             run_fn = lambda stdin: runner.run_java(class_name, stdin)
+
+        elif submission.language == 'Assembly':
+            src = Path(work_dir) / 'main.s'
+            src.write_text(submission.code, encoding='utf-8')
+            run_fn = lambda stdin: runner.run_assembly_combined(submission.code, stdin)
 
         else:
             return submission

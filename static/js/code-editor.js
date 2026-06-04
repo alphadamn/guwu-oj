@@ -11,6 +11,7 @@
         'C++': 'cpp',
         Python: 'python',
         Java: 'java',
+        Assembly: 'asm',
     };
 
     const STARTERS = {
@@ -43,6 +44,15 @@ public class Main {
         Scanner sc = new Scanner(System.in);
     }
 }
+`,
+        Assembly: `.section .text
+.global _start
+
+_start:
+    ; 退出程序 (exit system call)
+    mov x0, #0       ; exit code 0
+    mov x8, #93      ; sys_exit on ARM64
+    svc #0          ; system call
 `,
     };
 

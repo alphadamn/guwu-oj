@@ -12,6 +12,7 @@ class Submission(models.Model):
         ('C++', 'C++'),
         ('Python', 'Python'),
         ('Java', 'Java'),
+        ('Assembly', 'Assembly'),
     ]
     
     STATUS_CHOICES = [

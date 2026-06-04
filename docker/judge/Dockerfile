@@ -7,9 +7,12 @@ RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sou
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
+    gcc \
+    binutils \
     python3 \
     openjdk-17-jdk-headless \
     time \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/usr/bin/tini", "--"]

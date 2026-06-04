@@ -381,8 +381,8 @@ LOCAL_BACKENDS = [
 ]
 
 EXTERNAL_BACKENDS = [
-    # ('DuckDuckGo', search_ddg),
-    # ('Wikipedia', search_wikipedia),
+    ('DuckDuckGo', search_ddg),
+    ('Wikipedia', search_wikipedia),
     ('CSDN', search_csdn),
     ('GitHub', search_github),
     ('Bing', search_bing),
