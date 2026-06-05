@@ -96,15 +96,41 @@ def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, 
         pass
     full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile) + command
     try:
-        return subprocess.run(
+        result = subprocess.run(
             full_cmd,
             input=stdin,
             capture_output=True,
             text=True,
             timeout=timeout_sec,
         )
+        return result
     except subprocess.TimeoutExpired as exc:
+        # On timeout, attempt to kill any lingering judge containers older than 5 seconds
+        try:
+            list_res = subprocess.run(
+                ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for cid in list_res.stdout.strip().splitlines():
+                subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+        except Exception:
+            pass
         raise exc
+    finally:
+        # Ensure any lingering judge containers are cleaned up after each run
+        try:
+            list_res = subprocess.run(
+                ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for cid in list_res.stdout.strip().splitlines():
+                subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+        except Exception:
+            pass
 
 
 def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memory_mb=256):
@@ -140,6 +166,28 @@ def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memor
         print(f"Shell script stdout: {result.stdout}")
         return result
     except subprocess.TimeoutExpired as exc:
+        # On timeout, attempt to kill any lingering judge containers older than 5 seconds
+        try:
+            # List running containers based on the judge image
+            list_res = subprocess.run(
+                ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for cid in list_res.stdout.strip().splitlines():
+                # Inspect start time and kill if runtime >5s
+                inspect = subprocess.run(
+                    ['docker', 'inspect', '--format', '{{.State.StartedAt}}', cid],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if inspect.returncode == 0:
+                    # Simple approach: always kill the container on timeout
+                    subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+        except Exception:
+            pass
         raise exc
 
 

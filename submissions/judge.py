@@ -59,6 +59,23 @@ class SandboxRunner:
         self.time_limit_sec = max(time_limit_ms / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
 
+    def clean_docker(self):
+        # Attempt to clean up any dangling containers from this image
+        # try:
+        #     # List running containers based on the judge image
+        #     list_res = subprocess.run(
+        #         ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}"'],
+        #         capture_output=True,
+        #         text=True,
+        #         timeout=5,
+        #     )
+        #     container_ids = list_res.stdout.strip().splitlines()
+        #     for cid in container_ids:
+        #         subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+        # except Exception:
+        #     pass
+        pass
+
     def _run(self, command, timeout_sec, stdin=None, is_compile=False):
         return run_in_container(
             self.work_dir,
@@ -147,6 +164,7 @@ class SandboxRunner:
                     pass
             elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
         except subprocess.TimeoutExpired:
+            self.clean_docker()
             return None, None, 'Time Limit Exceeded'
 
         if exit_indicates_memory_limit(result.returncode):
@@ -222,6 +240,7 @@ class SandboxRunner:
                         pass
                 elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
             except subprocess.TimeoutExpired:
+                self.clean_docker()
                 return None, None, 'Time Limit Exceeded'
 
             if exit_indicates_memory_limit(result.returncode):
@@ -237,6 +256,7 @@ class SandboxRunner:
                 return None, elapsed_ms, ('Runtime Error', err)
             return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
+            self.clean_docker()
             return None, None, 'Time Limit Exceeded'
         # elapsed_ms = int((time.perf_counter() - start) * 1000)
 
@@ -307,6 +327,7 @@ class SandboxRunner:
                 except Exception:
                     elapsed_sec = None
             except subprocess.TimeoutExpired:
+                self.clean_docker()
                 return None, None, 'Time Limit Exceeded'
 
             if exit_indicates_memory_limit(result.returncode):
@@ -322,6 +343,7 @@ class SandboxRunner:
                 return None, elapsed_ms, ('Runtime Error', err)
             return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
+            self.clean_docker()
             return None, None, 'Time Limit Exceeded'
 
     def run_assembly_combined(self, code, stdin_data):
@@ -382,6 +404,7 @@ class SandboxRunner:
                 except Exception:
                     elapsed_sec = None
             except subprocess.TimeoutExpired:
+                self.clean_docker()
                 return None, None, 'Time Limit Exceeded'
 
             if exit_indicates_memory_limit(result.returncode):
@@ -392,6 +415,7 @@ class SandboxRunner:
                 return None, elapsed_ms, ('Runtime Error', err)
             return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
+            self.clean_docker()
             return None, None, 'Time Limit Exceeded'
 
     def run_java(self, class_name, stdin_data):
@@ -439,6 +463,7 @@ class SandboxRunner:
 
             elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
         except subprocess.TimeoutExpired:
+            self.clean_docker()
             return None, None, 'Time Limit Exceeded'
 
         if exit_indicates_memory_limit(result.returncode):
@@ -492,6 +517,7 @@ class SandboxRunner:
 
             elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
         except subprocess.TimeoutExpired:
+            self.clean_docker()
             return None, None, 'Time Limit Exceeded'
 
         if exit_indicates_memory_limit(result.returncode):
@@ -707,6 +733,21 @@ def judge_submission(submission_id):
                 case_status = parsed
 
             if case_status == 'Time Limit Exceeded':
+                # # Attempt to clean up any dangling containers from this image
+                # try:
+                #     # List running containers based on the judge image
+                #     list_res = subprocess.run(
+                #         ['docker', 'ps', '-q', '--filter',
+                #          f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}"'],
+                #         capture_output=True,
+                #         text=True,
+                #         timeout=5,
+                #     )
+                #     container_ids = list_res.stdout.strip().splitlines()
+                #     for cid in container_ids:
+                #         subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+                # except Exception:
+                #     pass
                 case_runtime = case_runtime or problem.time_limit
 
             save_case_result(
