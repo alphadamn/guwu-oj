@@ -13,7 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jdk-headless \
     time \
     tini \
+    rustc \
+    golang \
     && rm -rf /var/lib/apt/lists/*
+
+# Setup Go cache directory
+RUN mkdir -p /sandbox/.cache/go-build
+ENV GOCACHE=/sandbox/.cache/go-build
+ENV GOPATH=/sandbox/go
+ENV PATH=$PATH:/sandbox/go/bin
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 

@@ -18,7 +18,7 @@ from .sandbox import (
     run_in_container,
 )
 
-JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C', 'Assembly'}
+JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C', 'Assembly', 'Rust', 'Golang'}
 COMPILE_TIMEOUT_SEC = 30
 MAX_STORED_OUTPUT_LEN = 4000
 
@@ -397,6 +397,150 @@ class SandboxRunner:
     def run_java(self, class_name, stdin_data):
         return self.run_executable(['java', class_name], stdin_data)
 
+    def run_rust(self, executable, stdin_data):
+        return self.run_executable([executable], stdin_data)
+
+    def run_rust_combined(self, code, stdin_data):
+        src = Path(self.work_dir) / 'main.rs'
+        src.write_text(code, encoding='utf-8')
+        try:
+            compile_result = self._run(
+                ['rustc', '--edition=2021', '-o', 'main', 'main.rs'],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if compile_result.returncode != 0:
+                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
+                return None, 0, ('Runtime Error', err)
+
+            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
+
+            binary_path = Path(self.work_dir) / 'main'
+            if not binary_path.exists():
+                return None, 0, ('Runtime Error', 'Binary not found after compilation')
+
+            os.chmod(binary_path, 0o755)
+
+            cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+
+            elapsed_sec = None
+            if result.stderr:
+                first_line = result.stderr.splitlines()[1].strip()
+                try:
+                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                    if match:
+                        minutes = int(match.group(1))
+                        seconds = float(match.group(2))
+                        elapsed_sec = minutes * 60 + seconds
+                except ValueError:
+                    pass
+
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+        except subprocess.TimeoutExpired:
+            return None, None, 'Time Limit Exceeded'
+
+        if exit_indicates_memory_limit(result.returncode):
+            return None, elapsed_ms, 'Memory Limit Exceeded'
+
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or 'Runtime error').strip()
+            return None, elapsed_ms, ('Runtime Error', err)
+
+        return result.stdout, elapsed_ms, None
+
+    def run_golang(self, executable, stdin_data):
+        return self.run_executable([executable], stdin_data)
+
+    def run_golang_combined(self, code, stdin_data):
+        src = Path(self.work_dir) / 'main.go'
+        src.write_text(code, encoding='utf-8')
+        try:
+            compile_result = self._run(
+                ['go', 'build', '-o', 'main', 'main.go'],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if compile_result.returncode != 0:
+                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
+                return None, 0, ('Runtime Error', err)
+
+            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
+
+            binary_path = Path(self.work_dir) / 'main'
+            if not binary_path.exists():
+                return None, 0, ('Runtime Error', 'Binary not found after compilation')
+
+            os.chmod(binary_path, 0o755)
+
+            cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+
+            elapsed_sec = None
+            if result.stderr:
+                first_line = result.stderr.splitlines()[1].strip()
+                try:
+                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                    if match:
+                        minutes = int(match.group(1))
+                        seconds = float(match.group(2))
+                        elapsed_sec = minutes * 60 + seconds
+                except ValueError:
+                    pass
+
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+        except subprocess.TimeoutExpired:
+            return None, None, 'Time Limit Exceeded'
+
+        if exit_indicates_memory_limit(result.returncode):
+            return None, elapsed_ms, 'Memory Limit Exceeded'
+
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or 'Runtime error').strip()
+            return None, elapsed_ms, ('Runtime Error', err)
+
+        return result.stdout, elapsed_ms, None
+
+    def compile_rust(self, code):
+        src = Path(self.work_dir) / 'main.rs'
+        src.write_text(code, encoding='utf-8')
+        try:
+            result = run_commands_in_container(
+                self.work_dir,
+                [
+                    ['rustc', '--edition=2021', '-o', 'main', 'main.rs'],
+                    ['chmod', '+x', 'main'],
+                ],
+                COMPILE_TIMEOUT_SEC,
+                memory_mb=self.memory_limit_mb,
+            )
+        except subprocess.TimeoutExpired:
+            return None, 'Compile timeout'
+        if result.returncode != 0:
+            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
+        return './main', None
+
+    def compile_golang(self, code):
+        src = Path(self.work_dir) / 'main.go'
+        src.write_text(code, encoding='utf-8')
+        try:
+            result = run_commands_in_container(
+                self.work_dir,
+                [
+                    ['go', 'build', '-o', 'main', 'main.go'],
+                    ['chmod', '+x', 'main'],
+                ],
+                COMPILE_TIMEOUT_SEC,
+                memory_mb=self.memory_limit_mb,
+            )
+        except subprocess.TimeoutExpired:
+            return None, 'Compile timeout'
+        if result.returncode != 0:
+            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
+        return './main', None
+
 
 def save_case_result(submission, tc, case_index, status, runtime, actual, expected, error_message=''):
     SubmissionTestResult.objects.create(
@@ -493,6 +637,18 @@ def judge_submission(submission_id):
                     link_res = runner._run(['ld', '-o', 'hello', 'hello.o'], COMPILE_TIMEOUT_SEC, is_compile=True)
                     if link_res.returncode == 0:
                         runner.run_executable(['./hello'], None)
+            elif submission.language == 'Rust':
+                src = Path(work_dir) / 'hello.rs'
+                src.write_text('fn main() { println!("Hello, Rust!"); }', encoding='utf-8')
+                compile_res = runner._run(['rustc', '--edition=2021', '-o', 'hello', 'hello.rs'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                if compile_res.returncode == 0:
+                    runner.run_executable(['./hello'], None)
+            elif submission.language == 'Golang':
+                src = Path(work_dir) / 'hello.go'
+                src.write_text('package main\nimport "fmt"\nfunc main() { fmt.Println("Hello, Golang!") }', encoding='utf-8')
+                compile_res = runner._run(['go', 'build', '-o', 'hello', 'hello.go'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                if compile_res.returncode == 0:
+                    runner.run_executable(['./hello'], None)
         except Exception:
             # Ignore any warm‑up failures; real test cases will surface problems.
             pass
@@ -523,6 +679,12 @@ def judge_submission(submission_id):
             src = Path(work_dir) / 'main.s'
             src.write_text(submission.code, encoding='utf-8')
             run_fn = lambda stdin: runner.run_assembly_combined(submission.code, stdin)
+
+        elif submission.language == 'Rust':
+            run_fn = lambda stdin: runner.run_rust_combined(submission.code, stdin)
+
+        elif submission.language == 'Golang':
+            run_fn = lambda stdin: runner.run_golang_combined(submission.code, stdin)
 
         else:
             return submission

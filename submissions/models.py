@@ -13,6 +13,8 @@ class Submission(models.Model):
         ('Python', 'Python'),
         ('Java', 'Java'),
         ('Assembly', 'Assembly'),
+        ('Rust', 'Rust'),
+        ('Golang', 'Golang'),
     ]
     
     STATUS_CHOICES = [
