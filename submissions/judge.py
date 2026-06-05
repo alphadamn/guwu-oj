@@ -414,7 +414,7 @@ def save_case_result(submission, tc, case_index, status, runtime, actual, expect
 
 def finalize_submission(submission, case_results, max_runtime, problem):
     """Set overall status from per-case results (first failure wins)."""
-    submission.runtime = max_runtime or None
+    submission.runtime = max_runtime or 0
     for status in case_results:
         if status != 'Accepted':
             submission.status = status

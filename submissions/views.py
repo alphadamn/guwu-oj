@@ -54,11 +54,12 @@ def submission_detail(request, submission_id):
     for result in test_results:
         result.expected_output = ''
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
-    should_poll = (
-        submission.status == 'Pending'
-        and submission.language in JUDGED_LANGUAGES
-        and submission.problem.test_cases.exists()
-    )
+    # should_poll = (
+    #     submission.status == 'Pending'
+    #     and submission.language in JUDGED_LANGUAGES
+    #     and submission.problem.test_cases.exists()
+    # )
+    should_poll = (submission.language in JUDGED_LANGUAGES and submission.problem.test_cases.exists())
     return render(request, 'submissions/detail.html', {
         'submission': submission,
         'test_results': test_results,
@@ -90,7 +91,7 @@ def submission_status_api(request, submission_id):
 
     return JsonResponse({
         'status': submission.status,
-        'runtime': submission.runtime,
+        'runtime': str(submission.runtime),
         'memory': submission.memory,
         'passed_count': passed_count,
         'total_cases': max(total_cases, len(test_results)),
