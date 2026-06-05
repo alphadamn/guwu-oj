@@ -7,14 +7,17 @@
     const MONACO_BASE = `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs`;
 
     const LANGUAGE_MAP = {
+        Rust: 'rust',
+        Golang: 'go',
         C: 'c',
         'C++': 'cpp',
         Python: 'python',
         Java: 'java',
-        Assembly: 'asm',
     };
 
     const STARTERS = {
+        Rust: `fn main() {\n    println!(\"Hello, world!\");\n}\n`,
+        Golang: `package main\nimport \"fmt\"\n\nfunc main() {\n    fmt.Println(\"Hello, world!\")\n}\n`,
         C: `#include <stdio.h>
 
 int main(void) {
@@ -44,15 +47,6 @@ public class Main {
         Scanner sc = new Scanner(System.in);
     }
 }
-`,
-        Assembly: `.section .text
-.global _start
-
-_start:
-    ; 退出程序 (exit system call)
-    mov x0, #0       ; exit code 0
-    mov x8, #93      ; sys_exit on ARM64
-    svc #0          ; system call
 `,
     };
 
