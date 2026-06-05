@@ -71,6 +71,8 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
         # Clear relevant caches when user is saved
         cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
+        cache.delete('leaderboard_users')  # Clear leaderboard cache
+        cache.delete('home_stats')  # Clear home stats cache
 
 
 class AvatarBlob(models.Model):

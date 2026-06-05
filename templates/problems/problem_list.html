@@ -61,7 +61,7 @@
                                 {% endfor %}
                             {% endif %}
                         </td>
-                        <td>--</td>
+                        <td>{{ problem.pass_rate }}%</td>
                         <td>{{ problem.submissions.count }}</td>
                     </tr>
                     {% empty %}

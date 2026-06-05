@@ -13,13 +13,30 @@ from submissions.models import Submission
 
 
 def home(request):
-    recent_problems = Problem.objects.filter(is_public=True)[:10]
-    public_problems = Problem.objects.filter(is_public=True)
-    stats = {
-        'problem_count': public_problems.count(),
-        'submission_count': Submission.objects.count(),
-        'user_count': User.objects.count(),
-    }
+    # Cache recent problems
+    recent_problems_cache_key = 'home_recent_problems'
+    cached_recent = cache.get(recent_problems_cache_key)
+    if cached_recent is not None:
+        recent_problems = cached_recent
+    else:
+        recent_problems = Problem.objects.filter(is_public=True)[:10]
+        recent_problems = list(recent_problems)  # Force evaluation
+        cache.set(recent_problems_cache_key, recent_problems, 60 * 5)  # Cache for 5 minutes
+
+    # Cache stats
+    stats_cache_key = 'home_stats'
+    cached_stats = cache.get(stats_cache_key)
+    if cached_stats is not None:
+        stats = cached_stats
+    else:
+        public_problems = Problem.objects.filter(is_public=True)
+        stats = {
+            'problem_count': public_problems.count(),
+            'submission_count': Submission.objects.count(),
+            'user_count': User.objects.count(),
+        }
+        cache.set(stats_cache_key, stats, 60 * 5)  # Cache for 5 minutes
+
     return render(request, 'home.html', {
         'recent_problems': recent_problems,
         'stats': stats,
@@ -30,30 +47,41 @@ def problem_list(request):
     # Generate cache key based on query parameters
     cache_key = f'problem_list_{request.GET.urlencode()}'
     cached_response = cache.get(cache_key)
-    
+
     if cached_response:
         return cached_response
-    
-    problems = Problem.objects.filter(is_public=True)
-    
-    # Filter by difficulty
-    difficulty = request.GET.get('difficulty')
-    if difficulty:
-        problems = problems.filter(difficulty=difficulty)
-    
-    # Search by title or ID
-    search = request.GET.get('search')
-    if search:
-        problems = problems.filter(
-            Q(title__icontains=search) | Q(id__icontains=search)
-        )
-    
-    # Filter by tags
-    tags = request.GET.get('tags')
-    if tags:
-        problems = problems.filter(tags__icontains=tags)
-    
-    problems = problems.order_by('-created_at')
+
+    # Cache the query result separately
+    query_cache_key = f'problem_list_query_{request.GET.urlencode()}'
+    cached_problems = cache.get(query_cache_key)
+
+    if cached_problems is not None:
+        problems = cached_problems
+    else:
+        problems = Problem.objects.filter(is_public=True)
+
+        # Filter by difficulty
+        difficulty = request.GET.get('difficulty')
+        if difficulty:
+            problems = problems.filter(difficulty=difficulty)
+
+        # Search by title or ID
+        search = request.GET.get('search')
+        if search:
+            problems = problems.filter(
+                Q(title__icontains=search) | Q(id__icontains=search)
+            )
+
+        # Filter by tags
+        tags = request.GET.get('tags')
+        if tags:
+            problems = problems.filter(tags__icontains=tags)
+
+        problems = problems.order_by('-created_at')
+        # Cache the queryset evaluation for 5 minutes
+        problems = list(problems)  # Force evaluation
+        cache.set(query_cache_key, problems, 60 * 5)
+
     response = render(request, 'problems/problem_list.html', {'problems': problems})
     cache.set(cache_key, response, 60 * 10)  # Cache for 10 minutes
     return response
@@ -91,19 +119,29 @@ def create_problem(request):
 
 @cache_page(60 * 30)  # Cache for 30 minutes (complex query)
 def leaderboard(request):
-    users = User.objects.annotate(
-        solved_count=Count('solved_problems', distinct=True),
-        submission_count=Count('submissions', distinct=True)
-    ).annotate(
-        ratio=Case(
-            When(submission_count=0, then=Value(None, output_field=FloatField())),
-            default=(
-                    Cast(F('solved_count'), FloatField()) * 100.0 /
-                    Cast(F('submission_count'), FloatField())
-            ),
-            output_field=FloatField()
-        )
-    ).order_by(F('ratio').desc(nulls_last=True))  # highest first, nulls at bottom
+    # Cache the complex query result separately
+    query_cache_key = 'leaderboard_users'
+    cached_users = cache.get(query_cache_key)
+
+    if cached_users is not None:
+        users = cached_users
+    else:
+        users = User.objects.annotate(
+            solved_count=Count('solved_problems', distinct=True),
+            submission_count=Count('submissions', distinct=True)
+        ).annotate(
+            ratio=Case(
+                When(submission_count=0, then=Value(None, output_field=FloatField())),
+                default=(
+                        Cast(F('solved_count'), FloatField()) * 100.0 /
+                        Cast(F('submission_count'), FloatField())
+                ),
+                output_field=FloatField()
+            )
+        ).order_by(F('ratio').desc(nulls_last=True))  # highest first, nulls at bottom
+        # Cache the queryset evaluation for 10 minutes
+        users = list(users)  # Force evaluation
+        cache.set(query_cache_key, users, 60 * 10)
 
     return render(request, 'leaderboard.html', {'users': users})
 

@@ -51,11 +51,40 @@ class Problem(models.Model):
         super().save(*args, **kwargs)
         # Clear relevant caches when problem is saved
         cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
-    
+        cache.delete(f'problem_pass_rate_{self.id}')  # Clear pass rate cache
+        cache.delete('leaderboard_users')  # Clear leaderboard cache
+        cache.delete_pattern('problem_list_query_*')  # Clear problem list query caches
+        cache.delete('home_recent_problems')  # Clear home recent problems cache
+        cache.delete('home_stats')  # Clear home stats cache
+
     def delete(self, *args, **kwargs):
         # Clear relevant caches before deletion
         cache.delete_pattern('views.decorators.cache.*')
+        cache.delete(f'problem_pass_rate_{self.id}')
+        cache.delete('leaderboard_users')
+        cache.delete_pattern('problem_list_query_*')
+        cache.delete('home_recent_problems')
+        cache.delete('home_stats')
         super().delete(*args, **kwargs)
+
+    @property
+    def pass_rate(self):
+        """Calculate pass rate as percentage of accepted submissions."""
+        from django.core.cache import cache
+        cache_key = f'problem_pass_rate_{self.id}'
+        cached_rate = cache.get(cache_key)
+        if cached_rate is not None:
+            return cached_rate
+
+        total = self.submissions.count()
+        if total == 0:
+            rate = 0.0
+        else:
+            accepted = self.submissions.filter(status='Accepted').count()
+            rate = round(accepted * 100.0 / total, 1)
+
+        cache.set(cache_key, rate, 60 * 5)  # Cache for 5 minutes
+        return rate
 
 
 class TestCase(models.Model):

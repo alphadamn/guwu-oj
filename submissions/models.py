@@ -44,6 +44,10 @@ class Submission(models.Model):
         super().save(*args, **kwargs)
         # Clear relevant caches when submission is saved
         cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
+        cache.delete(f'problem_pass_rate_{self.problem.id}')  # Clear pass rate cache for this problem
+        cache.delete('leaderboard_users')  # Clear leaderboard cache
+        cache.delete_pattern('problem_list_query_*')  # Clear problem list query caches
+        cache.delete('home_stats')  # Clear home stats cache
 
 
 class SubmissionTestResult(models.Model):
