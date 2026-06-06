@@ -5,7 +5,10 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from datetime import datetime, timezone
+import json
 
+from dateutil import parser
 from django.conf import settings
 
 
@@ -107,30 +110,84 @@ def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, 
     except subprocess.TimeoutExpired as exc:
         # On timeout, attempt to kill any lingering judge containers older than 5 seconds
         try:
+            # 1. Get all container IDs based on the image
             list_res = subprocess.run(
-                ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}'],
+                ['docker', 'ps', '-q'],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
+
+            # print(list_res)
+
             for cid in list_res.stdout.strip().splitlines():
-                subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+                # 2. Inspect the container to get its start time
+                inspect_res = subprocess.run(
+                    ['docker', 'inspect', cid],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                # print(inspect_res.stdout)
+                if inspect_res.returncode != 0:
+                    continue  # skip if inspection fails
+
+                data = json.loads(inspect_res.stdout)
+                # print(data)
+                started_at_str = data[0]['State']['StartedAt']
+                # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
+                # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                started_at = parser.isoparse(started_at_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                running_seconds = (now - started_at).total_seconds()
+                print(cid, running_seconds)
+
+                # 3. Kill only if running time >= 5 seconds
+                if running_seconds >= 5:
+                    subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
         except Exception:
-            pass
+            pass  # silent failure (keeps original behaviour)
         raise exc
     finally:
         # Ensure any lingering judge containers are cleaned up after each run
         try:
+            # 1. Get all container IDs based on the image
             list_res = subprocess.run(
-                ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}'],
+                ['docker', 'ps', '-q'],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
+
+            # print(list_res)
+
             for cid in list_res.stdout.strip().splitlines():
-                subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+                # 2. Inspect the container to get its start time
+                inspect_res = subprocess.run(
+                    ['docker', 'inspect', cid],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                # print(inspect_res.stdout)
+                if inspect_res.returncode != 0:
+                    continue  # skip if inspection fails
+
+                data = json.loads(inspect_res.stdout)
+                # print(data)
+                started_at_str = data[0]['State']['StartedAt']
+                # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
+                # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                started_at = parser.isoparse(started_at_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                running_seconds = (now - started_at).total_seconds()
+                print(cid, running_seconds)
+
+                # 3. Kill only if running time >= 5 seconds
+                if running_seconds >= 5:
+                    subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
         except Exception:
-            pass
+            pass  # silent failure (keeps original behaviour
 
 
 def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memory_mb=256, image='oj-judge:latest'):
@@ -161,30 +218,85 @@ def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memor
             timeout=timeout_sec,
         )
         return result
-    except subprocess.TimeoutExpired as exc:
-        # On timeout, attempt to kill any lingering judge containers older than 5 seconds
+    except Exception as exc:
         try:
-            # List running containers based on the judge image
+            # 1. Get all container IDs based on the image
             list_res = subprocess.run(
-                ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}'],
+                ['docker', 'ps', '-q'],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
+
+            # print(list_res)
+
             for cid in list_res.stdout.strip().splitlines():
-                # Inspect start time and kill if runtime >5s
-                inspect = subprocess.run(
-                    ['docker', 'inspect', '--format', '{{.State.StartedAt}}', cid],
+                # 2. Inspect the container to get its start time
+                inspect_res = subprocess.run(
+                    ['docker', 'inspect', cid],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=3,
                 )
-                if inspect.returncode == 0:
-                    # Simple approach: always kill the container on timeout
+                # print(inspect_res.stdout)
+                if inspect_res.returncode != 0:
+                    continue  # skip if inspection fails
+
+                data = json.loads(inspect_res.stdout)
+                # print(data)
+                started_at_str = data[0]['State']['StartedAt']
+                # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
+                # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                started_at = parser.isoparse(started_at_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                running_seconds = (now - started_at).total_seconds()
+                print(cid, running_seconds)
+
+                # 3. Kill only if running time >= 5 seconds
+                if running_seconds >= 5:
                     subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
         except Exception:
-            pass
+            pass  # silent failure (keeps original behaviour
         raise exc
+    finally:
+        try:
+            # 1. Get all container IDs based on the image
+            list_res = subprocess.run(
+                ['docker', 'ps', '-q'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            # print(list_res)
+
+            for cid in list_res.stdout.strip().splitlines():
+                # 2. Inspect the container to get its start time
+                inspect_res = subprocess.run(
+                    ['docker', 'inspect', cid],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                # print(inspect_res.stdout)
+                if inspect_res.returncode != 0:
+                    continue  # skip if inspection fails
+
+                data = json.loads(inspect_res.stdout)
+                # print(data)
+                started_at_str = data[0]['State']['StartedAt']
+                # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
+                # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                started_at = parser.isoparse(started_at_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                running_seconds = (now - started_at).total_seconds()
+                print(cid, running_seconds)
+
+                # 3. Kill only if running time >= 5 seconds
+                if running_seconds >= 5:
+                    subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+        except Exception:
+            pass  # silent failure (keeps original behaviour
 
 
 def exit_indicates_memory_limit(returncode):

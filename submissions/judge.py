@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -6,8 +7,10 @@ import sys
 import tempfile
 import time
 import shlex
+from datetime import datetime, timezone
 from pathlib import Path
 
+from dateutil import parser
 from django.utils.crypto import get_random_string
 
 from .models import Submission, SubmissionTestResult
@@ -69,28 +72,51 @@ LANG_IMAGE = {
 class SandboxRunner:
     """Compile and run submissions inside a Docker container (--network none)."""
 
-    def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image='oj-judge:latest'):
+    def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image):
         self.work_dir = work_dir
         self.time_limit_sec = max(time_limit_ms / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
         self.image = image
 
     def clean_docker(self):
-        # Attempt to clean up any dangling containers from this image
-        # try:
-        #     # List running containers based on the judge image
-        #     list_res = subprocess.run(
-        #         ['docker', 'ps', '-q', '--filter', f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}"'],
-        #         capture_output=True,
-        #         text=True,
-        #         timeout=5,
-        #     )
-        #     container_ids = list_res.stdout.strip().splitlines()
-        #     for cid in container_ids:
-        #         subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
-        # except Exception:
-        #     pass
-        pass
+        try:
+            # 1. Get all container IDs based on the image
+            list_res = subprocess.run(
+                ['docker', 'ps', '-q'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            # print(list_res)
+
+            for cid in list_res.stdout.strip().splitlines():
+                # 2. Inspect the container to get its start time
+                inspect_res = subprocess.run(
+                    ['docker', 'inspect', cid],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                # print(inspect_res.stdout)
+                if inspect_res.returncode != 0:
+                    continue  # skip if inspection fails
+
+                data = json.loads(inspect_res.stdout)
+                # print(data)
+                started_at_str = data[0]['State']['StartedAt']
+                # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
+                # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                started_at = parser.isoparse(started_at_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                running_seconds = (now - started_at).total_seconds()
+                print(cid, running_seconds)
+
+                # 3. Kill only if running time >= 5 seconds
+                if running_seconds >= 5:
+                    subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
+        except Exception:
+            pass  # silent failure (keeps original behaviour
 
     def _run(self, command, timeout_sec, stdin=None, is_compile=False):
         # Compilation needs more memory than execution; use at least 512MB
@@ -648,7 +674,35 @@ class SandboxRunner:
         filename = get_random_string(10) + '.rb'
         src = Path(self.work_dir) / filename
         src.write_text(code, encoding='utf-8')
-        return self.run_executable(['ruby', filename], stdin_data)
+        # res = self.run_executable(['ruby', filename], stdin_data)
+        try:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in ['ruby', filename])
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            print(result.stderr)
+            elapsed_sec = None
+            if result.stderr:
+                first_line = result.stderr.splitlines()[2].strip()
+                try:
+                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                    if match:
+                        minutes = int(match.group(1))
+                        seconds = float(match.group(2))
+                        elapsed_sec = minutes * 60 + seconds
+                except ValueError:
+                    pass
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
+
+        if exit_indicates_memory_limit(result.returncode):
+            return None, elapsed_ms, 'Memory Limit Exceeded'
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or 'Runtime error').strip()
+            return None, elapsed_ms, ('Runtime Error', err)
+        return result.stdout, elapsed_ms, None
+
 
     # ── Kotlin ──
     def run_kotlin_combined(self, code, stdin_data):
