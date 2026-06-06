@@ -1,4 +1,3 @@
-import os
 import re
 import shutil
 import subprocess
@@ -14,7 +13,6 @@ from .models import Submission, SubmissionTestResult
 from .sandbox import (
     DockerNotAvailableError,
     exit_indicates_memory_limit,
-    run_commands_in_container,
     run_in_container,
 )
 
@@ -83,23 +81,15 @@ class SandboxRunner:
             timeout_sec,
             stdin=stdin,
             memory_mb=self.memory_limit_mb,
-            is_compile=is_compile,
         )
 
     def compile_cpp(self, code):
         src = Path(self.work_dir) / 'main.cpp'
         src.write_text(code, encoding='utf-8')
-        # Compile and set permissions in a single container session
-        # This ensures the binary persists for execution
         try:
-            result = run_commands_in_container(
-                self.work_dir,
-                [
-                    ['g++', '-std=c++17', '-O2', '-o', 'main', 'main.cpp'],
-                    ['chmod', '+x', 'main'],
-                ],
+            result = self._run(
+                ['g++', '-std=c++17', '-O2', '-o', 'main', 'main.cpp'],
                 COMPILE_TIMEOUT_SEC,
-                memory_mb=self.memory_limit_mb,
             )
         except subprocess.TimeoutExpired:
             return None, 'Compile timeout'
@@ -112,7 +102,7 @@ class SandboxRunner:
         src = Path(self.work_dir) / f'{class_name}.java'
         src.write_text(code, encoding='utf-8')
         try:
-            result = self._run(['javac', f'{class_name}.java'], COMPILE_TIMEOUT_SEC, is_compile=True)
+            result = self._run(['javac', f'{class_name}.java'], COMPILE_TIMEOUT_SEC)
         except subprocess.TimeoutExpired:
             return None, 'Compile timeout'
         if result.returncode != 0:
@@ -680,15 +670,12 @@ def judge_submission(submission_id):
             pass
 
         if submission.language == 'C++':
-            # For C++, compile and execute in the same container session to avoid binary persistence issues
-            src = Path(work_dir) / 'main.cpp'
-            src.write_text(submission.code, encoding='utf-8')
-            run_fn = lambda stdin: runner.run_cpp_combined(submission.code, stdin)
-
-        elif submission.language == 'C':
-            src = Path(work_dir) / 'main.c'
-            src.write_text(submission.code, encoding='utf-8')
-            run_fn = lambda stdin: runner.run_c_combined(submission.code, stdin)
+            executable, err = runner.compile_cpp(submission.code)
+            if err:
+                submission.status = 'Compile Error'
+                submission.save(update_fields=['status'])
+                return submission
+            run_fn = lambda stdin: runner.run_cpp(executable, stdin)
 
         elif submission.language == 'Python':
             run_fn = lambda stdin: runner.run_python(submission.code, stdin)

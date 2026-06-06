@@ -1,7 +1,6 @@
 """Run compile/execute steps inside an isolated Docker container with no network."""
 
 import os
-import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -52,13 +51,9 @@ def _runtime_user_flags():
     return ['--user', f'{container_uid}:{container_gid}']
 
 
-def _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False):
+def _base_docker_args(work_dir, timeout_sec, memory_mb):
     work_dir = str(Path(work_dir).resolve())
     base_dir = Path(__file__).resolve().parent.parent
-    
-    # Choose seccomp profile based on operation type
-    seccomp_profile = 'seccomp-compile.json' if is_compile else 'seccomp-execute.json'
-    # seccomp_profile = 'seccomp-compile.json'
     
     return [
         'docker', 'run', '--rm', '-i',
@@ -67,25 +62,25 @@ def _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False):
         *_runtime_user_flags(),
         '--pids-limit', str(getattr(settings, 'OJ_DOCKER_PIDS_LIMIT', 64)),
         '--security-opt', 'no-new-privileges',
-        '--security-opt', f'seccomp={base_dir}/docker/judge/{seccomp_profile}',
+        '--security-opt', f'seccomp={base_dir}/docker/judge/seccomp-profile.json',
+        '--security-opt', 'apparmor=oj-judge',
         '--cap-drop', 'ALL',
         '--read-only',
-        '--tmpfs', '/tmp:exec,mode=777',
+        '--tmpfs', '/tmp',
         '--device', '/dev/null:r',
         '--device', '/dev/zero:r',
         '--device', '/dev/random:r',
         '--device', '/dev/urandom:r',
         '-v', f'{work_dir}:/sandbox:rw',
         '-w', '/sandbox',
-        getattr(settings, 'OJ_DOCKER_IMAGE', 'oj-judge:latest')
+        getattr(settings, 'OJ_DOCKER_IMAGE', 'oj-judge:latest'),
     ]
 
 
-def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, is_compile=False):
+def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256):
     """
     Run command inside the judge container.
     `command` is the argv inside the container (e.g. ['g++', ...]).
-    `is_compile` determines whether to use relaxed (compile) or tight (execute) seccomp profile.
     """
     ensure_docker_ready()
     # Mounted temp dirs are often 0700 on host; relax so unprivileged
@@ -94,7 +89,7 @@ def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, 
         os.chmod(work_dir, 0o777)
     except OSError:
         pass
-    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile) + command
+    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb) + command
     try:
         result = subprocess.run(
             full_cmd,
