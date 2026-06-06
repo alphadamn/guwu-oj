@@ -8,3 +8,5 @@ db.sqlite3
 .DS_Store
 */migrationsserver.crt
 server.key
+staticfiles
+.idea
