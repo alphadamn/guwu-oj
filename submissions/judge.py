@@ -18,7 +18,7 @@ from .sandbox import (
     run_in_container,
 )
 
-JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C', 'Assembly', 'Rust', 'Golang'}
+JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C', 'Assembly', 'Rust', 'Golang', 'JavaScript', 'TypeScript', 'Ruby', 'Kotlin'}
 COMPILE_TIMEOUT_SEC = 30
 MAX_STORED_OUTPUT_LEN = 4000
 
@@ -51,13 +51,29 @@ def extract_java_class_name(code):
     return 'Main'
 
 
+# Language → Docker image mapping
+LANG_IMAGE = {
+    'C++':        'oj-cpp:latest',
+    'C':          'oj-c:latest',
+    'Python':     'oj-python:latest',
+    'Java':       'oj-java:latest',
+    'JavaScript': 'oj-other:latest',
+    'TypeScript': 'oj-other:latest',
+    'Golang':     'oj-other:latest',
+    'Rust':       'oj-other:latest',
+    'Ruby':       'oj-other:latest',
+    'Kotlin':     'oj-other:latest',
+    'Assembly':   'oj-other:latest',
+}
+
 class SandboxRunner:
     """Compile and run submissions inside a Docker container (--network none)."""
 
-    def __init__(self, work_dir, time_limit_ms, memory_limit_mb):
+    def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image='oj-judge:latest'):
         self.work_dir = work_dir
         self.time_limit_sec = max(time_limit_ms / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
+        self.image = image
 
     def clean_docker(self):
         # Attempt to clean up any dangling containers from this image
@@ -77,12 +93,15 @@ class SandboxRunner:
         pass
 
     def _run(self, command, timeout_sec, stdin=None, is_compile=False):
+        # Compilation needs more memory than execution; use at least 512MB
+        mem = max(self.memory_limit_mb, 512) if is_compile else self.memory_limit_mb
         return run_in_container(
             self.work_dir,
             command,
             timeout_sec,
             stdin=stdin,
-            memory_mb=self.memory_limit_mb,
+            memory_mb=mem,
+            image=self.image,
             is_compile=is_compile,
         )
 
@@ -100,6 +119,7 @@ class SandboxRunner:
                 ],
                 COMPILE_TIMEOUT_SEC,
                 memory_mb=self.memory_limit_mb,
+                image=self.image,
             )
         except subprocess.TimeoutExpired:
             return None, 'Compile timeout'
@@ -132,6 +152,7 @@ class SandboxRunner:
                 ],
                 COMPILE_TIMEOUT_SEC,
                 memory_mb=self.memory_limit_mb,
+                image=self.image,
             )
         except subprocess.TimeoutExpired:
             return None, 'Compile timeout'
@@ -541,6 +562,7 @@ class SandboxRunner:
                 ],
                 COMPILE_TIMEOUT_SEC,
                 memory_mb=self.memory_limit_mb,
+                image=self.image,
             )
         except subprocess.TimeoutExpired:
             return None, 'Compile timeout'
@@ -560,12 +582,134 @@ class SandboxRunner:
                 ],
                 COMPILE_TIMEOUT_SEC,
                 memory_mb=self.memory_limit_mb,
+                image=self.image,
             )
         except subprocess.TimeoutExpired:
             return None, 'Compile timeout'
         if result.returncode != 0:
             return None, (result.stderr or result.stdout or 'Compilation failed').strip()
         return './main', None
+
+    # ── JavaScript / Node.js ──
+    def run_javascript(self, code, stdin_data):
+        filename = get_random_string(10) + '.js'
+        src = Path(self.work_dir) / filename
+        src.write_text(code, encoding='utf-8')
+        return self.run_executable(['node', filename], stdin_data)
+
+    # ── TypeScript ──
+    TS_PRELUDE = '// @ts-nocheck\n'
+
+    def run_typescript_combined(self, code, stdin_data):
+        src = Path(self.work_dir) / 'main.ts'
+        src.write_text(self.TS_PRELUDE + code, encoding='utf-8')
+        try:
+            compile_result = self._run(
+                ['tsc', '--target', 'ES2022', '--module', 'commonjs', '--skipLibCheck', 'main.ts'],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if compile_result.returncode != 0:
+                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
+                return None, 0, ('Runtime Error', err)
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
+
+        try:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in ['node', '/sandbox/main.js'])
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            elapsed_sec = None
+            if result.stderr:
+                first_line = result.stderr.splitlines()[1].strip()
+                try:
+                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
+                    if match:
+                        minutes = int(match.group(1))
+                        seconds = float(match.group(2))
+                        elapsed_sec = minutes * 60 + seconds
+                except ValueError:
+                    pass
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
+
+        if exit_indicates_memory_limit(result.returncode):
+            return None, elapsed_ms, 'Memory Limit Exceeded'
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or 'Runtime error').strip()
+            return None, elapsed_ms, ('Runtime Error', err)
+        return result.stdout, elapsed_ms, None
+
+    # ── Ruby ──
+    def run_ruby(self, code, stdin_data):
+        filename = get_random_string(10) + '.rb'
+        src = Path(self.work_dir) / filename
+        src.write_text(code, encoding='utf-8')
+        return self.run_executable(['ruby', filename], stdin_data)
+
+    # ── Kotlin ──
+    def run_kotlin_combined(self, code, stdin_data):
+        src = Path(self.work_dir) / 'main.kt'
+        src.write_text(code, encoding='utf-8')
+        try:
+            compile_result = self._run(
+                ['kotlinc', 'main.kt', '-include-runtime', '-d', 'main.jar'],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if compile_result.returncode != 0:
+                err = self._clean_kotlin_output(compile_result.stderr or compile_result.stdout or 'Compilation failed')
+                return None, 0, ('Runtime Error', err)
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
+
+        try:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in ['java', '-jar', '/sandbox/main.jar'])
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            elapsed_sec = None
+            if result.stderr:
+                # parse time from stderr (second line after bash -lc overhead)
+                lines = result.stderr.splitlines()
+                for line in lines:
+                    try:
+                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', line)
+                        if match:
+                            minutes = int(match.group(1))
+                            seconds = float(match.group(2))
+                            elapsed_sec = minutes * 60 + seconds
+                            break
+                    except ValueError:
+                        pass
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
+
+        if exit_indicates_memory_limit(result.returncode):
+            return None, elapsed_ms, 'Memory Limit Exceeded'
+        if result.returncode != 0:
+            err = self._clean_kotlin_output(result.stderr or result.stdout or 'Runtime error')
+            return None, elapsed_ms, ('Runtime Error', err)
+        return result.stdout, elapsed_ms, None
+
+    @staticmethod
+    def _clean_kotlin_output(text):
+        """Strip JVM deprecation warnings from kotlinc output."""
+        if not text:
+            return ''
+        lines = []
+        for line in text.strip().splitlines():
+            if 'OpenJDK' in line and 'warning' in line:
+                continue
+            if 'Picked up JAVA_TOOL_OPTIONS' in line:
+                continue
+            lines.append(line)
+        return '\n'.join(lines).strip()
 
 
 def save_case_result(submission, tc, case_index, status, runtime, actual, expected, error_message=''):
@@ -628,7 +772,8 @@ def judge_submission(submission_id):
     case_statuses = []
 
     try:
-        runner = SandboxRunner(work_dir, problem.time_limit, problem.memory_limit)
+        runner = SandboxRunner(work_dir, problem.time_limit, problem.memory_limit,
+                               image=LANG_IMAGE.get(submission.language, 'oj-judge:latest'))
 
         # Warm‑up: compile and run a minimal hello‑world program in the submission's language.
         # This pre‑initialises the Docker container without affecting scoring.
@@ -675,6 +820,26 @@ def judge_submission(submission_id):
                 compile_res = runner._run(['go', 'build', '-o', 'hello', 'hello.go'], COMPILE_TIMEOUT_SEC, is_compile=True)
                 if compile_res.returncode == 0:
                     runner.run_executable(['./hello'], None)
+            elif submission.language == 'JavaScript':
+                src = Path(work_dir) / 'hello.js'
+                src.write_text('console.log("hello");', encoding='utf-8')
+                runner.run_executable(['node', 'hello.js'], None)
+            elif submission.language == 'TypeScript':
+                src = Path(work_dir) / 'hello.ts'
+                src.write_text('console.log("hello");', encoding='utf-8')
+                compile_res = runner._run(['tsc', '--target', 'ES2022', '--module', 'commonjs', '--skipLibCheck', 'hello.ts'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                if compile_res.returncode == 0:
+                    runner.run_executable(['node', 'hello.js'], None)
+            elif submission.language == 'Ruby':
+                src = Path(work_dir) / 'hello.rb'
+                src.write_text('puts "hello"', encoding='utf-8')
+                runner.run_executable(['ruby', 'hello.rb'], None)
+            elif submission.language == 'Kotlin':
+                src = Path(work_dir) / 'hello.kt'
+                src.write_text('fun main() { println("hello") }', encoding='utf-8')
+                compile_res = runner._run(['kotlinc', 'hello.kt', '-include-runtime', '-d', 'hello.jar'], COMPILE_TIMEOUT_SEC, is_compile=True)
+                if compile_res.returncode == 0:
+                    runner.run_executable(['java', '-jar', 'hello.jar'], None)
         except Exception:
             # Ignore any warm‑up failures; real test cases will surface problems.
             pass
@@ -711,6 +876,18 @@ def judge_submission(submission_id):
 
         elif submission.language == 'Golang':
             run_fn = lambda stdin: runner.run_golang_combined(submission.code, stdin)
+
+        elif submission.language == 'JavaScript':
+            run_fn = lambda stdin: runner.run_javascript(submission.code, stdin)
+
+        elif submission.language == 'TypeScript':
+            run_fn = lambda stdin: runner.run_typescript_combined(submission.code, stdin)
+
+        elif submission.language == 'Ruby':
+            run_fn = lambda stdin: runner.run_ruby(submission.code, stdin)
+
+        elif submission.language == 'Kotlin':
+            run_fn = lambda stdin: runner.run_kotlin_combined(submission.code, stdin)
 
         else:
             return submission

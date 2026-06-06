@@ -13,6 +13,10 @@
         'C++': 'cpp',
         Python: 'python',
         Java: 'java',
+        JavaScript: 'javascript',
+        TypeScript: 'typescript',
+        Ruby: 'ruby',
+        Kotlin: 'kotlin',
     };
 
     const STARTERS = {
@@ -46,6 +50,52 @@ public class Main {
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
     }
+}
+`,
+        JavaScript: `// Node.js
+
+const readline = require('readline');
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+
+let input = [];
+rl.on('line', (line) => {
+    input.push(line);
+}).on('close', () => {
+    // Your code here
+});
+`,
+        TypeScript: `// TypeScript
+
+const readline = require('readline');
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+
+let input: string[] = [];
+rl.on('line', (line: string) => {
+    input.push(line);
+}).on('close', () => {
+    // Your code here
+});
+`,
+        Ruby: `# Ruby
+
+def main
+    # Your code here
+end
+
+main
+`,
+        Kotlin: `// Kotlin
+
+fun main() {
+    // Your code here
 }
 `,
     };

@@ -52,7 +52,7 @@ def _runtime_user_flags():
     return ['--user', f'{container_uid}:{container_gid}']
 
 
-def _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False):
+def _base_docker_args(work_dir, timeout_sec, memory_mb, image, is_compile=False):
     work_dir = str(Path(work_dir).resolve())
     base_dir = Path(__file__).resolve().parent.parent
     
@@ -65,7 +65,7 @@ def _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False):
         '--network', 'none',
         *_memory_flags(memory_mb),
         *_runtime_user_flags(),
-        '--pids-limit', str(getattr(settings, 'OJ_DOCKER_PIDS_LIMIT', 64)),
+        '--pids-limit', str(getattr(settings, 'OJ_DOCKER_PIDS_LIMIT', 128)),
         '--security-opt', 'no-new-privileges',
         '--security-opt', f'seccomp={base_dir}/docker/judge/{seccomp_profile}',
         '--cap-drop', 'ALL',
@@ -77,11 +77,11 @@ def _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False):
         '--device', '/dev/urandom:r',
         '-v', f'{work_dir}:/sandbox:rw',
         '-w', '/sandbox',
-        getattr(settings, 'OJ_DOCKER_IMAGE', 'oj-judge:latest')
+        image
     ]
 
 
-def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, is_compile=False):
+def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, image='oj-judge:latest', is_compile=False):
     """
     Run command inside the judge container.
     `command` is the argv inside the container (e.g. ['g++', ...]).
@@ -94,7 +94,7 @@ def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, 
         os.chmod(work_dir, 0o777)
     except OSError:
         pass
-    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile) + command
+    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, image, is_compile) + command
     try:
         result = subprocess.run(
             full_cmd,
@@ -133,7 +133,7 @@ def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, 
             pass
 
 
-def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memory_mb=256):
+def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memory_mb=256, image='oj-judge:latest'):
     """
     Run multiple commands in a single container session.
     `commands` is a list of argv lists (e.g. [['g++', ...], ['chmod', ...]]).
@@ -150,9 +150,8 @@ def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memor
     for cmd in commands:
         script_lines.append(' '.join(shlex.quote(arg) for arg in cmd))
     script = '\n'.join(script_lines)
-    print(f"Shell script: {script}")
 
-    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, is_compile=False) + ['/bin/sh', '-c', script]
+    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, image, is_compile=False) + ['/bin/sh', '-c', script]
     try:
         result = subprocess.run(
             full_cmd,
@@ -161,9 +160,6 @@ def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memor
             text=True,
             timeout=timeout_sec,
         )
-        print(f"Shell script return code: {result.returncode}")
-        print(f"Shell script stderr: {result.stderr}")
-        print(f"Shell script stdout: {result.stdout}")
         return result
     except subprocess.TimeoutExpired as exc:
         # On timeout, attempt to kill any lingering judge containers older than 5 seconds
