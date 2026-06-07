@@ -69,9 +69,9 @@ jobs:
         DB_NAME: testdb
         DB_USER: testuser
         DB_PASSWORD: testpass
-        DB_HOST: localhost
+        DB_HOST: 127.0.0.1
         DB_PORT: 5432
-        REDIS_URL: redis://localhost:6379/1
+        REDIS_URL: redis://127.0.0.1:6379/1
       run: |
         python manage.py makemigrations --check
         python manage.py migrate
