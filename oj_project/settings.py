@@ -126,6 +126,15 @@ DATABASES = {
     }
 }
 
+# Use SQLite for CI/CD
+if os.environ.get('USE_SQLITE') == 'true':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': os.environ.get('DB_NAME', 'db.sqlite3'),
+        }
+    }
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
