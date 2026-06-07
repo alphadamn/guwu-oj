@@ -21,3 +21,4 @@ pytest-django
 pytest-cov
 django-sslserver-v2
 flake8
+python-dateutil
