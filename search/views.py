@@ -1,4 +1,5 @@
 import hashlib
+import re
 
 from django.core.cache import cache
 from django.http import JsonResponse
@@ -11,6 +12,8 @@ from .services import EXTERNAL_BACKENDS, LOCAL_BACKENDS, run_search
 CACHE_TTL = 60 * 15  # 15 minutes
 FREQ_KEY = 'search:query:frequency'  # Redis sorted set
 TOP_QUERIES_LIMIT = 10
+MAX_QUERY_LENGTH = 500  # Maximum query length to prevent abuse
+QUERY_PATTERN = re.compile(r'^[\w\s\-.,;:!?\'"()@#$%^&*\[\]{}+=/\\|<>`~]+$')  # Allow common characters
 
 
 def _cache_key(query, active_sources):
@@ -105,6 +108,11 @@ def _run_and_group(query, active_sources):
 def search_view(request):
     """Render the search shell immediately. Results are loaded via /search/results/."""
     query = request.GET.get('q', '').strip()
+    
+    # Input validation
+    if len(query) > MAX_QUERY_LENGTH:
+        query = query[:MAX_QUERY_LENGTH]
+    
     selected = request.GET.getlist('src')
     active_sources = _normalize_sources(selected)
 
@@ -119,6 +127,22 @@ def search_view(request):
 def search_results_api(request):
     """JSON endpoint returning rendered search result HTML + metadata."""
     query = request.GET.get('q', '').strip()
+    
+    # Input validation
+    if len(query) > MAX_QUERY_LENGTH:
+        query = query[:MAX_QUERY_LENGTH]
+    
+    # Sanitize query to prevent injection attacks
+    if query and not QUERY_PATTERN.match(query):
+        # If query contains invalid characters, return empty results
+        return JsonResponse({
+            'query': query,
+            'total': 0,
+            'from_cache': False,
+            'top_queries': _top_queries(),
+            'html': '',
+        })
+    
     selected = request.GET.getlist('src')
     active_sources = _normalize_sources(selected)
 

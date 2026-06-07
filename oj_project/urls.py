@@ -17,4 +17,11 @@ urlpatterns = [
     path('submissions/', include('submissions.urls')),
     path('handbook/', include('handbook.urls')),
     path('search/', include('search.urls')),
+    path('health/', include('health.urls')),
+    path('', include('django_prometheus.urls')),
 ]
+
+if settings.DEBUG:
+    urlpatterns += [
+        path('rq/', include('django_rq.urls')),
+    ]

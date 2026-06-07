@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
+from django_ratelimit.decorators import ratelimit
 
 from problems.models import Problem
 
@@ -13,6 +14,7 @@ from .models import Submission
 
 
 @login_required
+@ratelimit(key='user', rate='3/m', method='POST')
 def submit_solution(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
     

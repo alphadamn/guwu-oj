@@ -11,3 +11,8 @@ django-redis
 django-mathfilters
 gunicorn
 whitenoise
+django-rq<3.0
+django-ratelimit
+prometheus-client
+django-prometheus
+python-json-logger

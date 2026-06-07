@@ -30,15 +30,18 @@
 
 ## 技术栈
 
-- Python 3.8+
+- Python 3.9+
 - Django 4.2+
 - Bootstrap 5
 - PostgreSQL
 - Docker (用于沙箱评测环境)
 - django-crispy-forms
 - crispy-bootstrap5
-- Redis缓存页面
-- Whitenoise处理静态文件
+- Redis (缓存 + 任务队列)
+- Whitenoise (静态文件服务)
+- Django-RQ (异步任务队列)
+- django-ratelimit (速率限制)
+- django-prometheus (监控指标)
 
 ## 安装步骤
 
@@ -104,6 +107,25 @@ python manage.py runserver
 ```bash
 gunicorn oj_project.wsgi --bind 0.0.0.0:8000
 ```
+
+### 8. 启动 Redis 服务
+
+```bash
+redis-server
+```
+
+### 9. 启动 RQ Worker (用于异步评测)
+
+**macOS 用户需要设置环境变量:**
+```bash
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker default high low
+```
+
+**Linux 用户:**
+```bash
+python manage.py rqworker default high low
+```
+
 访问 http://127.0.0.1:8000 查看网站。
 
 ## 项目结构
@@ -182,6 +204,48 @@ CACHES = {
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 WHITENOISE_MAX_AGE = 31536000  # 1 year
 ```
+
+## 生产环境特性
+
+### 异步评测系统
+
+项目使用 Django-RQ 实现异步评测，避免评测阻塞 HTTP 请求：
+
+- 评测任务通过 Redis 队列异步执行
+- 支持多个优先级队列 (default, high, low)
+- 评测结果自动更新到数据库
+- 支持任务失败重试和错误日志记录
+
+### 缓存策略
+
+- **页面缓存**: 使用 Redis 缓存视图响应
+- **查询缓存**: 缓存数据库查询结果 (问题列表、排行榜等)
+- **Markdown 缓存**: 缓存 Markdown 渲染结果，避免重复渲染
+- **缓存失效**: 数据变更时自动清除相关缓存
+
+### 监控与日志
+
+- **结构化日志**: 记录到控制台、文件和错误日志
+- **健康检查**: `/health/` 端点检查数据库、Redis 和缓存状态
+- **Prometheus 指标**: `/metrics/` 端点提供监控指标
+- **日志轮转**: 自动轮转日志文件，保留最近 5 个备份
+
+### 安全特性
+
+- **速率限制**: 提交限制为 3 次/分钟
+- **输入验证**: 搜索端点验证输入长度和字符
+- **XSS 防护**: Markdown 渲染使用 bleach 清理 HTML
+- **CSRF 保护**: 所有 POST 请求受 CSRF 保护
+
+### 支持的编程语言
+
+- C
+- C++
+- Python
+- Java
+- Assembly (ARM64 GNU as 语法)
+
+## 生产部署建议
 
 ### 管理后台
 

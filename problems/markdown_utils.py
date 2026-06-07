@@ -1,7 +1,9 @@
 import re
+import hashlib
 
 import markdown
 import bleach
+from django.core.cache import cache
 
 ALLOWED_TAGS = bleach.sanitizer.ALLOWED_TAGS | frozenset({
     'p', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -50,6 +52,17 @@ def _restore_math(html, storage):
 def render_markdown(text):
     if not text:
         return ''
+    
+    # Generate cache key based on content hash
+    content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+    cache_key = f'markdown_render_{content_hash}'
+    
+    # Try to get cached result
+    cached_html = cache.get(cache_key)
+    if cached_html is not None:
+        return cached_html
+    
+    # Render markdown
     text, math_blocks = _protect_math(text)
     html = markdown.markdown(
         text,
@@ -60,4 +73,9 @@ def render_markdown(text):
         bleach.clean(html, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRIBUTES),
         parse_email=False,
     )
-    return _restore_math(html, math_blocks)
+    html = _restore_math(html, math_blocks)
+    
+    # Cache the result for 1 hour
+    cache.set(cache_key, html, 60 * 60)
+    
+    return html

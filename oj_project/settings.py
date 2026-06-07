@@ -6,6 +6,9 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Logging configuration
+from .logging_config import LOGGING
+
 SECRET_KEY = os.environ.get(
     'DJANGO_SECRET_KEY',
     'wfdscw34rewfdsg54y3redwqefrg45t3ewffr34we',
@@ -35,9 +38,14 @@ INSTALLED_APPS = [
     'handbook',
     'mathfilters',
     'search',
+    'django_rq',
+    'django_ratelimit',
+    'django_prometheus',
+    'health',
 ]
 
 MIDDLEWARE = [
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -45,7 +53,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware'
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
 ROOT_URLCONF = 'oj_project.urls'
@@ -76,6 +85,34 @@ CACHES = {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient'
         }
     }
+}
+
+RQ_QUEUES = {
+    'default': {
+        'HOST': 'localhost',
+        'PORT': 6379,
+        'DB': 0,
+        'DEFAULT_TIMEOUT': 3600,
+        'WORKER_CLASS': 'rq.Worker',
+    },
+    'high': {
+        'HOST': 'localhost',
+        'PORT': 6379,
+        'DB': 0,
+        'DEFAULT_TIMEOUT': 3600,
+        'WORKER_CLASS': 'rq.Worker',
+    },
+    'low': {
+        'HOST': 'localhost',
+        'PORT': 6379,
+        'DB': 0,
+        'DEFAULT_TIMEOUT': 3600,
+        'WORKER_CLASS': 'rq.Worker',
+    },
+}
+
+RQ = {
+    'exception_handler': 'django_rq.handlers.sentry',
 }
 
 DATABASES = {
@@ -156,3 +193,6 @@ OJ_MAX_SUBMISSION_CODE_BYTES = int(
 OJ_DOCKER_ENABLED = os.environ.get('OJ_DOCKER_ENABLED', 'true').lower() in ('1', 'true', 'yes')
 OJ_DOCKER_IMAGE = os.environ.get('OJ_DOCKER_IMAGE', 'oj-judge:latest')
 OJ_DOCKER_PIDS_LIMIT = int(os.environ.get('OJ_DOCKER_PIDS_LIMIT', '64'))
+
+# Logging configuration
+LOGGING = LOGGING
