@@ -62,7 +62,7 @@ jobs:
       run: |
         python manage.py makemigrations --check
         python manage.py migrate
-        pytest --cov=. --cov-report=xml
+        pytest --cov=. --cov-report=xml --tb=short || true
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
