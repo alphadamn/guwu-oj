@@ -6,3 +6,8 @@ from django.views.decorators.vary import vary_on_headers
 @vary_on_headers('Host', 'Accept-Language')  # 可选：根据请求头区分缓存
 def custom_404_view(request, exception):
     return render(request, '404.html', status=404)
+
+@cache_page(60 * 60)
+@vary_on_headers('Host', 'Accept-Language')
+def custom_403_view(request, exception):
+    return render(request, '429.html', status=403)

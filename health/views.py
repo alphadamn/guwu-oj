@@ -1,5 +1,6 @@
 from django.http import JsonResponse
 from django.db import connection
+from oj_project.settings import *
 from django.core.cache import cache
 from redis import Redis
 from django.conf import settings
@@ -26,7 +27,7 @@ def health_check(request):
     
     # Check Redis connection
     try:
-        redis_client = Redis(host='localhost', port=6379, db=0)
+        redis_client = Redis(host=redis_host, port=redis_port, db=redis_db)
         redis_client.ping()
         health_status['checks']['redis'] = 'ok'
     except Exception as e:

@@ -16,9 +16,10 @@ django-ratelimit
 prometheus-client
 django-prometheus
 python-json-logger
-pytest
-pytest-django
-pytest-cov
+#pytest
+#pytest-django
+#pytest-cov
 django-sslserver-v2
-flake8
+#flake8
+docker
 python-dateutil

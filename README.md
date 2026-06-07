@@ -126,6 +126,24 @@ OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker default high l
 python manage.py rqworker default high low
 ```
 
+### 10. 验证环境配置 (可选)
+
+运行环境验证脚本检查所有组件是否正常工作:
+
+```bash
+python verify_setup.py
+```
+
+此脚本会检查:
+- Python 版本兼容性
+- 数据库连接和配置
+- Redis 连接和缓存操作
+- 数据库表完整性
+- Docker 状态和安全配置
+- Python 依赖包
+- 文件权限
+- 环境变量配置
+
 访问 http://127.0.0.1:8000 查看网站。
 
 ## 项目结构

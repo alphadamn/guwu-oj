@@ -77,10 +77,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'oj_project.wsgi.application'
 
+redis_host = '127.0.0.1'
+redis_port = 6379
+redis_db = 1
+
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'LOCATION': f'redis://{redis_host}:{redis_port}/{redis_db}',
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient'
         }

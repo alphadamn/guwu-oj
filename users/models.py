@@ -1,3 +1,4 @@
+import gzip
 import uuid
 from pathlib import Path
 import os
@@ -87,5 +88,25 @@ class AvatarBlob(models.Model):
     data = models.BinaryField()
     updated_at = models.DateTimeField(auto_now=True)
 
+    @classmethod
+    def compress(cls, data: bytes) -> bytes:
+        """Compress data using gzip."""
+        return gzip.compress(data, compresslevel=6)
+
+    @classmethod
+    def decompress(cls, compressed_data: bytes) -> bytes:
+        """Decompress gzip data."""
+        return gzip.decompressed(compressed_data)
+
     def __str__(self):
         return f'Avatar for {self.user.username}'
+
+    def save(self, *args, **kwargs):
+        # Compress data before saving
+        self.data = self.compress(self.data)
+        super().save(*args, **kwargs)
+
+    @property
+    def image_data(self) -> bytes:
+        """Decompress data when reading."""
+        return self.decompress(self.data)

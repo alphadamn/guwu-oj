@@ -65,7 +65,7 @@ def avatar(request, username):
         raise Http404('No avatar stored for this user')
 
     blob = user.avatar_blob
-    response = HttpResponse(bytes(blob.data), content_type=blob.content_type)
+    response = HttpResponse(blob.image_data, content_type=blob.content_type)
     # Always revalidate; a query-string version bump is added to the URL on
     # upload to force clients to fetch the new image.
     response['Last-Modified'] = http_date(blob.updated_at.timestamp())
