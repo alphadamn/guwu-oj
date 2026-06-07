@@ -16,3 +16,7 @@ django-ratelimit
 prometheus-client
 django-prometheus
 python-json-logger
+pytest
+pytest-django
+pytest-cov
+flake8
