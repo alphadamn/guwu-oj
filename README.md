@@ -15,7 +15,7 @@
   - 难度分级（入门、普及-、普及、普及+、提高-、提高、提高+、省选、NOI）
 
 - 提交系统
-  - 代码提交（支持 C、C++、Python、Java）
+  - 代码提交（支持 C、C++、Python、Java、JavaScript、TypeScript、Go、Rust、Ruby、Kotlin、Assembly）
   - 提交记录查看
   - 提交详情（代码、评测结果、运行时间、内存使用）
 
@@ -47,11 +47,24 @@
 
 ### 使用 Docker（推荐）
 
+项目使用按语言拆分的轻量 Docker 镜像进行沙箱评测，替代单一巨型镜像：
+
 ```bash
-# 构建评测容器镜像（一次性）
-cd docker/judge
-docker build -t oj-judge:latest .
+# 构建所有评测镜像（一次性）
+./scripts/build-containers.sh
 ```
+
+构建后将产生 5 个独立镜像：
+
+| 镜像 | 语言 | 大小 |
+|------|------|------|
+| `oj-python` | Python | ~44MB |
+| `oj-c` | C | ~86MB |
+| `oj-cpp` | C++ | ~110MB |
+| `oj-java` | Java | ~181MB |
+| `oj-other` | Go, Rust, JS, TS, Ruby, Kotlin, ASM | ~636MB |
+
+判题时系统会根据提交语言自动选择对应镜像，无需手动指定。
 
 如果你更倾向于本地直接运行而非 Docker，可跳过此段，继续使用常规的 Python 环境。
 
@@ -125,6 +138,65 @@ OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker default high l
 ```bash
 python manage.py rqworker default high low
 ```
+
+#### 多判题机部署 (Multi-Judge)
+
+支持将评测任务分发到多个判题机并行处理，提升系统吞吐量。
+
+**1. 配置判题机**
+
+在 `settings.py` 中添加 `JUDGE_MACHINES`：
+
+```python
+JUDGE_MACHINES = [
+    {
+        'name': 'judge-1',
+        'host': 'localhost',
+        'port': 6379,
+        'db': 0,
+        'queue': 'judge-1',
+        'enabled': True,
+        'weight': 1,
+    },
+    {
+        'name': 'judge-2',
+        'host': '192.168.1.100',
+        'port': 6379,
+        'db': 0,
+        'queue': 'judge-2',
+        'enabled': True,
+        'weight': 1,
+    },
+]
+```
+
+**2. 启用多判题模式**
+
+```bash
+export OJ_MULTI_JUDGE_ENABLED=true
+```
+
+**3. 在各判题机上启动 RQ Worker**
+
+```bash
+# 判题机 1
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-1
+
+# 判题机 2
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-2
+```
+
+**4. 检查判题机健康状态**
+
+```bash
+python manage.py check_judge_health
+```
+
+负载均衡策略：
+- **加权随机分配**：根据 `weight` 字段按比例分发任务
+- **健康检查**：每 30 秒检查一次 Redis 连接，自动跳过不健康的机器
+- **降级兜底**：所有机器不可用时自动回退到 `default` 队列
+- 关闭多判题模式（`OJ_MULTI_JUDGE_ENABLED=false`）即恢复单机模式
 
 ### 10. 验证环境配置 (可选)
 
@@ -257,11 +329,19 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 
 ### 支持的编程语言
 
-- C
-- C++
-- Python
-- Java
-- Assembly (ARM64 GNU as 语法)
+| 语言 | 编译方式 | 运行时 |
+|------|---------|--------|
+| C | `gcc -O2` | 原生执行 |
+| C++ | `g++ -std=c++17 -O2` | 原生执行 |
+| Python | — | `python3` |
+| Java | `javac` | `java` |
+| JavaScript | — | `node` |
+| TypeScript | `tsc` | `node` |
+| Go | `go build` | 原生执行 |
+| Rust | `rustc --edition=2021` | 原生执行 |
+| Ruby | — | `ruby` |
+| Kotlin | `kotlinc` | `java -jar` |
+| Assembly | `as` + `ld` | ARM64 Linux 原生 |
 
 ## 生产部署建议
 
@@ -303,11 +383,13 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 ## 开发计划
 
 - [x] 实现自动化代码评测系统
+- [x] 添加更多编程语言支持 (JavaScript/TypeScript/Go/Rust/Ruby/Kotlin)
+- [x] 判题 Docker 镜像按语言拆分
+- [x] 多判题机分布式部署 (Multi-Judge)
 - [ ] 添加比赛功能
 - [ ] 植入AI解题功能+文档搜索引擎
 - [x] 添加题解功能
 - [ ] 优化移动端体验
-- [ ] 添加更多编程语言支持
 
 ## 许可证
 
