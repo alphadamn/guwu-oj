@@ -86,7 +86,8 @@ CACHES = {
         'BACKEND': 'django_redis.cache.RedisCache',
         'LOCATION': f'redis://{redis_host}:{redis_port}/{redis_db}',
         'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient'
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'SOCKET_KEEPALIVE': True
         }
     }
 }
@@ -97,21 +98,36 @@ RQ_QUEUES = {
         'PORT': 6379,
         'DB': 0,
         'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'rq.Worker',
+        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+        'REDIS_CONNECTION_KWARGS': {
+            'socket_connect_timeout': 5,
+            'socket_timeout': 5,
+            'retry_on_timeout': True,
+        }
     },
     'high': {
         'HOST': 'localhost',
         'PORT': 6379,
         'DB': 0,
         'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'rq.Worker',
+        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+        'REDIS_CONNECTION_KWARGS': {
+            'socket_connect_timeout': 5,
+            'socket_timeout': 5,
+            'retry_on_timeout': True,
+        }
     },
     'low': {
         'HOST': 'localhost',
         'PORT': 6379,
         'DB': 0,
         'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'rq.Worker',
+        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+        'REDIS_CONNECTION_KWARGS': {
+            'socket_connect_timeout': 5,
+            'socket_timeout': 5,
+            'retry_on_timeout': True,
+        }
     },
 }
 
@@ -130,9 +146,9 @@ JUDGE_MACHINES = [
     # Add more judge machines here:
     {
         'name': 'judge-2',
-        'host': 'localhost',
+        'host': '192.168.3.117',
         'port': 6379,
-        'db': 2,
+        'db': 0,
         'queue': 'judge-2',
         'enabled': True,
         'weight': 1,
@@ -150,7 +166,12 @@ for machine in JUDGE_MACHINES:
             'PORT': machine['port'],
             'DB': machine['db'],
             'DEFAULT_TIMEOUT': 3600,
-            'WORKER_CLASS': 'rq.Worker',
+            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+            'REDIS_CONNECTION_KWARGS': {
+                'socket_connect_timeout': 5,
+                'socket_timeout': 5,
+                'retry_on_timeout': True,
+            }
         }
 
 RQ = {

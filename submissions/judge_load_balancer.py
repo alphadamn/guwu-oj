@@ -25,7 +25,7 @@ class JudgeLoadBalancer:
         return [m for m in self.machines if m.get('enabled', True)]
 
     def check_machine_health(self, machine):
-        """Check if a judge machine is healthy."""
+        """Check if a judge machine is healthy by connecting to its Redis instance."""
         cache_key = f'{self.health_check_cache_prefix}{machine["name"]}'
         
         # Check cache first
@@ -35,18 +35,14 @@ class JudgeLoadBalancer:
 
         # Perform health check by connecting to Redis
         try:
-            redis_conn = get_redis_connection(
-                # f'judge-{machine["name"]}',
-                # machine['queue'],
-                'default',
-                {
-                    'HOST': machine['host'],
-                    'PORT': machine['port'],
-                    'DB': machine['db'],
-                    'OPTIONS': {
-                        'CLIENT_CLASS': 'django_redis.client.DefaultClient'
-                    }
-                }
+            import redis
+            redis_conn = redis.Redis(
+                host=machine['host'],
+                port=machine['port'],
+                db=machine['db'],
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                decode_responses=True
             )
             redis_conn.ping()
             is_healthy = True
@@ -109,7 +105,7 @@ class JudgeLoadBalancer:
                 'PORT': machine['port'],
                 'DB': machine['db'],
                 'DEFAULT_TIMEOUT': 3600,
-                'WORKER_CLASS': 'rq.Worker',
+                'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
             }
         }
 
