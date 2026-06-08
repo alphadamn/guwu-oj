@@ -115,6 +115,44 @@ RQ_QUEUES = {
     },
 }
 
+# Multi-judge machine configuration
+# Each judge machine has its own RQ queue for distributed judging
+JUDGE_MACHINES = [
+    {
+        'name': 'judge-1',
+        'host': 'localhost',
+        'port': 6379,
+        'db': 0,
+        'queue': 'judge-1',
+        'enabled': True,
+        'weight': 1,  # Load balancing weight
+    },
+    # Add more judge machines here:
+    {
+        'name': 'judge-2',
+        'host': 'localhost',
+        'port': 6379,
+        'db': 2,
+        'queue': 'judge-2',
+        'enabled': True,
+        'weight': 1,
+    },
+]
+
+# Enable multi-judge mode
+OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+
+# Dynamically add RQ queues for each judge machine
+for machine in JUDGE_MACHINES:
+    if machine.get('enabled', True):
+        RQ_QUEUES[machine['queue']] = {
+            'HOST': machine['host'],
+            'PORT': machine['port'],
+            'DB': machine['db'],
+            'DEFAULT_TIMEOUT': 3600,
+            'WORKER_CLASS': 'rq.Worker',
+        }
+
 RQ = {
     'exception_handler': 'django_rq.handlers.sentry',
 }
