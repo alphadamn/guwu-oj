@@ -88,7 +88,6 @@ class SandboxRunner:
                 timeout=5,
             )
 
-            # print(list_res)
 
             for cid in list_res.stdout.strip().splitlines():
                 # 2. Inspect the container to get its start time
@@ -98,12 +97,10 @@ class SandboxRunner:
                     text=True,
                     timeout=3,
                 )
-                # print(inspect_res.stdout)
                 if inspect_res.returncode != 0:
                     continue  # skip if inspection fails
 
                 data = json.loads(inspect_res.stdout)
-                # print(data)
                 started_at_str = data[0]['State']['StartedAt']
                 # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
                 # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
@@ -199,7 +196,6 @@ class SandboxRunner:
             elapsed_sec = None
             if result.stderr:
                 first_line = result.stderr.splitlines()[1].strip()
-                # print(first_line)
                 try:
                     # elapsed_sec = float(first_line)
                     match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
@@ -219,11 +215,6 @@ class SandboxRunner:
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or 'Runtime error').strip()
-            # print(f"Command failed: {cmd}")
-            # print(f"Return code: {result.returncode}")
-            # print(f"Stderr: {result.stderr}")
-            # print(f"Stdout: {result.stdout}")
-            # print(f"Error: {err}")
             return None, elapsed_ms, ('Runtime Error', err)
         return result.stdout, elapsed_ms, None
 

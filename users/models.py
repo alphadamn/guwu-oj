@@ -10,19 +10,11 @@ from django.utils.translation import gettext_lazy as _
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 
-
-def avatar_upload_to(instance, filename):
-    ext = Path(filename).suffix.lower() or '.jpg'
-    return f'avatars/{uuid.uuid4().hex}{ext}'
-
-
 class User(AbstractUser):
     email = models.EmailField(_('email address'), blank=True, unique=True)
     nickname = models.CharField(max_length=50, blank=True)
     bio = models.TextField(max_length=500, blank=True)
-    # Legacy file-based avatar field. Kept for migration compatibility, but new
-    # uploads are stored as raw bytes in the `AvatarBlob` table (PostgreSQL).
-    avatar = models.ImageField(upload_to=avatar_upload_to, blank=True, null=True)
+    avatar = models.ImageField(blank=True, null=True)
     solved_problems = models.ManyToManyField(
         'problems.Problem', blank=True, related_name='solved_by'
     )
@@ -91,22 +83,41 @@ class AvatarBlob(models.Model):
     @classmethod
     def compress(cls, data: bytes) -> bytes:
         """Compress data using gzip."""
-        return gzip.compress(data, compresslevel=6)
-
-    @classmethod
-    def decompress(cls, compressed_data: bytes) -> bytes:
-        """Decompress gzip data."""
-        return gzip.decompressed(compressed_data)
+        return gzip.compress(data)
 
     def __str__(self):
         return f'Avatar for {self.user.username}'
 
     def save(self, *args, **kwargs):
         # Compress data before saving
-        self.data = self.compress(self.data)
+        if self.data[:2].hex() != b'\x1f\x8b'.hex():
+            self.data = self.compress(self.data)
+        
+        # Invalidate cache when avatar is updated
+        cache_key = f'avatar_data:{self.user.username}'
+        freq_key_pattern = f'avatar_freq:{self.user.username}:*'
+        cache.delete(cache_key)
+        cache.delete_pattern(freq_key_pattern)
+        
         super().save(*args, **kwargs)
 
     @property
     def image_data(self) -> bytes:
         """Decompress data when reading."""
-        return self.decompress(self.data)
+        # Convert memory object to bytes if needed
+        data = bytes(self.data)
+
+        # Debug logging
+        gzip_magic = b'\x1f\x8b'
+
+        # Check if data is already uncompressed (gzip magic number is 0x1f 0x8b)
+        if len(data) >= 2 and data[:2] != gzip_magic:
+            return data
+
+        try:
+            decompressed = gzip.decompress(data)
+            with open('tmp.png', 'wb') as f:
+                f.write(decompressed)
+            return decompressed
+        except Exception as e:
+            return data

@@ -86,6 +86,8 @@ class UserUpdateForm(forms.ModelForm):
         return avatar
 
     def save(self, commit=True):
+        from .models import AvatarBlob
+
         user = super().save(commit=False)
         avatar = self.cleaned_data.get('avatar')
 
@@ -96,9 +98,12 @@ class UserUpdateForm(forms.ModelForm):
             avatar.seek(0)
             data = avatar.read()
             content_type = getattr(avatar, 'content_type', 'image/jpeg')
+            # Compress avatar data before saving
+            compressed_data = AvatarBlob.compress(data)
+            gzip_magic = b'\x1f\x8b'
             AvatarBlob.objects.update_or_create(
                 user=user,
-                defaults={'content_type': content_type, 'data': data},
+                defaults={'content_type': content_type, 'data': compressed_data},
             )
 
         if commit:
