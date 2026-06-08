@@ -1,5 +1,5 @@
-import signal
-import sys
+# In a file like "myapp/workers.py"
+import time
 from django_rq.workers import get_worker
 from rq.worker import Worker
 import redis
@@ -17,8 +17,6 @@ class AutoReconnectWorker(Worker):
         super().__init__(*args, **kwargs)
         self.max_retries = 5
         self.retry_delay = 5
-        self._should_exit = False
-
 
     def _reconnect(self):
         """Attempt to re-establish the Redis connection."""
@@ -37,35 +35,20 @@ class AutoReconnectWorker(Worker):
         # If all retries fail, raise a critical error to let the supervisor handle it
         raise redis.ConnectionError("Failed to reconnect to Redis after multiple attempts.")
 
-    def _handle_exit(self, signum, frame):
-        """Signal handler for SIGINT and SIGTERM."""
-        logger.info("Received exit signal, shutting down gracefully...")
-        self._should_exit = True
-        # Optionally call super().shutdown() if you want RQ's graceful cleanup
-        sys.exit(0)
-
     def work(self, *args, **kwargs):
-        # Register signal handlers
-        signal.signal(signal.SIGINT, self._handle_exit)
-        signal.signal(signal.SIGTERM, self._handle_exit)
-
-        while not self._should_exit:
+        """Main work loop with built-in reconnection logic."""
+        while True:
             try:
-                # Start the main work loop (this will block until worker stops)
+                # Start the main work loop
                 super().work(*args, **kwargs)
-            except KeyboardInterrupt:
-                logger.info("Ctrl+C pressed, exiting.")
-                sys.exit(0)
             except (redis.ConnectionError, redis.TimeoutError) as e:
                 logger.error(f"Redis connection lost: {e}. Attempting to reconnect...")
                 self._reconnect()
-                # After reconnecting, the loop continues
+                # After reconnecting, the loop continues, and the worker picks up where it left off.
             except Exception as e:
                 logger.exception(f"An unexpected error occurred: {e}")
                 # For non-Redis errors, we exit so a fresh worker can take over.
                 break
-
-        logger.info("Worker loop ended.")
 
 # Helper function to get your custom worker (optional, for use with `django-rq`)
 def get_auto_reconnect_worker(*args, **kwargs):
