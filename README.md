@@ -180,10 +180,10 @@ export OJ_MULTI_JUDGE_ENABLED=true
 
 ```bash
 # 判题机 1
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-1
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-1 --worker-class oj_project.customrq.AutoReconnectWorker
 
 # 判题机 2
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-2
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-2 --worker-class oj_project.customrq.AutoReconnectWorker
 ```
 
 **4. 检查判题机健康状态**
