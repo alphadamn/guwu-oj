@@ -13,10 +13,23 @@ class JudgeLoadBalancer:
     """Load balancer for distributing judge tasks across multiple judge machines."""
 
     def __init__(self):
-        self.machines = getattr(settings, 'JUDGE_MACHINES', [])
         self.multi_judge_enabled = getattr(settings, 'OJ_MULTI_JUDGE_ENABLED', False)
         self.health_check_cache_prefix = 'judge_health_'
-        self.health_check_ttl = 30  # Health check results valid for 30 seconds
+        self.health_check_ttl = 30
+
+    @property
+    def machines(self):
+        """Get machines from DB, fallback to settings.py."""
+        from submissions.models import JudgeMachine
+        try:
+            db_machines = list(JudgeMachine.objects.values(
+                'name', 'host', 'port', 'db', 'queue', 'enabled', 'weight'
+            ))
+            if db_machines:
+                return db_machines
+        except Exception:
+            pass
+        return getattr(settings, 'JUDGE_MACHINES', [])
 
     def get_enabled_machines(self):
         """Get list of enabled judge machines."""

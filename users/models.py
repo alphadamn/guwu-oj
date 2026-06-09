@@ -3,6 +3,10 @@ import uuid
 from pathlib import Path
 import os
 
+
+def avatar_upload_to(instance, filename):
+    return f'avatars/{instance.username}/{filename}'
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.urls import reverse
