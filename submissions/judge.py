@@ -85,20 +85,50 @@ class SandboxRunner:
         return hashlib.sha256((lang + '\0' + code).encode()).hexdigest()
 
     def _get_cached_binary(self, code, lang):
+        """Return cached binary if it exists, is fresh (<2 days), and has been cached (hit >=3 times)."""
         key = self._get_cache_key(code, lang)
         path = os.path.join(self._cache_dir, key)
-        if os.path.isfile(path):
-            return path
-        return None
+        if not os.path.isfile(path):
+            return None
+        # Expire caches older than 2 days
+        age_seconds = time.time() - os.path.getmtime(path)
+        if age_seconds > 172800:  # 2 days
+            try:
+                os.remove(path)
+                count_path = os.path.join(self._cache_dir, key + '.count')
+                if os.path.isfile(count_path):
+                    os.remove(count_path)
+            except OSError:
+                pass
+            return None
+        # Touch access time
+        try:
+            os.utime(path, None)
+        except OSError:
+            pass
+        return path
 
     def _cache_binary(self, code, lang, binary_path):
+        """Cache binary only after 3rd submission of the same code."""
         try:
             os.makedirs(self._cache_dir, exist_ok=True)
             key = self._get_cache_key(code, lang)
-            dst = os.path.join(self._cache_dir, key)
-            import shutil
-            shutil.copy2(binary_path, dst)
-            os.chmod(dst, 0o755)
+            count_path = os.path.join(self._cache_dir, key + '.count')
+
+            count = 0
+            if os.path.isfile(count_path):
+                with open(count_path) as f:
+                    count = int(f.read().strip())
+
+            count += 1
+            with open(count_path, 'w') as f:
+                f.write(str(count))
+
+            if count >= 3:
+                dst = os.path.join(self._cache_dir, key)
+                import shutil
+                shutil.copy2(binary_path, dst)
+                os.chmod(dst, 0o755)
         except Exception:
             pass
 
