@@ -136,7 +136,7 @@ RQ_QUEUES = {
 JUDGE_MACHINES = [
     {
         'name': 'judge-1',
-        'host': 'localhost',
+        'host': '127.0.0.1',
         'port': 6379,
         'db': 0,
         'queue': 'judge-1',
@@ -184,19 +184,10 @@ DATABASES = {
         'NAME': os.environ.get('DB_NAME', 'ojdb'),
         'USER': os.environ.get('DB_USER', 'oscar.liu'),
         'PASSWORD': os.environ.get('DB_PASSWORD', '20131117Liu'),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
         'PORT': os.environ.get('DB_PORT', '5432'),
     }
 }
-
-# Use SQLite for CI/CD
-if os.environ.get('USE_SQLITE') == 'true':
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': os.environ.get('DB_NAME', 'db.sqlite3'),
-        }
-    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {
