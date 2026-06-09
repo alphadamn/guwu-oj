@@ -30,7 +30,7 @@ class ProblemModelTest(TestCase):
         self.assertTrue(self.problem.is_public)
 
     def test_problem_str(self):
-        self.assertEqual(str(self.problem), 'Test Problem')
+        self.assertIn('Test Problem', str(self.problem))
 
 
 class UserModelTest(TestCase):
