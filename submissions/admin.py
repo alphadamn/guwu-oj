@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Submission, SubmissionTestResult
+from .models import Submission, SubmissionTestResult, JudgeMachine
 
 
 class SubmissionTestResultInline(admin.TabularInline):
@@ -15,3 +15,11 @@ class SubmissionAdmin(admin.ModelAdmin):
     search_fields = ['user__username', 'problem__title']
     readonly_fields = ['created_at']
     inlines = [SubmissionTestResultInline]
+
+
+@admin.register(JudgeMachine)
+class JudgeMachineAdmin(admin.ModelAdmin):
+    list_display = ['name', 'host', 'port', 'db', 'queue', 'enabled', 'weight']
+    list_editable = ['host', 'port', 'db', 'queue', 'enabled', 'weight']
+    list_filter = ['enabled']
+    search_fields = ['name', 'host']

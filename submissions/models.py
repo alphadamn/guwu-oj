@@ -81,3 +81,23 @@ class SubmissionTestResult(models.Model):
 
     def __str__(self):
         return f"Submission {self.submission_id} case #{self.case_index}: {self.status}"
+
+
+class JudgeMachine(models.Model):
+    """Judge machine configuration for distributed judging."""
+    name = models.CharField(max_length=64, unique=True)
+    host = models.CharField(max_length=255, default='localhost')
+    port = models.IntegerField(default=6379)
+    db = models.IntegerField(default=0)
+    queue = models.CharField(max_length=64)
+    enabled = models.BooleanField(default=True)
+    weight = models.IntegerField(default=1, help_text='Higher weight = more tasks')
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Judge Machine'
+        verbose_name_plural = 'Judge Machines'
+
+    def __str__(self):
+        status = '✓' if self.enabled else '✗'
+        return f'{status} {self.name} ({self.host}:{self.port}/{self.db})'
