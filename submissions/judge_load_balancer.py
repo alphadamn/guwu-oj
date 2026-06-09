@@ -66,32 +66,68 @@ class JudgeLoadBalancer:
         
         return healthy_machines
 
+    def _get_queue_length(self, machine):
+        """Get number of pending/enqueued jobs on this machine's queue.
+        Returns 0 if the queue can't be reached (treat as overloaded to avoid)."""
+        try:
+            import redis
+            r = redis.Redis(
+                host=machine['host'],
+                port=machine['port'],
+                db=machine['db'],
+                socket_connect_timeout=3,
+                socket_timeout=3,
+            )
+            # RQ stores jobs under rq:queue:<name>
+            return r.llen(f"rq:queue:{machine['queue']}")
+        except Exception:
+            # Can't reach Redis — treat as heavily loaded so we skip it
+            return 9999
+
     def select_machine(self):
-        """Select a judge machine using weighted round-robin."""
+        """Select the least-loaded healthy judge machine.
+        Machines with fewer pending jobs are preferred.
+        Among equally-loaded machines, weight is used for tie-breaking."""
         if not self.multi_judge_enabled:
             return None
 
         healthy_machines = self.get_healthy_machines()
-        
         if not healthy_machines:
             logger.warning('No healthy judge machines available, falling back to default queue')
             return None
 
-        # Weighted random selection
-        total_weight = sum(m.get('weight', 1) for m in healthy_machines)
-        if total_weight == 0:
-            return random.choice(healthy_machines)
+        # Query queue lengths for all healthy machines
+        machine_loads = []
+        for m in healthy_machines:
+            qlen = self._get_queue_length(m)
+            machine_loads.append((qlen, m))
+            logger.debug(f'  {m["name"]}: {qlen} pending jobs')
 
+        # Sort by queue length (ascending — less loaded first)
+        machine_loads.sort(key=lambda x: x[0])
+
+        # Group machines with the same (minimum) queue length
+        min_load = machine_loads[0][0]
+        candidates = [m for qlen, m in machine_loads if qlen == min_load]
+
+        # If only one candidate, return it
+        if len(candidates) == 1:
+            logger.info(f'Selected judge machine: {candidates[0]["name"]} '
+                        f'(load: {min_load}, only idle candidate)')
+            return candidates[0]
+
+        # Tie-break among equally-loaded machines using weighted random
+        total_weight = sum(m.get('weight', 1) for m in candidates)
         rand = random.uniform(0, total_weight)
-        current_weight = 0
-        
-        for machine in healthy_machines:
-            current_weight += machine.get('weight', 1)
-            if rand <= current_weight:
-                logger.info(f'Selected judge machine: {machine["name"]}')
-                return machine
+        current = 0
+        for m in candidates:
+            current += m.get('weight', 1)
+            if rand <= current:
+                logger.info(f'Selected judge machine: {m["name"]} '
+                            f'(load: {min_load}, weighted among {len(candidates)} candidates)')
+                return m
 
-        return healthy_machines[-1]  # Fallback to last machine
+        return candidates[-1]
 
     def get_queue_for_machine(self, machine):
         """Get RQ queue configuration for a specific judge machine."""
