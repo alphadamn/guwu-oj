@@ -22,10 +22,9 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -40,8 +39,7 @@ jobs:
           USE_SQLITE: 'true'
           DJANGO_DEBUG: 'true'
           OJ_DOCKER_ENABLED: 'false'
-        run: |
-          python manage.py migrate
+        run: python manage.py migrate
 
       - name: Run tests
         env:
@@ -49,24 +47,19 @@ jobs:
           USE_SQLITE: 'true'
           DJANGO_DEBUG: 'true'
           OJ_DOCKER_ENABLED: 'false'
-        run: |
-          python -Wa manage.py test --verbosity=2
+        run: python -Wa manage.py test --verbosity=2
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install ruff
+      - name: Install ruff
+        run: pip install ruff
 
-      - name: Lint with ruff
-        run: |
-          ruff check submissions/ --ignore E501,F401,F841 || true
+      - name: Lint
+        run: ruff check submissions/ --ignore E501,F401,F841 --exit-zero
