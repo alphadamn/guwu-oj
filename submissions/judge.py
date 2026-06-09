@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import tempfile
 import time
@@ -77,6 +78,58 @@ class SandboxRunner:
         self.time_limit_sec = max(time_limit_ms / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
         self.image = image
+        self._cache_dir = os.path.join(tempfile.gettempdir(), 'oj_compile_cache')
+
+    def _get_cache_key(self, code, lang):
+        import hashlib
+        return hashlib.sha256((lang + '\0' + code).encode()).hexdigest()
+
+    def _get_cached_binary(self, code, lang):
+        key = self._get_cache_key(code, lang)
+        path = os.path.join(self._cache_dir, key)
+        if os.path.isfile(path):
+            return path
+        return None
+
+    def _cache_binary(self, code, lang, binary_path):
+        try:
+            os.makedirs(self._cache_dir, exist_ok=True)
+            key = self._get_cache_key(code, lang)
+            dst = os.path.join(self._cache_dir, key)
+            import shutil
+            shutil.copy2(binary_path, dst)
+            os.chmod(dst, 0o755)
+        except Exception:
+            pass
+
+    def _run_cached_binary(self, binary_path, stdin_data):
+        try:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
+            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
+            elapsed_sec = None
+            if result.stderr:
+                for line in result.stderr.splitlines():
+                    try:
+                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', line)
+                        if match:
+                            minutes = int(match.group(1))
+                            seconds = float(match.group(2))
+                            elapsed_sec = minutes * 60 + seconds
+                            break
+                    except ValueError:
+                        pass
+            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
+        if exit_indicates_memory_limit(result.returncode):
+            return None, elapsed_ms, 'Memory Limit Exceeded'
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or 'Runtime error').strip()
+            return None, elapsed_ms, ('Runtime Error', err)
+        return result.stdout, elapsed_ms, None
+
 
     def clean_docker(self):
         try:
@@ -232,6 +285,11 @@ class SandboxRunner:
         src = Path(self.work_dir) / 'main.cpp'
         src.write_text(code, encoding='utf-8')
         # start = time.perf_counter()
+        # Check compile cache
+        cached = self._get_cached_binary(code, 'cpp')
+        if cached:
+            return self._run_cached_binary(cached, stdin_data)
+
         try:
             # Compile first
             compile_result = self._run(
@@ -255,44 +313,13 @@ class SandboxRunner:
                 return None, 0, ('Runtime Error', 'Binary not found after compilation')
             
             os.chmod(binary_path, 0o755)
-            print(f"Binary exists on host: {binary_path}")
+            self._cache_binary(code, 'cpp', str(binary_path))
             
-            # Execute using absolute path
-            # start = time.perf_counter()
-            try:
-                cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
-                wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-                result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-                elapsed_sec = None
-                if result.stderr:
-                    first_line = result.stderr.splitlines()[1].strip()
-                    # print(first_line)
-                    try:
-                        # elapsed_sec = float(first_line)
-                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                        if match:
-                            minutes = int(match.group(1))
-                            seconds = float(match.group(2))
-                            elapsed_sec = minutes * 60 + seconds
-                    except ValueError:
-                        pass
-                elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-            except subprocess.TimeoutExpired:
-                self.clean_docker()
-                return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
+            return self._run_cached_binary(str(binary_path), stdin_data)
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
 
-            if exit_indicates_memory_limit(result.returncode):
-                return None, elapsed_ms, 'Memory Limit Exceeded'
-
-            if result.returncode != 0:
-                err = (result.stderr or result.stdout or 'Runtime error').strip()
-                # print(f"Command failed: {wrapped_cmd}")
-                # print(f"Return code: {result.returncode}")
-                # print(f"Stderr: {result.stderr}")
-                # print(f"Stdout: {result.stdout}")
-                # print(f"Error: {err}")
-                return None, elapsed_ms, ('Runtime Error', err)
-            return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
             self.clean_docker()
             return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
@@ -316,6 +343,11 @@ class SandboxRunner:
         src = Path(self.work_dir) / 'main.c'
         src.write_text(code, encoding='utf-8')
         # start = time.perf_counter()
+        # Check compile cache
+        cached = self._get_cached_binary(code, 'c')
+        if cached:
+            return self._run_cached_binary(cached, stdin_data)
+
         try:
             # Compile first
             compile_result = self._run(
@@ -339,47 +371,13 @@ class SandboxRunner:
                 return None, 0, ('Runtime Error', 'Binary not found after compilation')
 
             os.chmod(binary_path, 0o755)
-            print(f"Binary exists on host: {binary_path}")
+            self._cache_binary(code, 'c', str(binary_path))
+            
+            return self._run_cached_binary(str(binary_path), stdin_data)
+        except subprocess.TimeoutExpired:
+            self.clean_docker()
+            return None, None, 'Time Limit Exceeded'
 
-            # Execute using absolute path
-            # start = time.perf_counter()
-            try:
-                cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
-                wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-                result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-                elapsed_sec = None
-                if result.stderr:
-                    first_line = result.stderr.splitlines()[1].strip()
-                    # print(first_line)
-                    try:
-                        # elapsed_sec = float(first_line)
-                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                        if match:
-                            minutes = int(match.group(1))
-                            seconds = float(match.group(2))
-                            elapsed_sec = minutes * 60 + seconds
-                    except ValueError:
-                        pass
-                try:
-                    elapsed_ms = int(elapsed_sec * 1000)
-                except Exception:
-                    elapsed_sec = None
-            except subprocess.TimeoutExpired:
-                self.clean_docker()
-                return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-            if exit_indicates_memory_limit(result.returncode):
-                return None, elapsed_ms, 'Memory Limit Exceeded'
-
-            if result.returncode != 0:
-                err = (result.stderr or result.stdout or 'Runtime error').strip()
-                # print(f"Command failed: {wrapped_cmd}")
-                # print(f"Return code: {result.returncode}")
-                # print(f"Stderr: {result.stderr}")
-                # print(f"Stdout: {result.stdout}")
-                # print(f"Error: {err}")
-                return None, elapsed_ms, ('Runtime Error', err)
-            return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
             self.clean_docker()
             return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
@@ -419,7 +417,7 @@ class SandboxRunner:
                 return None, 0, ('Runtime Error', 'Binary not found after compilation')
 
             os.chmod(binary_path, 0o755)
-            print(f"Binary exists on host: {binary_path}")
+            self._cache_binary(code, 'golang', str(binary_path))
 
             # Execute using absolute path
             try:
@@ -445,13 +443,7 @@ class SandboxRunner:
                 self.clean_docker()
                 return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
 
-            if exit_indicates_memory_limit(result.returncode):
-                return None, elapsed_ms, 'Memory Limit Exceeded'
 
-            if result.returncode != 0:
-                err = (result.stderr or result.stdout or 'Runtime error').strip()
-                return None, elapsed_ms, ('Runtime Error', err)
-            return result.stdout, elapsed_ms, None
         except subprocess.TimeoutExpired:
             self.clean_docker()
             return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
@@ -465,6 +457,11 @@ class SandboxRunner:
     def run_rust_combined(self, code, stdin_data):
         src = Path(self.work_dir) / 'main.rs'
         src.write_text(code, encoding='utf-8')
+        # Check compile cache
+        cached = self._get_cached_binary(code, 'rust')
+        if cached:
+            return self._run_cached_binary(cached, stdin_data)
+
         try:
             compile_result = self._run(
                 ['rustc', '--edition=2021', '-o', 'main', 'main.rs'],
@@ -517,6 +514,11 @@ class SandboxRunner:
         return self.run_executable([executable], stdin_data)
 
     def run_golang_combined(self, code, stdin_data):
+        # Check compile cache
+        cached = self._get_cached_binary(code, 'golang')
+        if cached:
+            return self._run_cached_binary(cached, stdin_data)
+
         src = Path(self.work_dir) / 'main.go'
         src.write_text(code, encoding='utf-8')
         try:
