@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  DJANGO_SECRET_KEY: ci-secret-key-not-for-production
+  USE_SQLITE: 'true'
+  DJANGO_DEBUG: 'true'
+  OJ_DOCKER_ENABLED: 'false'
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -34,19 +40,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run migrations
-        env:
-          DJANGO_SECRET_KEY: ci-secret-key-not-for-production
-          USE_SQLITE: 'true'
-          DJANGO_DEBUG: 'true'
-          OJ_DOCKER_ENABLED: 'false'
         run: python manage.py migrate
 
       - name: Run tests
-        env:
-          DJANGO_SECRET_KEY: ci-secret-key-not-for-production
-          USE_SQLITE: 'true'
-          DJANGO_DEBUG: 'true'
-          OJ_DOCKER_ENABLED: 'false'
         run: python -Wa manage.py test --verbosity=2
 
   lint:
