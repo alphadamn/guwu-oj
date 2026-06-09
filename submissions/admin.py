@@ -23,3 +23,18 @@ class JudgeMachineAdmin(admin.ModelAdmin):
     list_editable = ['host', 'port', 'db', 'queue', 'enabled', 'weight']
     list_filter = ['enabled']
     search_fields = ['name', 'host']
+    actions = ['check_health']
+
+    @admin.action(description='Check health of selected machines')
+    def check_health(self, request, queryset):
+        from .judge_load_balancer import load_balancer
+        results = []
+        for m in queryset:
+            machine_dict = {
+                'name': m.name, 'host': m.host, 'port': m.port,
+                'db': m.db, 'queue': m.queue,
+            }
+            healthy = load_balancer.check_machine_health(machine_dict)
+            status = '✓ healthy' if healthy else '✗ unreachable'
+            results.append(f'{m.name}: {status}')
+        self.message_user(request, '\n'.join(results))
