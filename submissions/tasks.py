@@ -46,6 +46,13 @@ def judge_submission_task(submission_id):
         submission.status = 'Runtime Error'
         submission.save()
         return None
+    finally:
+        # Release the judge machine regardless of outcome
+        try:
+            from submissions.judge_load_balancer import load_balancer
+            load_balancer.release_machine(submission_id)
+        except Exception as e:
+            logger.warning(f'Error releasing machine for submission {submission_id}: {e}')
 
     # Clear relevant caches
     try:

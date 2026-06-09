@@ -20,6 +20,9 @@ def enqueue_judge(submission_id):
             
             if machine:
                 try:
+                    # Increment busy count and record machine assignment
+                    load_balancer._incr_busy(machine)
+                    load_balancer._set_submission_machine(submission_id, machine['name'])
                     # Enqueue to specific judge machine's queue
                     queue_config = load_balancer.get_queue_for_machine(machine)
                     queue = get_queue(queue_config['name'])
