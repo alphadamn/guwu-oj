@@ -10,6 +10,7 @@ env:
   DJANGO_SECRET_KEY: ci-secret-key-not-for-production
   DEMO_MODE: 'true'
   DJANGO_DEBUG: 'true'
+  RATELIMIT_ENABLE: 'false'
 
 jobs:
   test:
