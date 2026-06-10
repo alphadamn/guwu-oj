@@ -23,24 +23,25 @@ jobs:
 
       - name: Start PostgreSQL
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql > /dev/null 2>&1
-          sudo pg_ctlcluster $(pg_lsclusters -h | awk 'NR==1{print $1" "$2}') start
+          apt-get update -qq && apt-get install -y -qq postgresql > /dev/null 2>&1
+          pg_ctlcluster $(pg_lsclusters -h | awk 'NR==1{print $1" "$2}') start
           sleep 2
-          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
-          sudo -u postgres createdb ojdb 2>/dev/null || true
+          su - postgres -c "psql -c \"ALTER USER postgres PASSWORD 'postgres';\""
+          su - postgres -c "createdb ojdb" 2>/dev/null || true
           pg_isready -h 127.0.0.1 -U postgres && echo "PostgreSQL ready"
 
       - name: Start Redis
         run: |
-          sudo apt-get install -y -qq redis-server > /dev/null 2>&1
-          sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
-          sudo sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
-          sudo service redis-server start
+          apt-get install -y -qq redis-server > /dev/null 2>&1
+          sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+          sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
+          service redis-server start
           sleep 1
           redis-cli ping && echo "Redis ready"
 
       - name: Setup Python
         run: |
+          apt-get install -y -qq python3-venv > /dev/null 2>&1
           python3 -m venv venv
           venv/bin/pip install -r requirements.txt -q
 
