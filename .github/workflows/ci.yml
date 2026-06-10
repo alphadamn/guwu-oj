@@ -10,6 +10,7 @@ env:
   DJANGO_SECRET_KEY: ci-secret-key
   DEMO_MODE: 'true'
   DJANGO_DEBUG: 'true'
+  RATELIMIT_USE_CACHE: 'dummy'
 
 jobs:
   test:
@@ -36,7 +37,7 @@ jobs:
         run: python manage.py migrate
 
       - name: Run tests
-        run: python -Wa manage.py test --verbosity=2
+        run: python -Wa manage.py test --verbosity=2 --fail-level WARNING
 
   build-docker:
     runs-on: ubuntu-latest
