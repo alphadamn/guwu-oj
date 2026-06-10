@@ -21,49 +21,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Start PostgreSQL
+      - name: Start services
         run: |
-          docker run -d --name pg \
-            -e POSTGRES_DB=ojdb \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=postgres \
-            -p 5432:5432 \
-            postgres:16-alpine
-          for i in $(seq 1 30); do
-            docker exec pg pg_isready -U postgres && break
-            sleep 1
-          done
-
-      - name: Start Redis
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq redis-server
-          sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql redis-server > /dev/null 2>&1
+          sudo pg_ctlcluster 16 main start
+          sleep 1
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb ojdb 2>/dev/null || true
           sudo redis-server --daemonize yes
-          redis-cli ping
 
-      - name: Install dependencies
+      - name: Setup Python
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python3 -m venv venv
+          venv/bin/pip install -r requirements.txt -q 2>&1 | tail -3
 
       - name: Run migrations
-        run: python manage.py migrate
+        run: venv/bin/python manage.py migrate
 
       - name: Run tests
-        run: python -Wa manage.py test --verbosity=2
+        run: venv/bin/python -Wa manage.py test --verbosity=2
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - name: Install ruff
-        run: pip install ruff
       - name: Lint
-        run: ruff check submissions/ --ignore E501,F401,F841 --exit-zero
+        run: |
+          pip install ruff
+          ruff check submissions/ --ignore E501,F401,F841 --exit-zero
