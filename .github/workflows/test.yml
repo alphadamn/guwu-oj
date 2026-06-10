@@ -21,19 +21,28 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Start services
+      - name: Start PostgreSQL
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql redis-server > /dev/null 2>&1
-          sudo pg_ctlcluster 16 main start
-          sleep 1
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql > /dev/null 2>&1
+          sudo pg_ctlcluster $(pg_lsclusters -h | awk 'NR==1{print $1" "$2}') start
+          sleep 2
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           sudo -u postgres createdb ojdb 2>/dev/null || true
-          sudo redis-server --daemonize yes
+          pg_isready -h 127.0.0.1 -U postgres && echo "PostgreSQL ready"
+
+      - name: Start Redis
+        run: |
+          sudo apt-get install -y -qq redis-server > /dev/null 2>&1
+          sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+          sudo sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
+          sudo service redis-server start
+          sleep 1
+          redis-cli ping && echo "Redis ready"
 
       - name: Setup Python
         run: |
           python3 -m venv venv
-          venv/bin/pip install -r requirements.txt -q 2>&1 | tail -3
+          venv/bin/pip install -r requirements.txt -q
 
       - name: Run migrations
         run: venv/bin/python manage.py migrate
