@@ -350,24 +350,6 @@ class SandboxRunner:
             self.clean_docker()
             return None, None, 'Time Limit Exceeded'
 
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-        # elapsed_ms = int((time.perf_counter() - start) * 1000)
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            print(f"Command failed")
-            print(f"Return code: {result.returncode}")
-            print(f"Stderr: {result.stderr}")
-            print(f"Stdout: {result.stdout}")
-            print(f"Error: {err}")
-            return None, elapsed_ms, ('Runtime Error', err)
-        return result.stdout, elapsed_ms, None
-
     def run_c_combined(self, code, stdin_data):
         # Compile and execute in the same container session to avoid binary persistence issues
         src = Path(self.work_dir) / 'main.c'

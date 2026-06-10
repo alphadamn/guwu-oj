@@ -8,54 +8,54 @@ on:
 
 env:
   DJANGO_SECRET_KEY: ci-secret-key-not-for-production
-  USE_SQLITE: 'true'
   DJANGO_DEBUG: 'true'
-  OJ_DOCKER_ENABLED: 'false'
+  DB_NAME: ojdb
+  DB_USER: postgres
+  DB_PASSWORD: postgres
+  DB_HOST: 127.0.0.1
+  DB_PORT: 5432
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Install dependencies
+      - name: Start PostgreSQL
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql > /dev/null 2>&1
+          sudo pg_ctlcluster $(pg_lsclusters -h | awk 'NR==1{print $1" "$2}') start
+          sleep 2
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb ojdb 2>/dev/null || true
+          pg_isready -h 127.0.0.1 -U postgres && echo "PostgreSQL ready"
+
+      - name: Start Redis
+        run: |
+          sudo apt-get install -y -qq redis-server > /dev/null 2>&1
+          sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+          sudo sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
+          sudo service redis-server start
+          sleep 1
+          redis-cli ping && echo "Redis ready"
+
+      - name: Setup Python
+        run: |
+          sudo apt-get install -y -qq python3-venv > /dev/null 2>&1
+          python3 -m venv venv
+          venv/bin/pip install -r requirements.txt -q
 
       - name: Run migrations
-        run: python manage.py migrate
+        run: venv/bin/python manage.py migrate
 
       - name: Run tests
-        run: python -Wa manage.py test --verbosity=2
+        run: venv/bin/python -Wa manage.py test --verbosity=2
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Install ruff
-        run: pip install ruff
-
       - name: Lint
-        run: ruff check submissions/ --ignore E501,F401,F841 --exit-zero
+        run: |
+          pip install ruff
+          ruff check submissions/ --ignore E501,F401,F841 --exit-zero
