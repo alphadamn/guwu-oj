@@ -18,48 +18,31 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: ojdb
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 10s
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
+      - name: Start PostgreSQL
+        run: |
+          docker run -d --name pg \
+            -e POSTGRES_DB=ojdb \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -p 5432:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec pg pg_isready -U postgres && break
+            echo "waiting... ($i)"
+            sleep 1
+          done
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install flake8
-
-      - name: Wait for PostgreSQL
-        run: |
-          sudo apt-get install -y -qq postgresql-client
-            for i in $(seq 1 30); do
-            pg_isready -h 127.0.0.1 -p 5432 -U postgres && break
-            echo "waiting for postgres... ($i)"
-            sleep 2
-          done
 
       - name: Lint
         run: |
