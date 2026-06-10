@@ -23,3 +23,5 @@ django-sslserver-v2
 #flake8
 docker
 python-dateutil
+selenium>=4.0.0
+webdriver-manager>=4.0.0
