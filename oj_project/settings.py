@@ -16,6 +16,9 @@ SECRET_KEY = os.environ.get(
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'false').lower() in ('1', 'true', 'yes')
 
+# Demo mode: disable PostgreSQL and Redis for demo purposes
+DEMO_MODE = os.environ.get('DEMO_MODE', 'false').lower() in ('1', 'true', 'yes')
+
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
@@ -77,94 +80,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'oj_project.wsgi.application'
 
-redis_host = '127.0.0.1'
-redis_port = 6379
-redis_db = 1
+if not DEMO_MODE:
+    redis_host = '127.0.0.1'
+    redis_port = 6379
+    redis_db = 1
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': f'redis://{redis_host}:{redis_port}/{redis_db}',
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'SOCKET_KEEPALIVE': True
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': f'redis://{redis_host}:{redis_port}/{redis_db}',
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'SOCKET_KEEPALIVE': True
+            }
         }
     }
-}
 
-RQ_QUEUES = {
-    'default': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-        'REDIS_CONNECTION_KWARGS': {
-            'socket_connect_timeout': 5,
-            'socket_timeout': 5,
-            'retry_on_timeout': True,
-        }
-    },
-    'high': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-        'REDIS_CONNECTION_KWARGS': {
-            'socket_connect_timeout': 5,
-            'socket_timeout': 5,
-            'retry_on_timeout': True,
-        }
-    },
-    'low': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-        'REDIS_CONNECTION_KWARGS': {
-            'socket_connect_timeout': 5,
-            'socket_timeout': 5,
-            'retry_on_timeout': True,
-        }
-    },
-}
-
-# Multi-judge machine configuration
-# Each judge machine has its own RQ queue for distributed judging
-JUDGE_MACHINES = [
-    {
-        'name': 'judge-1',
-        'host': '127.0.0.1',
-        'port': 6379,
-        'db': 0,
-        'queue': 'judge-1',
-        'enabled': True,
-        'weight': 1,  # Load balancing weight
-    },
-    # Add more judge machines here:
-    {
-        'name': 'judge-2',
-        'host': '192.168.3.117',
-        'port': 6379,
-        'db': 0,
-        'queue': 'judge-2',
-        'enabled': True,
-        'weight': 1,
-    },
-]
-
-# Enable multi-judge mode
-OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'false').lower() in ('1', 'true', 'yes')
-
-# Dynamically add RQ queues for each judge machine
-for machine in JUDGE_MACHINES:
-    if machine.get('enabled', True):
-        RQ_QUEUES[machine['queue']] = {
-            'HOST': machine['host'],
-            'PORT': machine['port'],
-            'DB': machine['db'],
+    RQ_QUEUES = {
+        'default': {
+            'HOST': 'localhost',
+            'PORT': 6379,
+            'DB': 0,
             'DEFAULT_TIMEOUT': 3600,
             'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
             'REDIS_CONNECTION_KWARGS': {
@@ -172,22 +108,107 @@ for machine in JUDGE_MACHINES:
                 'socket_timeout': 5,
                 'retry_on_timeout': True,
             }
-        }
-
-RQ = {
-    'exception_handler': 'django_rq.handlers.sentry',
-}
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'ojdb'),
-        'USER': os.environ.get('DB_USER', 'oscar.liu'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', '20131117Liu'),
-        'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
+        },
+        'high': {
+            'HOST': 'localhost',
+            'PORT': 6379,
+            'DB': 0,
+            'DEFAULT_TIMEOUT': 3600,
+            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+            'REDIS_CONNECTION_KWARGS': {
+                'socket_connect_timeout': 5,
+                'socket_timeout': 5,
+                'retry_on_timeout': True,
+            }
+        },
+        'low': {
+            'HOST': 'localhost',
+            'PORT': 6379,
+            'DB': 0,
+            'DEFAULT_TIMEOUT': 3600,
+            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+            'REDIS_CONNECTION_KWARGS': {
+                'socket_connect_timeout': 5,
+                'socket_timeout': 5,
+                'retry_on_timeout': True,
+            }
+        },
     }
-}
+
+    # Multi-judge machine configuration
+    # Each judge machine has its own RQ queue for distributed judging
+    JUDGE_MACHINES = [
+        {
+            'name': 'judge-1',
+            'host': '127.0.0.1',
+            'port': 6379,
+            'db': 0,
+            'queue': 'judge-1',
+            'enabled': True,
+            'weight': 1,  # Load balancing weight
+        },
+        # Add more judge machines here:
+        {
+            'name': 'judge-2',
+            'host': '192.168.3.117',
+            'port': 6379,
+            'db': 0,
+            'queue': 'judge-2',
+            'enabled': True,
+            'weight': 1,
+        },
+    ]
+
+    # Enable multi-judge mode
+    OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
+
+    # Dynamically add RQ queues for each judge machine
+    for machine in JUDGE_MACHINES:
+        if machine.get('enabled', True):
+            RQ_QUEUES[machine['queue']] = {
+                'HOST': machine['host'],
+                'PORT': machine['port'],
+                'DB': machine['db'],
+                'DEFAULT_TIMEOUT': 3600,
+                'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+                'REDIS_CONNECTION_KWARGS': {
+                    'socket_connect_timeout': 5,
+                    'socket_timeout': 5,
+                    'retry_on_timeout': True,
+                }
+            }
+
+    RQ = {
+        'exception_handler': 'django_rq.handlers.sentry',
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+    RQ_QUEUES = {}
+    JUDGE_MACHINES = []
+    OJ_MULTI_JUDGE_ENABLED = False
+
+if DEMO_MODE:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME', 'ojdb'),
+            'USER': os.environ.get('DB_USER', 'oscar.liu'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', '20131117Liu'),
+            'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {
