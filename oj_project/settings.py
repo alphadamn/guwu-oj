@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
@@ -20,6 +21,8 @@ DEBUG = os.environ.get('DJANGO_DEBUG', 'false').lower() in ('1', 'true', 'yes')
 # Demo mode: disable PostgreSQL and Redis for demo purposes
 DEMO_MODE = os.environ.get('DEMO_MODE', 'false').lower() in ('1', 'true', 'yes')
 
+TEST_MODE = 'test' in sys.argv
+
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
@@ -27,7 +30,6 @@ ALLOWED_HOSTS = [
 ]
 
 INSTALLED_APPS = [
-    'sslserver',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -47,6 +49,9 @@ INSTALLED_APPS = [
     'django_prometheus',
     'health',
 ]
+
+if not TEST_MODE:
+    INSTALLED_APPS.append('sslserver')
 
 MIDDLEWARE = [
     'django_prometheus.middleware.PrometheusBeforeMiddleware',
