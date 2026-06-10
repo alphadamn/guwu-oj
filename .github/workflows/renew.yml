@@ -36,8 +36,8 @@ jobs:
       - name: Keep Alive Workflow (Success)
         if: success()
         run: |
-          git config -f user.name "github-actions[bot]"
-          git config -f user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Create logs directory if it doesn't exist
           mkdir -p .github/logs
@@ -58,7 +58,7 @@ jobs:
           echo "" >> $LOG_FILE
           
           # Commit the log
-          git add $LOG_FILE
+          git add -f $LOG_FILE
           git commit -m "log: workflow run SUCCESS on $TIMESTAMP"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin ${{ github.ref_name }}
@@ -68,8 +68,8 @@ jobs:
       - name: Keep Alive Workflow (Failure)
         if: failure()
         run: |
-          git config -f user.name "github-actions[bot]"
-          git config -f user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Create logs directory if it doesn't exist
           mkdir -p .github/logs
@@ -91,7 +91,7 @@ jobs:
           echo "" >> $LOG_FILE
           
           # Commit the log
-          git add $LOG_FILE
+          git add -f $LOG_FILE
           git commit -m "log: workflow run FAILED on $TIMESTAMP"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin ${{ github.ref_name }}
