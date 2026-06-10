@@ -34,9 +34,14 @@ jobs:
             postgres:16-alpine
           for i in $(seq 1 30); do
             docker exec pg pg_isready -U postgres && break
-            echo "waiting... ($i)"
             sleep 1
           done
+
+      - name: Start Redis
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq redis-server
+          sudo redis-server --daemonize yes
+          redis-cli ping
 
       - name: Install dependencies
         run: |
