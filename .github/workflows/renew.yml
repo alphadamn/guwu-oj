@@ -60,7 +60,7 @@ jobs:
           # Commit the log
           git add -f $LOG_FILE
           git commit -m "log: workflow run SUCCESS on $TIMESTAMP"
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin ${{ github.ref_name }}
           
           echo "✅ Success logged and committed"
@@ -93,7 +93,7 @@ jobs:
           # Commit the log
           git add -f $LOG_FILE
           git commit -m "log: workflow run FAILED on $TIMESTAMP"
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin ${{ github.ref_name }}
           
           echo "❌ Failure logged and committed"
