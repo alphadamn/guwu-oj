@@ -184,7 +184,8 @@ if not DEMO_MODE:
 else:
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+            'LOCATION': os.path.join(tempfile.gettempdir(), 'oj_demo_cache'),
         }
     }
     RQ_QUEUES = {}
