@@ -330,10 +330,8 @@
 import time
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from django.test import override_settings
 from django.core.cache import cache
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -341,7 +339,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.edge.service import Service
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
-from problems.forms import save_test_cases
 from problems.models import Problem, TestCase   # adjust to your actual Problem model
 
 User = get_user_model()
