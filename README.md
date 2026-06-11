@@ -216,6 +216,12 @@ python verify_setup.py
 - 文件权限
 - 环境变量配置
 
+或使用selenium测试网站基础功能：
+
+```bash
+python manage.py test
+```
+
 访问 http://127.0.0.1:8000 查看网站。
 
 ## 项目结构
