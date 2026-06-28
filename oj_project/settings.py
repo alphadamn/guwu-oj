@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django_ratelimit',
     'django_prometheus',
     'health',
+    'devlog',
 ]
 
 if not TEST_MODE:

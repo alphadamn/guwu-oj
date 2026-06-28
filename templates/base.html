@@ -83,6 +83,9 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'handbook_index' %}">OIer 手册</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'devlog:status' %}">开发者日志</a>
+                    </li>
                     {% if user.is_authenticated %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'create_problem' %}">上传题目</a>
