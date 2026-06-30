@@ -105,7 +105,7 @@ if not DEMO_MODE:
 
     RQ_QUEUES = {
         'default': {
-            'HOST': 'localhost',
+            'HOST': '64.90.3.112',
             'PORT': 6379,
             'DB': 0,
             'DEFAULT_TIMEOUT': 3600,
@@ -115,31 +115,7 @@ if not DEMO_MODE:
                 'socket_timeout': 5,
                 'retry_on_timeout': True,
             }
-        },
-        'high': {
-            'HOST': 'localhost',
-            'PORT': 6379,
-            'DB': 0,
-            'DEFAULT_TIMEOUT': 3600,
-            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-            'REDIS_CONNECTION_KWARGS': {
-                'socket_connect_timeout': 5,
-                'socket_timeout': 5,
-                'retry_on_timeout': True,
-            }
-        },
-        'low': {
-            'HOST': 'localhost',
-            'PORT': 6379,
-            'DB': 0,
-            'DEFAULT_TIMEOUT': 3600,
-            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-            'REDIS_CONNECTION_KWARGS': {
-                'socket_connect_timeout': 5,
-                'socket_timeout': 5,
-                'retry_on_timeout': True,
-            }
-        },
+        }
     }
 
     # Multi-judge machine configuration
@@ -147,7 +123,7 @@ if not DEMO_MODE:
     JUDGE_MACHINES = [
         {
             'name': 'judge-1',
-            'host': '127.0.0.1',
+            'host': '64.90.3.112',
             'port': 6379,
             'db': 0,
             'queue': 'judge-1',
@@ -155,15 +131,6 @@ if not DEMO_MODE:
             'weight': 1,  # Load balancing weight
         },
         # Add more judge machines here:
-        {
-            'name': 'judge-2',
-            'host': '192.168.3.117',
-            'port': 6379,
-            'db': 0,
-            'queue': 'judge-2',
-            'enabled': True,
-            'weight': 1,
-        },
     ]
 
     # Enable multi-judge mode
@@ -253,16 +220,16 @@ WHITENOISE_USE_FINDERS = True
 WHITENOISE_AUTOREFRESH = True
 
 # Security settings for production
-if not (TEST_MODE or DEBUG):
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+#if not (TEST_MODE or DEBUG):
+    #SECURE_HSTS_SECONDS = 31536000  # 1 year
+    #SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    #SECURE_HSTS_PRELOAD = True
+    #SECURE_SSL_REDIRECT = True
+    #SESSION_COOKIE_SECURE = True
+    #CSRF_COOKIE_SECURE = True
+    #SECURE_BROWSER_XSS_FILTER = True
+    #SECURE_CONTENT_TYPE_NOSNIFF = True
+    #SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

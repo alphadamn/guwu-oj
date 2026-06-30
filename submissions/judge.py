@@ -429,7 +429,7 @@ class SandboxRunner:
                 return None, 0, ('Runtime Error', 'Binary not found after compilation')
 
             os.chmod(binary_path, 0o755)
-            self._cache_binary(code, 'golang', str(binary_path))
+            self._cache_binary(code, 'assembly', str(binary_path))
 
             # Execute using absolute path
             try:

@@ -1,6 +1,7 @@
 """Load balancer for distributing judge tasks across multiple judge machines."""
 
 import logging
+import os
 import random
 from django.conf import settings
 from django.core.cache import cache
@@ -30,6 +31,21 @@ class JudgeLoadBalancer:
         except Exception:
             pass
         return getattr(settings, 'JUDGE_MACHINES', [])
+
+    def _machine_redis(self, machine, decode_responses=False):
+        from django.conf import settings
+        kwargs = {
+            'host': machine['host'],
+            'port': machine['port'],
+            'db': machine['db'],
+            'socket_connect_timeout': 3,
+            'socket_timeout': 3,
+            'decode_responses': decode_responses,
+        }
+        password = os.environ.get('RQ_REDIS_PASSWORD', '')
+        if password:
+            kwargs['password'] = password
+        return redis.Redis(**kwargs)
 
     def get_enabled_machines(self):
         """Get list of enabled judge machines."""
@@ -137,6 +153,7 @@ class JudgeLoadBalancer:
                 socket_timeout=3,
             )
             val = r.decr(f"judge:busy:{machine['name']}")
+            print(val, f"judge:busy:{machine['name']}")
             if val <= 0:
                 r.delete(f"judge:busy:{machine['name']}")
         except Exception:
@@ -154,6 +171,7 @@ class JudgeLoadBalancer:
         try:
             key = f'judge:sub_machine:{submission_id}'
             machine_name = cache.get(key)
+            print(machine_name)
             if machine_name:
                 cache.delete(key)
             return machine_name
