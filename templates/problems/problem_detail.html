@@ -6,6 +6,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/problem-markdown.css' %}">
+<link rel="stylesheet" href="{% static 'css/sigmaide-embed.css' %}">
 <style>
     .code-block {
         background-color: #f8f9fa;
@@ -144,8 +145,61 @@
         </div>
     </div>
 </div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body p-0">
+                <div id="sigmaide-panel" class="sigmaide-panel">
+                    <div class="sigmaide-panel-header">
+                        <div>
+                            <h6 class="sigmaide-panel-title mb-1">
+                                <i class="bi bi-terminal"></i> SigmaIDE 在线测试
+                            </h6>
+                            <p class="sigmaide-hint mb-0">在下方编写代码，点击 IDE 内 ▶ 运行按钮测试；支持 Python / C / C++。可点「全屏」获得更大编辑区域。</p>
+                        </div>
+                        <div class="sigmaide-panel-actions">
+                            <select id="sigmaide-lang" class="form-select form-select-sm" aria-label="语言">
+                                <option value="Python" selected>Python</option>
+                                <option value="C++">C++</option>
+                                <option value="C">C</option>
+                            </select>
+                            <button type="button" id="sigmaide-fullscreen" class="btn btn-outline-light btn-sm">
+                                <i class="bi bi-fullscreen"></i> 全屏
+                            </button>
+                            <button type="button" id="sigmaide-exit-fullscreen" class="btn btn-outline-light btn-sm d-none">
+                                <i class="bi bi-fullscreen-exit"></i> 返回
+                            </button>
+                        </div>
+                    </div>
+                    <div class="sigmaide-frame-wrap sigmaide-frame-wrap-wide">
+                        <iframe
+                            id="sigmaide-frame"
+                            title="SigmaIDE"
+                            src="{{ sigmaide_iframe_src }}"
+                            loading="eager"
+                            allow="clipboard-read; clipboard-write"
+                        ></iframe>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 {% include 'problems/_mathjax.html' %}
+<script src="{% static 'js/sigmaide-embed.js' %}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    initSigmaIdeEmbed({
+        panelId: 'sigmaide-panel',
+        iframeId: 'sigmaide-frame',
+        languageSelectId: 'sigmaide-lang',
+        fullscreenBtnId: 'sigmaide-fullscreen',
+        exitFullscreenBtnId: 'sigmaide-exit-fullscreen',
+    });
+});
+</script>
 {% endblock %}

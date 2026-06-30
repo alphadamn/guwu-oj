@@ -11,17 +11,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Logging configuration
 from .logging_config import LOGGING
 
-SECRET_KEY = os.environ.get(
-    'DJANGO_SECRET_KEY',
-    'wfdscw34rewfdsg54y3redwqefrg45t3ewffr34we',
-)
+DEMO_MODE = os.environ.get('DEMO_MODE', 'false').lower() in ('1', 'true', 'yes')
+TEST_MODE = 'test' in sys.argv
+
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '')
+if not SECRET_KEY and not DEMO_MODE and not TEST_MODE:
+    raise ValueError('DJANGO_SECRET_KEY must be set in environment or .env')
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'false').lower() in ('1', 'true', 'yes')
-
-# Demo mode: disable PostgreSQL and Redis for demo purposes
-DEMO_MODE = os.environ.get('DEMO_MODE', 'false').lower() in ('1', 'true', 'yes')
-
-TEST_MODE = 'test' in sys.argv
 
 ALLOWED_HOSTS = [
     h.strip()
@@ -48,6 +45,7 @@ INSTALLED_APPS = [
     'django_ratelimit',
     'django_prometheus',
     'health',
+    'devlog',
 ]
 
 if not TEST_MODE:
@@ -86,103 +84,89 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'oj_project.wsgi.application'
 
+def _redis_url(host, port, db, password=''):
+    if password:
+        return f'redis://:{password}@{host}:{port}/{db}'
+    return f'redis://{host}:{port}/{db}'
+
+
+def _rq_redis_kwargs():
+    password = os.environ.get('RQ_REDIS_PASSWORD', '')
+    kwargs = {
+        'socket_connect_timeout': 5,
+        'socket_timeout': 5,
+        'retry_on_timeout': True,
+    }
+    if password:
+        kwargs['password'] = password
+    return kwargs
+
+
+def _rq_queue_entry(host, port, db):
+    password = os.environ.get('RQ_REDIS_PASSWORD', '')
+    entry = {
+        'HOST': host,
+        'PORT': port,
+        'DB': db,
+        'DEFAULT_TIMEOUT': 3600,
+        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+        'REDIS_CONNECTION_KWARGS': _rq_redis_kwargs(),
+    }
+    entry['URL'] = _redis_url(host, port, db, password)
+    return entry
+
+
 if not DEMO_MODE:
-    redis_host = '127.0.0.1'
-    redis_port = 6379
-    redis_db = 1
+    redis_host = os.environ.get('CACHE_REDIS_HOST', '127.0.0.1')
+    redis_port = int(os.environ.get('CACHE_REDIS_PORT', '6379'))
+    redis_db = int(os.environ.get('CACHE_REDIS_DB', '1'))
+    redis_password = os.environ.get('CACHE_REDIS_PASSWORD', '')
+
+    cache_options = {
+        'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        'SOCKET_KEEPALIVE': True,
+    }
+    if redis_password:
+        cache_options['PASSWORD'] = redis_password
 
     CACHES = {
         'default': {
             'BACKEND': 'django_redis.cache.RedisCache',
-            'LOCATION': f'redis://{redis_host}:{redis_port}/{redis_db}',
-            'OPTIONS': {
-                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-                'SOCKET_KEEPALIVE': True
-            }
+            'LOCATION': _redis_url(redis_host, redis_port, redis_db, redis_password),
+            'OPTIONS': cache_options,
         }
     }
 
+    rq_host = '64.90.3.112'
+    rq_port = int(os.environ.get('RQ_REDIS_PORT', '6379'))
+    rq_db = int(os.environ.get('RQ_REDIS_DB', '0'))
+
     RQ_QUEUES = {
-        'default': {
-            'HOST': 'localhost',
-            'PORT': 6379,
-            'DB': 0,
-            'DEFAULT_TIMEOUT': 3600,
-            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-            'REDIS_CONNECTION_KWARGS': {
-                'socket_connect_timeout': 5,
-                'socket_timeout': 5,
-                'retry_on_timeout': True,
-            }
-        },
-        'high': {
-            'HOST': 'localhost',
-            'PORT': 6379,
-            'DB': 0,
-            'DEFAULT_TIMEOUT': 3600,
-            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-            'REDIS_CONNECTION_KWARGS': {
-                'socket_connect_timeout': 5,
-                'socket_timeout': 5,
-                'retry_on_timeout': True,
-            }
-        },
-        'low': {
-            'HOST': 'localhost',
-            'PORT': 6379,
-            'DB': 0,
-            'DEFAULT_TIMEOUT': 3600,
-            'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-            'REDIS_CONNECTION_KWARGS': {
-                'socket_connect_timeout': 5,
-                'socket_timeout': 5,
-                'retry_on_timeout': True,
-            }
-        },
+        'default': _rq_queue_entry(rq_host, rq_port, rq_db),
+        'high': _rq_queue_entry(rq_host, rq_port, rq_db),
+        'low': _rq_queue_entry(rq_host, rq_port, rq_db),
     }
 
-    # Multi-judge machine configuration
-    # Each judge machine has its own RQ queue for distributed judging
     JUDGE_MACHINES = [
         {
             'name': 'judge-1',
-            'host': '127.0.0.1',
-            'port': 6379,
-            'db': 0,
+            'host': '64.90.3.112',
+            'port': rq_port,
+            'db': rq_db,
             'queue': 'judge-1',
-            'enabled': True,
-            'weight': 1,  # Load balancing weight
-        },
-        # Add more judge machines here:
-        {
-            'name': 'judge-2',
-            'host': '192.168.3.117',
-            'port': 6379,
-            'db': 0,
-            'queue': 'judge-2',
             'enabled': True,
             'weight': 1,
         },
     ]
 
-    # Enable multi-judge mode
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
+    OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
 
-    # Dynamically add RQ queues for each judge machine
     for machine in JUDGE_MACHINES:
         if machine.get('enabled', True):
-            RQ_QUEUES[machine['queue']] = {
-                'HOST': machine['host'],
-                'PORT': machine['port'],
-                'DB': machine['db'],
-                'DEFAULT_TIMEOUT': 3600,
-                'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-                'REDIS_CONNECTION_KWARGS': {
-                    'socket_connect_timeout': 5,
-                    'socket_timeout': 5,
-                    'retry_on_timeout': True,
-                }
-            }
+            RQ_QUEUES[machine['queue']] = _rq_queue_entry(
+                machine['host'], machine['port'], machine['db'],
+            )
 
     RQ = {
         'exception_handler': 'django_rq.handlers.sentry',
@@ -210,8 +194,8 @@ else:
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': os.environ.get('DB_NAME', 'ojdb'),
-            'USER': os.environ.get('DB_USER', 'oscar.liu'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', '20131117Liu'),
+            'USER': os.environ.get('DB_USER', 'ojuser'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
             'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
             'PORT': os.environ.get('DB_PORT', '5432'),
         }
@@ -252,16 +236,16 @@ WHITENOISE_USE_FINDERS = True
 WHITENOISE_AUTOREFRESH = True
 
 # Security settings for production
-if not (TEST_MODE or DEBUG):
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+#if not (TEST_MODE or DEBUG):
+#    SECURE_HSTS_SECONDS = 31536000  # 1 year
+#    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+#    SECURE_HSTS_PRELOAD = True
+#    SECURE_SSL_REDIRECT = True
+#    SESSION_COOKIE_SECURE = True
+#    CSRF_COOKIE_SECURE = True
+#    SECURE_BROWSER_XSS_FILTER = True
+#    SECURE_CONTENT_TYPE_NOSNIFF = True
+#    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -284,6 +268,9 @@ OJ_MAX_SUBMISSION_CODE_BYTES = int(
 OJ_DOCKER_ENABLED = os.environ.get('OJ_DOCKER_ENABLED', 'true').lower() in ('1', 'true', 'yes')
 OJ_DOCKER_IMAGE = os.environ.get('OJ_DOCKER_IMAGE', 'oj-judge:latest')
 OJ_DOCKER_PIDS_LIMIT = int(os.environ.get('OJ_DOCKER_PIDS_LIMIT', '64'))
+
+# SigmaIDE embed — nginx path /sigmaide/ (never :3004). Override in .env if needed.
+SIGMAIDE_BASE_URL = os.environ.get('SIGMAIDE_BASE_URL', '').rstrip('/')
 
 # Logging configuration
 LOGGING = LOGGING

@@ -1,15 +1,31 @@
+from django.conf import settings
 from django.db.models.functions import Cast, RowNumber
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q, Count, ExpressionWrapper, When, Case, Value, F, FloatField, Window
 from django.views.decorators.http import require_POST
-from django.views.decorators.cache import cache_page
+from django.views.decorators.cache import cache_page, never_cache
 from django.core.cache import cache
 from .models import Problem, Solution
 from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
 from users.models import User
 from submissions.models import Submission
+
+
+def _sigmaide_base_url(request):
+    """Public base URL for SigmaIDE embed — always /sigmaide, never :3004."""
+    configured = getattr(settings, 'SIGMAIDE_BASE_URL', '').strip()
+    if configured:
+        return configured.rstrip('/')
+    host = request.get_host().split(':')[0]
+    scheme = 'https' if request.is_secure() else 'http'
+    return f'{scheme}://{host}/sigmaide'
+
+
+def _sigmaide_iframe_src(request, problem_id, lang='Python'):
+    base = _sigmaide_base_url(request)
+    return f'{base}/ide?embed=1&problemId={problem_id}&lang={lang}'
 
 
 def home(request):
@@ -87,10 +103,15 @@ def problem_list(request):
     return response
 
 
-@cache_page(60 * 15)  # Cache for 15 minutes
+@never_cache
 def problem_detail(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
-    return render(request, 'problems/problem_detail.html', {'problem': problem, 'count': problem.submissions.filter(status='Accepted').count()})
+    return render(request, 'problems/problem_detail.html', {
+        'problem': problem,
+        'count': problem.submissions.filter(status='Accepted').count(),
+        'sigmaide_base_url': _sigmaide_base_url(request),
+        'sigmaide_iframe_src': _sigmaide_iframe_src(request, problem.id),
+    })
 
 
 @login_required
