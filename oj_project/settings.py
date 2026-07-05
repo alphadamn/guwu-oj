@@ -268,6 +268,7 @@ OJ_MAX_SUBMISSION_CODE_BYTES = int(
 OJ_DOCKER_ENABLED = os.environ.get('OJ_DOCKER_ENABLED', 'true').lower() in ('1', 'true', 'yes')
 OJ_DOCKER_IMAGE = os.environ.get('OJ_DOCKER_IMAGE', 'oj-judge:latest')
 OJ_DOCKER_PIDS_LIMIT = int(os.environ.get('OJ_DOCKER_PIDS_LIMIT', '64'))
+OJ_SUBPROCESS_TIMEOUT_SEC = int(os.environ.get('OJ_SUBPROCESS_TIMEOUT_SEC', '5'))
 
 # SigmaIDE embed — nginx path /sigmaide/ (never :3004). Override in .env if needed.
 SIGMAIDE_BASE_URL = os.environ.get('SIGMAIDE_BASE_URL', '').rstrip('/')

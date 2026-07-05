@@ -4,6 +4,8 @@ import os
 import threading
 import time
 
+from submissions.container_cleanup import start_container_cleanup
+
 import redis
 from django_rq.workers import get_worker
 from rq.worker import Worker
@@ -23,6 +25,7 @@ class AutoReconnectWorker(Worker):
         self.retry_delay = 5
         self._stop_heartbeat = threading.Event()
         self.redis_url = None
+        start_container_cleanup()
 
     def _queue_names(self):
         if self.queues:

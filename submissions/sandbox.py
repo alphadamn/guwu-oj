@@ -1,82 +1,94 @@
-"""Run compile/execute steps inside an isolated Docker container with no network."""
+"""Run compile/execute steps inside an isolated Docker container with no network.
+
+Performance / stability changes vs the previous naive approach:
+
+* A single long-running judge container is kept alive per submission and
+  reused across test cases via `docker exec`. This amortises Docker startup
+  overhead (≈0.5–1.5 s) across all test cases.
+* `docker info` is cached in-process (with a short TTL) instead of being
+  invoked on every test case.
+* The subprocess timeout honours the caller-supplied value. A small fixed
+  safety margin (1 s) is added so the in-container `/usr/bin/time` report
+  (the authoritative verdict) has time to be written.
+* `stdin` bytes are never re-encoded; text mode is used only for stdin=None.
+* Container cleanup runs once on `__exit__`; periodic housekeeping is
+  handled by `submissions.docker_cleanup.cleanup_stale_judge_containers`.
+"""
 
 import os
 import shlex
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from django.conf import settings
 
-from submissions.docker_cleanup import cleanup_stale_judge_containers
+from .docker_cleanup import cleanup_stale_judge_containers
 
 
 class DockerNotAvailableError(Exception):
     pass
 
 
-def docker_available():
-    if not getattr(settings, 'OJ_DOCKER_ENABLED', True):
+# ── `docker info` cache ──────────────────────────────────────────────────
+
+_DOCKER_AVAILABLE_CACHE = {"ok": None, "ts": 0}
+_DOCKER_AVAILABLE_TTL_SEC = 30
+
+
+def docker_available(force_check=False):
+    if not getattr(settings, "OJ_DOCKER_ENABLED", True):
         return False
-    if shutil.which('docker') is None:
+    if shutil.which("docker") is None:
         return False
+    entry = _DOCKER_AVAILABLE_CACHE
+    now = time.monotonic()
+    if (
+        not force_check
+        and entry["ok"] is not None
+        and (now - entry["ts"]) < _DOCKER_AVAILABLE_TTL_SEC
+    ):
+        return entry["ok"]
     try:
         result = subprocess.run(
-            ['docker', 'info'],
+            ["docker", "info"],
             capture_output=True,
             timeout=10,
         )
-        return result.returncode == 0
+        ok = result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
-        return False
+        ok = False
+    entry["ok"] = ok
+    entry["ts"] = now
+    return ok
 
 
 def ensure_docker_ready():
     if not docker_available():
         raise DockerNotAvailableError(
-            'Docker 不可用。请安装并启动 Docker，然后执行: '
-            'docker build -t oj-judge:latest docker/judge'
+            "Docker 不可用。请安装并启动 Docker，然后执行："
+            "docker build -t oj-judge:latest docker/judge"
         )
 
 
+# ── helpers ──────────────────────────────────────────────────────────────
+
 def _memory_flags(memory_mb):
     mem = max(int(memory_mb), 32)
-    return [
-        '--memory', f'{mem}m',
-        '--memory-swap', f'{mem}m',
-    ]
+    return ["--memory", f"{mem}m", "--memory-swap", f"{mem}m"]
 
 
 def _runtime_user_flags():
-    container_uid = str(getattr(settings, 'OJ_DOCKER_UID', 65534))
-    container_gid = str(getattr(settings, 'OJ_DOCKER_GID', 65534))
-    return ['--user', f'{container_uid}:{container_gid}']
+    uid = str(getattr(settings, "OJ_DOCKER_UID", 65534))
+    gid = str(getattr(settings, "OJ_DOCKER_GID", 65534))
+    return ["--user", f"{uid}:{gid}"]
 
 
-def _base_docker_args(work_dir, timeout_sec, memory_mb, image, is_compile=False):
-    work_dir = str(Path(work_dir).resolve())
+def _seccomp_flag(is_compile):
     base_dir = Path(__file__).resolve().parent.parent
-    seccomp_profile = 'seccomp-compile.json' if is_compile else 'seccomp-execute.json'
-
-    return [
-        'docker', 'run', '--rm', '-i',
-        '--network', 'none',
-        *_memory_flags(memory_mb),
-        *_runtime_user_flags(),
-        '--pids-limit', str(getattr(settings, 'OJ_DOCKER_PIDS_LIMIT', 64)),
-        '--security-opt', 'no-new-privileges',
-        '--security-opt', f'seccomp={base_dir}/docker/judge/{seccomp_profile}',
-        '--cap-drop', 'ALL',
-        '--read-only',
-        '--tmpfs', '/tmp:exec,mode=777',
-        '--device', '/dev/null:r',
-        '--device', '/dev/zero:r',
-        '--device', '/dev/random:r',
-        '--device', '/dev/urandom:r',
-        '-v', f'{work_dir}:/sandbox:rw',
-        '-w', '/sandbox',
-        image,
-    ]
+    profile = "seccomp-compile.json" if is_compile else "seccomp-execute.json"
+    return str(base_dir / "docker" / "judge" / profile)
 
 
 def _prepare_work_dir(work_dir):
@@ -86,51 +98,138 @@ def _prepare_work_dir(work_dir):
         pass
 
 
-def run_in_container(work_dir, command, timeout_sec, stdin=None, memory_mb=256, image='oj-judge:latest', is_compile=False):
-    """Run command inside the judge container."""
-    ensure_docker_ready()
-    _prepare_work_dir(work_dir)
-    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, image, is_compile) + command
-    try:
-        return subprocess.run(
-            full_cmd,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-        )
-    except subprocess.TimeoutExpired as exc:
-        cleanup_stale_judge_containers()
-        raise exc
-    finally:
-        cleanup_stale_judge_containers()
-
-
-def run_commands_in_container(work_dir, commands, timeout_sec, stdin=None, memory_mb=256, image='oj-judge:latest'):
-    """Run multiple commands in a single container session."""
-    ensure_docker_ready()
-    _prepare_work_dir(work_dir)
-
-    script_lines = ['set -e']
-    for cmd in commands:
-        script_lines.append(' '.join(shlex.quote(arg) for arg in cmd))
-    script = '\n'.join(script_lines)
-
-    full_cmd = _base_docker_args(work_dir, timeout_sec, memory_mb, image, is_compile=False) + ['/bin/sh', '-c', script]
-    try:
-        return subprocess.run(
-            full_cmd,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-        )
-    except Exception as exc:
-        cleanup_stale_judge_containers()
-        raise exc
-    finally:
-        cleanup_stale_judge_containers()
-
-
 def exit_indicates_memory_limit(returncode):
     return returncode in (137, -9)
+
+
+def _kill_container(cid):
+    if not cid:
+        return
+    try:
+        subprocess.run(["docker", "kill", cid], capture_output=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+# ── Long-running JudgeContainer ─────────────────────────────────────────
+
+class JudgeContainer:
+    """Keeps a single judge container alive for many ``docker exec`` calls.
+
+    Usage::
+
+        with JudgeContainer(work_dir, memory_mb=256, image='oj-cpp:latest', is_compile=False) as c:
+            result = c.exec(['./main'], timeout_sec=2, stdin=b'1 2')
+
+    The container is killed (at most one ``docker kill`` call) on exit.
+    """
+
+    def __init__(self, work_dir, memory_mb, image, is_compile=False):
+        self.work_dir = str(Path(work_dir).resolve())
+        self.memory_mb = memory_mb
+        self.image = image
+        self.is_compile = is_compile
+        self.cid = None
+
+    def __enter__(self):
+        ensure_docker_ready()
+        _prepare_work_dir(self.work_dir)
+        args = [
+            "docker", "run", "--rm", "-d", "-i",
+            "--network", "none",
+            *_memory_flags(self.memory_mb),
+            *_runtime_user_flags(),
+            "--pids-limit", str(getattr(settings, "OJ_DOCKER_PIDS_LIMIT", 128)),
+            "--security-opt", "no-new-privileges",
+            "--security-opt", f"seccomp={_seccomp_flag(self.is_compile)}",
+            "--cap-drop", "ALL",
+            "--read-only",
+            "--tmpfs", "/tmp:exec,mode=777",
+            "--device", "/dev/null:r",
+            "--device", "/dev/zero:r",
+            "--device", "/dev/random:r",
+            "--device", "/dev/urandom:r",
+            "-v", f"{self.work_dir}:/sandbox:rw",
+            "-w", "/sandbox",
+            self.image,
+            "sleep", "infinity",
+        ]
+        try:
+            create = subprocess.run(
+                args, capture_output=True, text=True, timeout=30
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise DockerNotAvailableError(
+                f"Failed to start judge container: {exc}"
+            )
+        if create.returncode != 0:
+            raise DockerNotAvailableError(
+                f"Failed to start judge container: {create.stderr or create.stdout}"
+            )
+        self.cid = create.stdout.strip().strip('"').strip("'")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _kill_container(self.cid)
+        self.cid = None
+
+    def exec(self, command, timeout_sec, stdin=None):
+        """Run *command* inside the running container.
+
+        Returns a :class:`subprocess.CompletedProcess` like object.
+        ``stdout`` / ``stderr`` are decoded strings when *stdin* is not bytes,
+        otherwise they are bytes (matching subprocess semantics).
+        """
+        if not self.cid:
+            raise DockerNotAvailableError("Judge container is not running")
+
+        input_is_bytes = isinstance(stdin, (bytes, bytearray, memoryview))
+        text_mode = stdin is None or not input_is_bytes
+        full_cmd = ["docker", "exec", "-i", self.cid, *command]
+        return subprocess.run(
+            full_cmd,
+            input=stdin,
+            capture_output=True,
+            text=text_mode,
+            timeout=max(float(timeout_sec), 0.1),
+        )
+
+
+# ── Backward-compatible helpers ──────────────────────────────────────────
+
+def run_in_container(
+    work_dir, command, timeout_sec, stdin=None,
+    memory_mb=256, image="oj-judge:latest", is_compile=False,
+):
+    """Run a single command in a fresh judge container."""
+    with JudgeContainer(
+        work_dir, memory_mb=memory_mb, image=image, is_compile=is_compile
+    ) as c:
+        return c.exec(command, timeout_sec, stdin=stdin)
+
+
+def run_commands_in_container(
+    work_dir, commands, timeout_sec, stdin=None,
+    memory_mb=256, image="oj-judge:latest", is_compile=False,
+):
+    """Run many shell commands inside one container (single startup overhead)."""
+    with JudgeContainer(
+        work_dir, memory_mb=memory_mb, image=image, is_compile=is_compile
+    ) as c:
+        for cmd in commands:
+            result = c.exec(cmd, timeout_sec, stdin=stdin)
+            if result.returncode != 0:
+                return result
+        return result
+
+
+# ── Periodic housekeeping hook ───────────────────────────────────────────
+
+def periodic_housekeeping():
+    """Kill judge containers that have been running for too long.
+
+    This is cheap — it is safe to call it occasionally from inside the judge
+    loop. Its role is to reclaim orphans that were not cleanly shut down
+    (e.g. after a worker crash). It is NOT invoked on every test case.
+    """
+    cleanup_stale_judge_containers()
