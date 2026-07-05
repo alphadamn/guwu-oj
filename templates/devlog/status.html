@@ -15,8 +15,8 @@
     .dot-danger{background:#dc3545;} .dot-info{background:#0dcaf0;} .dot-secondary{background:#6c757d;}
     .component-row { display:flex; align-items:center; justify-content:space-between; padding:.75rem 0; border-bottom:1px solid #f0f0f0; }
     .component-row:last-child { border-bottom:none; }
-    .uptime-bar { height:8px; border-radius:4px; background:#e9ecef; overflow:hidden; min-width:120px; }
-    .uptime-fill { height:100%; background:linear-gradient(90deg,#198754,#20c997); }
+    .uptime-bar { height:8px; border-radius:4px; background:#e9ecef; overflow:hidden; min-width:140px; width:160px; max-width:160px; }
+    .uptime-fill { height:100%; background:linear-gradient(90deg,#198754,#20c997); transition: width .4s ease; }
     .commit-item { padding:.6rem 0; border-bottom:1px solid #f0f0f0; }
     .commit-item:last-child { border-bottom:none; }
     .commit-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.78rem; }
@@ -45,6 +45,18 @@
                     <i class="bi bi-arrow-repeat"></i> 扫描文件改动
                 </button>
             </form>
+            <form method="post" action="{% url 'devlog:clear_page_cache' %}" class="m-0">
+                {% csrf_token %}
+                <button class="btn btn-outline-light btn-sm" type="submit">
+                    <i class="bi bi-database-fill-dash"></i> 清除页面缓存
+                </button>
+            </form>
+            <form method="post" action="{% url 'devlog:clear_all_caches' %}" class="m-0">
+                {% csrf_token %}
+                <button class="btn btn-warning btn-sm" type="submit">
+                    <i class="bi bi-lightning-fill"></i> 一键清除全部缓存
+                </button>
+            </form>
         </div>
         {% endif %}
     </div>
@@ -71,10 +83,10 @@
                     </div>
                     <div class="d-flex align-items-center gap-3">
                         <div class="text-end d-none d-sm-block">
-                            <div class="small text-muted">90 天可用率</div>
-                            <div class="uptime-bar"><div class="uptime-fill" style="width: {{ c.uptime }}%"></div></div>
+                            <div class="small text-muted">{{ uptime_window_days }} 天可用率 · {{ c.uptime_display }}</div>
+                            <div class="uptime-bar"><div class="uptime-fill" style="width: {{ c.uptime_pct }}%"></div></div>
                         </div>
-                        <span class="badge bg-{{ c.badge_class }}">{{ c.get_status_display }}</span>
+                        <span class="badge bg-{{ c.badge_class }}">{{ c.status_display }}</span>
                     </div>
                 </div>
                 {% empty %}

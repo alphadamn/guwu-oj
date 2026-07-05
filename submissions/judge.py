@@ -1,44 +1,86 @@
-import json
+"""Judge pipeline for compiled and interpreted submissions.
+
+Key performance / stability changes:
+
+* **Compile once per submission** (C / C++ / Rust / Golang / Assembly /
+  TypeScript / Kotlin). Previously, the combined helpers recompiled the
+  whole source for every single test case, which made per-case overhead
+  grow linearly with test-case count.
+* **Container reuse.** A single long-running judge container is started
+  per submission and shared across all test cases via ``docker exec``.
+  This amortises ≈0.5–1.5 s of Docker startup overhead per submission.
+* **Honest per-case timeout.** ``_run()`` uses ``timeout_sec + 1 s`` —
+  no more ``max(timeout, 5)`` inflation. The authoritative verdict
+  comes from ``/usr/bin/time`` inside the container; the outer 1 s
+  margin just gives the timer a chance to write its report.
+* **Docker availability cached** in-process for 30 s (see
+  ``submissions.sandbox.docker_available``).
+* **No ``docker ps`` / ``docker inspect`` storm.** Orphan cleanup is the
+  responsibility of ``submissions.docker_cleanup.cleanup_stale_judge_containers``
+  (cheap periodic housekeeping), not of every single test case.
+* **No spurious hello-world "warm-up".** The long-running container
+  already starts once; the warm-up step was pure overhead.
+* **``JudgeConfig`` read once per submission** (cached 5 minutes).
+"""
+
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
-import sys
-import tempfile
 import time
-import shlex
-from datetime import datetime, timezone
 from pathlib import Path
 
-from dateutil import parser
-from django.utils.crypto import get_random_string
+from django.conf import settings
+from django.core.cache import cache
 
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
     DockerNotAvailableError,
+    JudgeContainer,
     exit_indicates_memory_limit,
-    run_commands_in_container,
     run_in_container,
+    run_commands_in_container,
 )
 
-JUDGED_LANGUAGES = {'C++', 'Python', 'Java', 'C', 'Assembly', 'Rust', 'Golang', 'JavaScript', 'TypeScript', 'Ruby', 'Kotlin'}
+JUDGED_LANGUAGES = {"C++", "Python", "Java", "C", "Assembly", "Rust",
+                    "Golang", "JavaScript", "TypeScript", "Ruby", "Kotlin"}
 COMPILE_TIMEOUT_SEC = 30
+HOST_TIMEOUT_SAFETY_MARGIN_SEC = 1.0
 MAX_STORED_OUTPUT_LEN = 4000
+JUDGE_CONFIG_CACHE_TTL = 300
 
+
+LANG_IMAGE = {
+    "C++": "oj-cpp:latest",
+    "C": "oj-c:latest",
+    "Python": "oj-python:latest",
+    "Java": "oj-java:latest",
+    "JavaScript": "oj-other:latest",
+    "TypeScript": "oj-other:latest",
+    "Golang": "oj-other:latest",
+    "Rust": "oj-other:latest",
+    "Ruby": "oj-other:latest",
+    "Kotlin": "oj-other:latest",
+    "Assembly": "oj-other:latest",
+}
+
+
+# ── small helpers ────────────────────────────────────────────────────────
 
 def truncate_text(text, limit=MAX_STORED_OUTPUT_LEN):
     if not text:
-        return ''
+        return ""
     if len(text) <= limit:
         return text
-    return text[:limit] + '\n... (输出已截断)'
+    return text[:limit] + "\n... (输出已截断)"
 
 
 def normalize_output(text):
     if text is None:
-        return ''
-    return text.replace('\r\n', '\n').replace('\r', '\n').rstrip()
+        return ""
+    return text.replace("\r\n", "\n").replace("\r", "\n").rstrip()
 
 
 def outputs_match(actual, expected):
@@ -46,732 +88,320 @@ def outputs_match(actual, expected):
 
 
 def extract_java_class_name(code):
-    match = re.search(r'public\s+class\s+(\w+)', code)
+    match = re.search(r"public\s+class\s+(\w+)", code)
     if match:
         return match.group(1)
-    match = re.search(r'class\s+(\w+)', code)
+    match = re.search(r"class\s+(\w+)", code)
     if match:
         return match.group(1)
-    return 'Main'
+    return "Main"
 
 
-# Language → Docker image mapping
-LANG_IMAGE = {
-    'C++':        'oj-cpp:latest',
-    'C':          'oj-c:latest',
-    'Python':     'oj-python:latest',
-    'Java':       'oj-java:latest',
-    'JavaScript': 'oj-other:latest',
-    'TypeScript': 'oj-other:latest',
-    'Golang':     'oj-other:latest',
-    'Rust':       'oj-other:latest',
-    'Ruby':       'oj-other:latest',
-    'Kotlin':     'oj-other:latest',
-    'Assembly':   'oj-other:latest',
-}
+def _clean_kotlin_output(text):
+    """Strip JVM deprecation warnings from kotlinc output."""
+    if not text:
+        return ""
+    lines = []
+    for line in text.strip().splitlines():
+        if "OpenJDK" in line and "warning" in line:
+            continue
+        if "Picked up JAVA_TOOL_OPTIONS" in line:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _get_judge_config_global_timeout():
+    """Read ``JudgeConfig.subprocess_timeout_sec`` (cached) or fall back to 5."""
+    try:
+        cfg = cache.get("judge_config")
+        if cfg is None:
+            from .models import JudgeConfig
+            cfg = JudgeConfig.objects.first()
+            if cfg is not None:
+                cache.set("judge_config", cfg, timeout=JUDGE_CONFIG_CACHE_TTL)
+        return int(getattr(cfg, "subprocess_timeout_sec", 5) or 5)
+    except Exception:
+        return int(getattr(settings, "OJ_SUBPROCESS_TIMEOUT_SEC", 5) or 5)
+
+
+# ── SandboxRunner ────────────────────────────────────────────────────────
 
 class SandboxRunner:
-    """Compile and run submissions inside a Docker container (--network none)."""
+    """Runs the compilation + per-test-case steps of one submission.
+
+    A single long-running judge container is started in ``__enter__``
+    and reused for every command that this runner executes. This means
+    the amortised Docker startup overhead is ≈0 for N test cases.
+    """
 
     def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image):
         self.work_dir = work_dir
-        self.time_limit_sec = max(time_limit_ms / 1000.0, 0.1)
+        self.time_limit_sec = max(float(time_limit_ms) / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
         self.image = image
-        self._cache_dir = os.path.join(tempfile.gettempdir(), 'oj_compile_cache')
+        self.last_memory_kb = None
+        self._container = None
+        self._global_timeout_sec = None  # loaded lazily
 
-    def _get_cache_key(self, code, lang):
-        import hashlib
-        return hashlib.sha256((lang + '\0' + code).encode()).hexdigest()
+    # ── context manager ──────────────────────────────────────────────────
 
-    def _get_cached_binary(self, code, lang):
-        """Return cached binary if it exists, is fresh (<2 days), and has been cached (hit >=3 times)."""
-        key = self._get_cache_key(code, lang)
-        path = os.path.join(self._cache_dir, key)
-        if not os.path.isfile(path):
-            return None
-        # Expire caches older than 2 days
-        age_seconds = time.time() - os.path.getmtime(path)
-        if age_seconds > 172800:  # 2 days
-            try:
-                os.remove(path)
-                count_path = os.path.join(self._cache_dir, key + '.count')
-                if os.path.isfile(count_path):
-                    os.remove(count_path)
-            except OSError:
-                pass
-            return None
-        # Touch access time
+    def __enter__(self):
         try:
-            os.utime(path, None)
+            os.chmod(self.work_dir, 0o777)
         except OSError:
             pass
-        return path
+        self._container = JudgeContainer(
+            self.work_dir,
+            memory_mb=max(self.memory_limit_mb, 512),
+            image=self.image,
+            is_compile=True,
+        ).__enter__()
+        # Read JudgeConfig.global_timeout_sec (cached) once per submission.
+        self._global_timeout_sec = _get_judge_config_global_timeout()
+        return self
 
-    def _cache_binary(self, code, lang, binary_path):
-        """Cache binary only after 3rd submission of the same code."""
-        try:
-            os.makedirs(self._cache_dir, exist_ok=True)
-            key = self._get_cache_key(code, lang)
-            count_path = os.path.join(self._cache_dir, key + '.count')
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._container is not None:
+            self._container.__exit__(exc_type, exc_val, exc_tb)
+            self._container = None
 
-            count = 0
-            if os.path.isfile(count_path):
-                with open(count_path) as f:
-                    count = int(f.read().strip())
+    # ── time / memory parsing ───────────────────────────────────────────
 
-            count += 1
-            with open(count_path, 'w') as f:
-                f.write(str(count))
-
-            if count >= 3:
-                dst = os.path.join(self._cache_dir, key)
-                import shutil
-                shutil.copy2(binary_path, dst)
-                os.chmod(dst, 0o755)
-        except Exception:
-            pass
-
-    def _run_cached_binary(self, binary_path, stdin_data):
-        try:
-            cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-            elapsed_sec = None
-            if result.stderr:
-                for line in result.stderr.splitlines():
-                    try:
-                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', line)
-                        if match:
-                            minutes = int(match.group(1))
-                            seconds = float(match.group(2))
-                            elapsed_sec = minutes * 60 + seconds
-                            break
-                    except ValueError:
-                        pass
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, None, 'Time Limit Exceeded'
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            return None, elapsed_ms, ('Runtime Error', err)
-        return result.stdout, elapsed_ms, None
-
-
-    def clean_docker(self):
-        try:
-            # 1. Get all container IDs based on the image
-            list_res = subprocess.run(
-                ['docker', 'ps', '-q'],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-
-
-            for cid in list_res.stdout.strip().splitlines():
-                # 2. Inspect the container to get its start time
-                inspect_res = subprocess.run(
-                    ['docker', 'inspect', cid],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
+    def _parse_time_stderr(self, stderr):
+        elapsed_ms = None
+        memory_kb = None
+        if not stderr:
+            return elapsed_ms, memory_kb
+        for line in stderr.splitlines():
+            gnu_match = re.search(r"OJ_TIME\s+(\d+)\s+([\d.]+)", line)
+            if gnu_match:
+                memory_kb = int(gnu_match.group(1))
+                elapsed_ms = int(float(gnu_match.group(2)) * 1000)
+                continue
+            bash_match = re.search(r"real\s+(\d+)m(\d+(?:\.\d+)?)s", line)
+            if bash_match:
+                elapsed_ms = int(
+                    (int(bash_match.group(1)) * 60 + float(bash_match.group(2))) * 1000
                 )
-                if inspect_res.returncode != 0:
-                    continue  # skip if inspection fails
+        return elapsed_ms, memory_kb
 
-                data = json.loads(inspect_res.stdout)
-                started_at_str = data[0]['State']['StartedAt']
-                # Docker timestamps look like: 2026-06-06T12:34:56.789012345Z
-                # started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
-                started_at = parser.isoparse(started_at_str.replace('Z', '+00:00'))
-                now = datetime.now(timezone.utc)
-                running_seconds = (now - started_at).total_seconds()
-                print(cid, running_seconds)
+    def _timed_command(self, cmd):
+        cmd_str = " ".join(shlex.quote(arg) for arg in cmd)
+        return ["/bin/bash", "-lc", f"/usr/bin/time -f \"OJ_TIME %M %e\" {cmd_str}"]
 
-                # 3. Kill only if running time >= 5 seconds
-                if running_seconds >= 5:
-                    subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
-        except Exception:
-            pass  # silent failure (keeps original behaviour
+    # ── low-level runner ────────────────────────────────────────────────
 
     def _run(self, command, timeout_sec, stdin=None, is_compile=False):
-        # Compilation needs more memory than execution; use at least 512MB
-        mem = max(self.memory_limit_mb, 512) if is_compile else self.memory_limit_mb
-        return run_in_container(
-            self.work_dir,
-            command,
-            timeout_sec,
-            stdin=stdin,
-            memory_mb=mem,
-            image=self.image,
-            is_compile=is_compile,
-        )
+        """Execute a command inside the long-running container.
+
+        The real timeout is *timeout_sec* (no inflation) plus a small
+        safety margin so ``/usr/bin/time`` always writes its report.
+        """
+        if self._container is None:
+            raise DockerNotAvailableError("Judge container is not running")
+
+        # Compilation is generally heavier than the problem memory limit,
+        # so we already bumped memory at container creation time. This
+        # flag is kept for API compatibility.
+        del is_compile
+
+        padded = float(timeout_sec) + HOST_TIMEOUT_SAFETY_MARGIN_SEC
+        return self._container.exec(command, padded, stdin=stdin)
+
+    # ── compile steps (run once per submission) ────────────────────────
 
     def compile_cpp(self, code):
-        src = Path(self.work_dir) / 'main.cpp'
-        src.write_text(code, encoding='utf-8')
-        # Compile and set permissions in a single container session
-        # This ensures the binary persists for execution
+        src = Path(self.work_dir) / "main.cpp"
+        src.write_text(code, encoding="utf-8")
         try:
-            result = run_commands_in_container(
-                self.work_dir,
-                [
-                    ['g++', '-std=c++17', '-O2', '-o', 'main', 'main.cpp'],
-                    ['chmod', '+x', 'main'],
-                ],
+            res = self._run(
+                ["g++", "-std=c++17", "-O2", "-o", "main", "main.cpp"],
                 COMPILE_TIMEOUT_SEC,
-                memory_mb=self.memory_limit_mb,
-                image=self.image,
+                is_compile=True,
             )
         except subprocess.TimeoutExpired:
-            return None, 'Compile timeout'
-        if result.returncode != 0:
-            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
-        return './main', None
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        # chmod via host filesystem (work_dir is bind-mounted).
+        try:
+            os.chmod(Path(self.work_dir) / "main", 0o755)
+        except OSError:
+            pass
+        return "./main", None
+
+    def compile_c(self, code):
+        src = Path(self.work_dir) / "main.c"
+        src.write_text(code, encoding="utf-8")
+        try:
+            res = self._run(
+                ["gcc", "-O2", "-o", "main", "main.c"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        try:
+            os.chmod(Path(self.work_dir) / "main", 0o755)
+        except OSError:
+            pass
+        return "./main", None
+
+    def compile_rust(self, code):
+        src = Path(self.work_dir) / "main.rs"
+        src.write_text(code, encoding="utf-8")
+        try:
+            res = self._run(
+                ["rustc", "--edition=2021", "-o", "main", "main.rs"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        try:
+            os.chmod(Path(self.work_dir) / "main", 0o755)
+        except OSError:
+            pass
+        return "./main", None
+
+    def compile_golang(self, code):
+        src = Path(self.work_dir) / "main.go"
+        src.write_text(code, encoding="utf-8")
+        try:
+            res = self._run(
+                ["go", "build", "-o", "main", "main.go"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        try:
+            os.chmod(Path(self.work_dir) / "main", 0o755)
+        except OSError:
+            pass
+        return "./main", None
+
+    def compile_assembly(self, code):
+        src = Path(self.work_dir) / "main.s"
+        src.write_text(code, encoding="utf-8")
+        try:
+            as_res = self._run(
+                ["as", "-o", "main.o", "main.s"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if as_res.returncode != 0:
+                return None, (as_res.stderr or as_res.stdout or "Assemble failed").strip()
+            link_res = self._run(
+                ["ld", "-o", "main", "main.o"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+            if link_res.returncode != 0:
+                return None, (link_res.stderr or link_res.stdout or "Link failed").strip()
+        except subprocess.TimeoutExpired:
+            return None, "Compile timeout"
+        try:
+            os.chmod(Path(self.work_dir) / "main", 0o755)
+        except OSError:
+            pass
+        return "./main", None
 
     def compile_java(self, code):
         class_name = extract_java_class_name(code)
-        src = Path(self.work_dir) / f'{class_name}.java'
-        src.write_text(code, encoding='utf-8')
+        src = Path(self.work_dir) / f"{class_name}.java"
+        src.write_text(code, encoding="utf-8")
         try:
-            result = self._run(['javac', f'{class_name}.java'], COMPILE_TIMEOUT_SEC, is_compile=True)
+            res = self._run(
+                ["javac", f"{class_name}.java"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
         except subprocess.TimeoutExpired:
-            return None, 'Compile timeout'
-        if result.returncode != 0:
-            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Compilation failed").strip()
         return class_name, None
 
-    def compile_assembly(self, code):
-        src = Path(self.work_dir) / 'main.s'
-        src.write_text(code, encoding='utf-8')
+    def compile_typescript(self, code):
+        src = Path(self.work_dir) / "main.ts"
+        src.write_text(code, encoding="utf-8")
         try:
-            result = run_commands_in_container(
-                self.work_dir,
-                [
-                    ['as', '-o', 'main.o', 'main.s'],
-                    ['ld', '-o', 'main', 'main.o'],
-                    ['chmod', '+x', 'main'],
-                ],
+            res = self._run(
+                ["tsc", "--target", "ES2022", "--module", "commonjs",
+                 "--skipLibCheck", "main.ts"],
                 COMPILE_TIMEOUT_SEC,
-                memory_mb=self.memory_limit_mb,
-                image=self.image,
+                is_compile=True,
             )
         except subprocess.TimeoutExpired:
-            return None, 'Compile timeout'
-        if result.returncode != 0:
-            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
-        return './main', None
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        return "node ./main.js", None
+
+    def compile_kotlin(self, code):
+        src = Path(self.work_dir) / "main.kt"
+        src.write_text(code, encoding="utf-8")
+        try:
+            res = self._run(
+                ["kotlinc", "main.kt", "-include-runtime", "-d", "main.jar"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Compile timeout"
+        if res.returncode != 0:
+            return None, _clean_kotlin_output(
+                res.stderr or res.stdout or "Compilation failed"
+            )
+        return "java -jar main.jar", None
+
+    # ── execute step (per test case) ────────────────────────────────────
 
     def run_executable(self, cmd, stdin_data):
-        # Execute the command inside the container and measure runtime using the container's own timer to avoid Docker startup overhead.
-        # We wrap the command with `/usr/bin/time -f %e` via a bash shell, which prints elapsed seconds to stderr.
-        # The command's stdout is captured as usual; the first line of stderr contains the elapsed time.
+        """Run *cmd* (shell tokens) with the problem's time limit.
+
+        If the subprocess is killed before ``/usr/bin/time`` writes its
+        report line (e.g. an infinite loop), elapsed_ms is reported as
+        the configured problem time-limit so the test-case runtime is
+        not ``None``.
+        """
+        fallback_ms = int(self.time_limit_sec * 1000)
         try:
-            # Build a single string command for bash -c
-            cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-            # Parse elapsed time from stderr (first line)
-            elapsed_sec = None
-            if result.stderr:
-                first_line = result.stderr.splitlines()[1].strip()
-                try:
-                    # elapsed_sec = float(first_line)
-                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                    if match:
-                        minutes = int(match.group(1))
-                        seconds = float(match.group(2))
-                        elapsed_sec = minutes * 60 + seconds
-                except ValueError:
-                    pass
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
+            wrapped_cmd = self._timed_command(cmd)
+            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data)
+            elapsed_ms, memory_kb = self._parse_time_stderr(result.stderr)
+            self.last_memory_kb = memory_kb
         except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
+            # Host killed the process because it exceeded the outer timeout.
+            return None, fallback_ms, "Time Limit Exceeded"
+
+        if elapsed_ms is None:
+            # /usr/bin/time didn't leave us a report — the program was
+            # killed mid-execution (e.g. the host safety margin, or the
+            # kernel killed it for memory). Fall back to problem limit
+            # so callers see a non-None runtime.
+            elapsed_ms = fallback_ms
 
         if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-
+            return None, elapsed_ms, "Memory Limit Exceeded"
         if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            return None, elapsed_ms, ('Runtime Error', err)
-        return result.stdout, elapsed_ms, None
-
-    def run_python(self, code, stdin_data):
-        filename = get_random_string(10) + '.py'
-        src = Path(self.work_dir) / filename
-        src.write_text(code, encoding='utf-8')
-        return self.run_executable(['python3', filename], stdin_data)
-
-    def run_cpp(self, executable, stdin_data):
-        return self.run_executable([executable], stdin_data)
-
-    def run_cpp_combined(self, code, stdin_data):
-        # Compile and execute in the same container session to avoid binary persistence issues
-        src = Path(self.work_dir) / 'main.cpp'
-        src.write_text(code, encoding='utf-8')
-        # start = time.perf_counter()
-        # Check compile cache
-        cached = self._get_cached_binary(code, 'cpp')
-        if cached:
-            return self._run_cached_binary(cached, stdin_data)
-
-        try:
-            # Compile first
-            compile_result = self._run(
-                ['g++', '-std=c++17', '-O2', '-o', 'main', 'main.cpp'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
-                return None, 0, ('Runtime Error', err)
-            
-            # Set execute permission
-            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
-            
-            # Copy binary to host using docker cp to bypass bind mount sync issues
-            # Get container ID from the last run (this is tricky, so let's try a different approach)
-            # Instead, let's verify the binary exists on the host filesystem
-            binary_path = Path(self.work_dir) / 'main'
-            if not binary_path.exists():
-                print(f"Binary NOT found on host after compilation: {binary_path}")
-                return None, 0, ('Runtime Error', 'Binary not found after compilation')
-            
-            os.chmod(binary_path, 0o755)
-            self._cache_binary(code, 'cpp', str(binary_path))
-            
-            return self._run_cached_binary(str(binary_path), stdin_data)
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, None, 'Time Limit Exceeded'
-
-    def run_c_combined(self, code, stdin_data):
-        # Compile and execute in the same container session to avoid binary persistence issues
-        src = Path(self.work_dir) / 'main.c'
-        src.write_text(code, encoding='utf-8')
-        # start = time.perf_counter()
-        # Check compile cache
-        cached = self._get_cached_binary(code, 'c')
-        if cached:
-            return self._run_cached_binary(cached, stdin_data)
-
-        try:
-            # Compile first
-            compile_result = self._run(
-                ['gcc', '-O2', '-o', 'main', 'main.c'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
-                return None, 0, ('Runtime Error', err)
-
-            # Set execute permission
-            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
-
-            # Copy binary to host using docker cp to bypass bind mount sync issues
-            # Get container ID from the last run (this is tricky, so let's try a different approach)
-            # Instead, let's verify the binary exists on the host filesystem
-            binary_path = Path(self.work_dir) / 'main'
-            if not binary_path.exists():
-                print(f"Binary NOT found on host after compilation: {binary_path}")
-                return None, 0, ('Runtime Error', 'Binary not found after compilation')
-
-            os.chmod(binary_path, 0o755)
-            self._cache_binary(code, 'c', str(binary_path))
-            
-            return self._run_cached_binary(str(binary_path), stdin_data)
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, None, 'Time Limit Exceeded'
-
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-    def run_assembly_combined(self, code, stdin_data):
-        # Compile and execute assembly in the same container session to avoid binary persistence issues
-        src = Path(self.work_dir) / 'main.s'
-        src.write_text(code, encoding='utf-8')
-        try:
-            # Assemble first
-            compile_result = self._run(
-                ['as', '-o', 'main.o', 'main.s'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
-                return None, 0, ('Runtime Error', err)
-
-            # Link
-            link_result = self._run(
-                ['ld', '-o', 'main', 'main.o'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if link_result.returncode != 0:
-                err = (link_result.stderr or link_result.stdout or 'Link failed').strip()
-                return None, 0, ('Runtime Error', err)
-
-            # Set execute permission
-            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
-
-            # Verify the binary exists on the host filesystem
-            binary_path = Path(self.work_dir) / 'main'
-            if not binary_path.exists():
-                print(f"Binary NOT found on host after compilation: {binary_path}")
-                return None, 0, ('Runtime Error', 'Binary not found after compilation')
-
-            os.chmod(binary_path, 0o755)
-            self._cache_binary(code, 'assembly', str(binary_path))
-
-            # Execute using absolute path
-            try:
-                cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
-                wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-                result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-                elapsed_sec = None
-                if result.stderr:
-                    first_line = result.stderr.splitlines()[1].strip()
-                    try:
-                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                        if match:
-                            minutes = int(match.group(1))
-                            seconds = float(match.group(2))
-                            elapsed_sec = minutes * 60 + seconds
-                    except ValueError:
-                        pass
-                try:
-                    elapsed_ms = int(elapsed_sec * 1000)
-                except Exception:
-                    elapsed_sec = None
-            except subprocess.TimeoutExpired:
-                self.clean_docker()
-                return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-    def run_java(self, class_name, stdin_data):
-        return self.run_executable(['java', class_name], stdin_data)
-
-    def run_rust(self, executable, stdin_data):
-        return self.run_executable([executable], stdin_data)
-
-    def run_rust_combined(self, code, stdin_data):
-        src = Path(self.work_dir) / 'main.rs'
-        src.write_text(code, encoding='utf-8')
-        # Check compile cache
-        cached = self._get_cached_binary(code, 'rust')
-        if cached:
-            return self._run_cached_binary(cached, stdin_data)
-
-        try:
-            compile_result = self._run(
-                ['rustc', '--edition=2021', '-o', 'main', 'main.rs'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
-                return None, 0, ('Runtime Error', err)
-
-            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
-
-            binary_path = Path(self.work_dir) / 'main'
-            if not binary_path.exists():
-                return None, 0, ('Runtime Error', 'Binary not found after compilation')
-
-            os.chmod(binary_path, 0o755)
-
-            cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-
-            elapsed_sec = None
-            if result.stderr:
-                first_line = result.stderr.splitlines()[1].strip()
-                try:
-                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                    if match:
-                        minutes = int(match.group(1))
-                        seconds = float(match.group(2))
-                        elapsed_sec = minutes * 60 + seconds
-                except ValueError:
-                    pass
-
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            return None, elapsed_ms, ('Runtime Error', err)
-
-        return result.stdout, elapsed_ms, None
-
-    def run_golang(self, executable, stdin_data):
-        return self.run_executable([executable], stdin_data)
-
-    def run_golang_combined(self, code, stdin_data):
-        # Check compile cache
-        cached = self._get_cached_binary(code, 'golang')
-        if cached:
-            return self._run_cached_binary(cached, stdin_data)
-
-        src = Path(self.work_dir) / 'main.go'
-        src.write_text(code, encoding='utf-8')
-        try:
-            compile_result = self._run(
-                ['go', 'build', '-o', 'main', 'main.go'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
-                return None, 0, ('Runtime Error', err)
-
-            self._run(['chmod', '+x', 'main'], 5, is_compile=True)
-
-            binary_path = Path(self.work_dir) / 'main'
-            if not binary_path.exists():
-                return None, 0, ('Runtime Error', 'Binary not found after compilation')
-
-            os.chmod(binary_path, 0o755)
-
-            cmd_str = ' '.join(shlex.quote(arg) for arg in ['/sandbox/main'])
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-
-            elapsed_sec = None
-            if result.stderr:
-                first_line = result.stderr.splitlines()[1].strip()
-                try:
-                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                    if match:
-                        minutes = int(match.group(1))
-                        seconds = float(match.group(2))
-                        elapsed_sec = minutes * 60 + seconds
-                except ValueError:
-                    pass
-
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            return None, elapsed_ms, ('Runtime Error', err)
-
-        return result.stdout, elapsed_ms, None
-
-    def compile_rust(self, code):
-        src = Path(self.work_dir) / 'main.rs'
-        src.write_text(code, encoding='utf-8')
-        try:
-            result = run_commands_in_container(
-                self.work_dir,
-                [
-                    ['rustc', '--edition=2021', '-o', 'main', 'main.rs'],
-                    ['chmod', '+x', 'main'],
-                ],
-                COMPILE_TIMEOUT_SEC,
-                memory_mb=self.memory_limit_mb,
-                image=self.image,
-            )
-        except subprocess.TimeoutExpired:
-            return None, 'Compile timeout'
-        if result.returncode != 0:
-            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
-        return './main', None
-
-    def compile_golang(self, code):
-        src = Path(self.work_dir) / 'main.go'
-        src.write_text(code, encoding='utf-8')
-        try:
-            result = run_commands_in_container(
-                self.work_dir,
-                [
-                    ['go', 'build', '-o', 'main', 'main.go'],
-                    ['chmod', '+x', 'main'],
-                ],
-                COMPILE_TIMEOUT_SEC,
-                memory_mb=self.memory_limit_mb,
-                image=self.image,
-            )
-        except subprocess.TimeoutExpired:
-            return None, 'Compile timeout'
-        if result.returncode != 0:
-            return None, (result.stderr or result.stdout or 'Compilation failed').strip()
-        return './main', None
-
-    # ── JavaScript / Node.js ──
-    def run_javascript(self, code, stdin_data):
-        filename = get_random_string(10) + '.js'
-        src = Path(self.work_dir) / filename
-        src.write_text(code, encoding='utf-8')
-        return self.run_executable(['node', filename], stdin_data)
-
-    # ── TypeScript ──
-    TS_PRELUDE = '// @ts-nocheck\n'
-
-    def run_typescript_combined(self, code, stdin_data):
-        src = Path(self.work_dir) / 'main.ts'
-        src.write_text(self.TS_PRELUDE + code, encoding='utf-8')
-        try:
-            compile_result = self._run(
-                ['tsc', '--target', 'ES2022', '--module', 'commonjs', '--skipLibCheck', 'main.ts'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = (compile_result.stderr or compile_result.stdout or 'Compilation failed').strip()
-                return None, 0, ('Runtime Error', err)
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-        try:
-            cmd_str = ' '.join(shlex.quote(arg) for arg in ['node', '/sandbox/main.js'])
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-            elapsed_sec = None
-            if result.stderr:
-                first_line = result.stderr.splitlines()[1].strip()
-                try:
-                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                    if match:
-                        minutes = int(match.group(1))
-                        seconds = float(match.group(2))
-                        elapsed_sec = minutes * 60 + seconds
-                except ValueError:
-                    pass
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            return None, elapsed_ms, ('Runtime Error', err)
-        return result.stdout, elapsed_ms, None
-
-    # ── Ruby ──
-    def run_ruby(self, code, stdin_data):
-        filename = get_random_string(10) + '.rb'
-        src = Path(self.work_dir) / filename
-        src.write_text(code, encoding='utf-8')
-        # res = self.run_executable(['ruby', filename], stdin_data)
-        try:
-            cmd_str = ' '.join(shlex.quote(arg) for arg in ['ruby', filename])
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-            print(result.stderr)
-            elapsed_sec = None
-            if result.stderr:
-                first_line = result.stderr.splitlines()[2].strip()
-                try:
-                    match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', first_line)
-                    if match:
-                        minutes = int(match.group(1))
-                        seconds = float(match.group(2))
-                        elapsed_sec = minutes * 60 + seconds
-                except ValueError:
-                    pass
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or 'Runtime error').strip()
-            return None, elapsed_ms, ('Runtime Error', err)
+            err = (result.stderr or result.stdout or "Runtime error").strip()
+            return None, elapsed_ms, ("Runtime Error", err)
         return result.stdout, elapsed_ms, None
 
 
-    # ── Kotlin ──
-    def run_kotlin_combined(self, code, stdin_data):
-        src = Path(self.work_dir) / 'main.kt'
-        src.write_text(code, encoding='utf-8')
-        try:
-            compile_result = self._run(
-                ['kotlinc', 'main.kt', '-include-runtime', '-d', 'main.jar'],
-                COMPILE_TIMEOUT_SEC,
-                is_compile=True,
-            )
-            if compile_result.returncode != 0:
-                err = self._clean_kotlin_output(compile_result.stderr or compile_result.stdout or 'Compilation failed')
-                return None, 0, ('Runtime Error', err)
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
+# ── verdict / storage helpers ───────────────────────────────────────────
 
-        try:
-            cmd_str = ' '.join(shlex.quote(arg) for arg in ['java', '-jar', '/sandbox/main.jar'])
-            wrapped_cmd = ['/bin/bash', '-lc', f'time {cmd_str}']
-            result = self._run(wrapped_cmd, self.time_limit_sec, stdin=stdin_data, is_compile=False)
-            elapsed_sec = None
-            if result.stderr:
-                # parse time from stderr (second line after bash -lc overhead)
-                lines = result.stderr.splitlines()
-                for line in lines:
-                    try:
-                        match = re.search(r'real\s+(\d+)m(\d+(?:\.\d+)?)s', line)
-                        if match:
-                            minutes = int(match.group(1))
-                            seconds = float(match.group(2))
-                            elapsed_sec = minutes * 60 + seconds
-                            break
-                    except ValueError:
-                        pass
-            elapsed_ms = int(elapsed_sec * 1000) if elapsed_sec is not None else None
-        except subprocess.TimeoutExpired:
-            self.clean_docker()
-            return None, self.time_limit_sec*1000, 'Time Limit Exceeded'
-
-        if exit_indicates_memory_limit(result.returncode):
-            return None, elapsed_ms, 'Memory Limit Exceeded'
-        if result.returncode != 0:
-            err = self._clean_kotlin_output(result.stderr or result.stdout or 'Runtime error')
-            return None, elapsed_ms, ('Runtime Error', err)
-        return result.stdout, elapsed_ms, None
-
-    @staticmethod
-    def _clean_kotlin_output(text):
-        """Strip JVM deprecation warnings from kotlinc output."""
-        if not text:
-            return ''
-        lines = []
-        for line in text.strip().splitlines():
-            if 'OpenJDK' in line and 'warning' in line:
-                continue
-            if 'Picked up JAVA_TOOL_OPTIONS' in line:
-                continue
-            lines.append(line)
-        return '\n'.join(lines).strip()
-
-
-def save_case_result(submission, tc, case_index, status, runtime, actual, expected, error_message=''):
+def save_case_result(submission, tc, case_index, status, runtime,
+                     actual, expected, error_message=""):
     SubmissionTestResult.objects.create(
         submission=submission,
         test_case=tc,
@@ -779,228 +409,200 @@ def save_case_result(submission, tc, case_index, status, runtime, actual, expect
         status=status,
         runtime=runtime,
         actual_output=truncate_text(actual),
-        # Never persist hidden expected output to avoid leaking judge data.
-        expected_output='',
+        expected_output="",
         error_message=truncate_text(error_message, 2000),
     )
 
 
-def finalize_submission(submission, case_results, max_runtime, problem):
-    """Set overall status from per-case results (first failure wins)."""
+def finalize_submission(submission, case_results, max_runtime,
+                        max_memory_kb, problem):
     submission.runtime = max_runtime or 0
+    submission.memory = max_memory_kb or None
     for status in case_results:
-        if status != 'Accepted':
+        if status != "Accepted":
             submission.status = status
-            submission.save(update_fields=['status', 'runtime'])
+            submission.save(update_fields=["status", "runtime", "memory"])
             return
-    submission.status = 'Accepted'
-    submission.save(update_fields=['status', 'runtime'])
+    submission.status = "Accepted"
+    submission.save(update_fields=["status", "runtime", "memory"])
     submission.user.solved_problems.add(problem)
 
 
 def _case_status_from_error(error, actual, expected):
-    if error == 'Time Limit Exceeded':
-        return 'Time Limit Exceeded'
-    if error == 'Memory Limit Exceeded':
-        return 'Memory Limit Exceeded'
-    if isinstance(error, tuple) and error[0] == 'Runtime Error':
-        return 'Runtime Error', error[1]
+    if error == "Time Limit Exceeded":
+        return "Time Limit Exceeded"
+    if error == "Memory Limit Exceeded":
+        return "Memory Limit Exceeded"
+    if isinstance(error, tuple) and error[0] == "Runtime Error":
+        return "Runtime Error", error[1]
     if not outputs_match(actual, expected):
-        return 'Wrong Answer'
-    return 'Accepted'
+        return "Wrong Answer"
+    return "Accepted"
 
+
+# ── main entry point ─────────────────────────────────────────────────────
 
 def judge_submission(submission_id):
-    submission = Submission.objects.select_related('problem', 'user').get(id=submission_id)
+    submission = Submission.objects.select_related("problem", "user").get(
+        id=submission_id
+    )
     problem = submission.problem
     SubmissionTestResult.objects.filter(submission=submission).delete()
 
     if submission.language not in JUDGED_LANGUAGES:
-        submission.status = 'Pending'
-        submission.save(update_fields=['status'])
+        submission.status = "Pending"
+        submission.save(update_fields=["status"])
         return submission
 
     test_cases = list(problem.test_cases.all())
     if not test_cases:
-        submission.status = 'Pending'
-        submission.save(update_fields=['status'])
+        submission.status = "Pending"
+        submission.save(update_fields=["status"])
         return submission
 
-    work_dir = tempfile.mkdtemp(prefix='oj_judge_')
+    work_dir = tempfile.mkdtemp(prefix="oj_judge_")
     max_runtime = 0
+    max_memory_kb = 0
     case_statuses = []
 
     try:
-        runner = SandboxRunner(work_dir, problem.time_limit, problem.memory_limit,
-                               image=LANG_IMAGE.get(submission.language, 'oj-judge:latest'))
+        runner = SandboxRunner(
+            work_dir,
+            problem.time_limit,
+            problem.memory_limit,
+            image=LANG_IMAGE.get(submission.language, "oj-judge:latest"),
+        )
 
-        # Warm‑up: compile and run a minimal hello‑world program in the submission's language.
-        # This pre‑initialises the Docker container without affecting scoring.
-        try:
-            if submission.language == 'C++':
-                exe, err = runner.compile_cpp('int main(){return 0;}')
-                if exe:
-                    runner.run_executable([exe], None)
-            elif submission.language == 'C':
-                # Create a simple C source file
-                src = Path(work_dir) / 'hello.c'
-                src.write_text('int main(){return 0;}', encoding='utf-8')
-                compile_res = runner._run(['gcc', '-O2', '-o', 'hello', 'hello.c'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                if compile_res.returncode == 0:
-                    runner.run_executable(['./hello'], None)
-            elif submission.language == 'Python':
-                src = Path(work_dir) / 'hello.py'
-                src.write_text('pass', encoding='utf-8')
-                runner.run_executable(['python3', src.name], None)
-            elif submission.language == 'Java':
-                class_name = 'Hello'
-                src = Path(work_dir) / f'{class_name}.java'
-                src.write_text('public class Hello { public static void main(String[] args) {} }', encoding='utf-8')
-                compiled_name, err = runner.compile_java(src.read_text())
-                if compiled_name:
-                    runner.run_executable(['java', compiled_name], None)
-            elif submission.language == 'Assembly':
-                src = Path(work_dir) / 'hello.s'
-                src.write_text('.section .text\n.global _start\n_start:\n    mov x0, #0\n    mov x8, #93\n    svc #0', encoding='utf-8')
-                compile_res = runner._run(['as', '-o', 'hello.o', 'hello.s'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                if compile_res.returncode == 0:
-                    link_res = runner._run(['ld', '-o', 'hello', 'hello.o'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                    if link_res.returncode == 0:
-                        runner.run_executable(['./hello'], None)
-            elif submission.language == 'Rust':
-                src = Path(work_dir) / 'hello.rs'
-                src.write_text('fn main() { println!("Hello, Rust!"); }', encoding='utf-8')
-                compile_res = runner._run(['rustc', '--edition=2021', '-o', 'hello', 'hello.rs'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                if compile_res.returncode == 0:
-                    runner.run_executable(['./hello'], None)
-            elif submission.language == 'Golang':
-                src = Path(work_dir) / 'hello.go'
-                src.write_text('package main\nimport "fmt"\nfunc main() { fmt.Println("Hello, Golang!") }', encoding='utf-8')
-                compile_res = runner._run(['go', 'build', '-o', 'hello', 'hello.go'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                if compile_res.returncode == 0:
-                    runner.run_executable(['./hello'], None)
-            elif submission.language == 'JavaScript':
-                src = Path(work_dir) / 'hello.js'
-                src.write_text('console.log("hello");', encoding='utf-8')
-                runner.run_executable(['node', 'hello.js'], None)
-            elif submission.language == 'TypeScript':
-                src = Path(work_dir) / 'hello.ts'
-                src.write_text('console.log("hello");', encoding='utf-8')
-                compile_res = runner._run(['tsc', '--target', 'ES2022', '--module', 'commonjs', '--skipLibCheck', 'hello.ts'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                if compile_res.returncode == 0:
-                    runner.run_executable(['node', 'hello.js'], None)
-            elif submission.language == 'Ruby':
-                src = Path(work_dir) / 'hello.rb'
-                src.write_text('puts "hello"', encoding='utf-8')
-                runner.run_executable(['ruby', 'hello.rb'], None)
-            elif submission.language == 'Kotlin':
-                src = Path(work_dir) / 'hello.kt'
-                src.write_text('fun main() { println("hello") }', encoding='utf-8')
-                compile_res = runner._run(['kotlinc', 'hello.kt', '-include-runtime', '-d', 'hello.jar'], COMPILE_TIMEOUT_SEC, is_compile=True)
-                if compile_res.returncode == 0:
-                    runner.run_executable(['java', '-jar', 'hello.jar'], None)
-        except Exception:
-            # Ignore any warm‑up failures; real test cases will surface problems.
-            pass
+        # ── Start long-running container + compile once ───────────────
 
-        if submission.language == 'C++':
-            # For C++, compile and execute in the same container session to avoid binary persistence issues
-            src = Path(work_dir) / 'main.cpp'
-            src.write_text(submission.code, encoding='utf-8')
-            run_fn = lambda stdin: runner.run_cpp_combined(submission.code, stdin)
+        with runner:
+            if submission.language == "C++":
+                exe, err = runner.compile_cpp(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
-        elif submission.language == 'C':
-            src = Path(work_dir) / 'main.c'
-            src.write_text(submission.code, encoding='utf-8')
-            run_fn = lambda stdin: runner.run_c_combined(submission.code, stdin)
+            elif submission.language == "C":
+                exe, err = runner.compile_c(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
-        elif submission.language == 'Python':
-            run_fn = lambda stdin: runner.run_python(submission.code, stdin)
+            elif submission.language == "Rust":
+                exe, err = runner.compile_rust(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
-        elif submission.language == 'Java':
-            class_name, err = runner.compile_java(submission.code)
-            if err:
-                submission.status = 'Compile Error'
-                submission.save(update_fields=['status'])
-                return submission
-            run_fn = lambda stdin: runner.run_java(class_name, stdin)
+            elif submission.language == "Golang":
+                exe, err = runner.compile_golang(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
-        elif submission.language == 'Assembly':
-            src = Path(work_dir) / 'main.s'
-            src.write_text(submission.code, encoding='utf-8')
-            run_fn = lambda stdin: runner.run_assembly_combined(submission.code, stdin)
+            elif submission.language == "Assembly":
+                exe, err = runner.compile_assembly(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
-        elif submission.language == 'Rust':
-            run_fn = lambda stdin: runner.run_rust_combined(submission.code, stdin)
+            elif submission.language == "Java":
+                class_name, err = runner.compile_java(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable(["java", class_name], stdin)
 
-        elif submission.language == 'Golang':
-            run_fn = lambda stdin: runner.run_golang_combined(submission.code, stdin)
+            elif submission.language == "TypeScript":
+                _, err = runner.compile_typescript(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable(["node", "main.js"], stdin)
 
-        elif submission.language == 'JavaScript':
-            run_fn = lambda stdin: runner.run_javascript(submission.code, stdin)
+            elif submission.language == "Kotlin":
+                _, err = runner.compile_kotlin(submission.code)
+                if err:
+                    submission.status = "Compile Error"
+                    submission.save(update_fields=["status"])
+                    return submission
+                run_fn = lambda stdin: runner.run_executable(
+                    ["java", "-jar", "main.jar"], stdin
+                )
 
-        elif submission.language == 'TypeScript':
-            run_fn = lambda stdin: runner.run_typescript_combined(submission.code, stdin)
+            elif submission.language == "Python":
+                filename = f"{submission.user_id}_{int(time.time() * 1000)}.py"
+                src = Path(work_dir) / filename
+                src.write_text(submission.code, encoding="utf-8")
+                run_fn = lambda stdin: runner.run_executable(["python3", filename], stdin)
 
-        elif submission.language == 'Ruby':
-            run_fn = lambda stdin: runner.run_ruby(submission.code, stdin)
+            elif submission.language == "JavaScript":
+                filename = f"{submission.user_id}_{int(time.time() * 1000)}.js"
+                src = Path(work_dir) / filename
+                src.write_text(submission.code, encoding="utf-8")
+                run_fn = lambda stdin: runner.run_executable(["node", filename], stdin)
 
-        elif submission.language == 'Kotlin':
-            run_fn = lambda stdin: runner.run_kotlin_combined(submission.code, stdin)
+            elif submission.language == "Ruby":
+                filename = f"{submission.user_id}_{int(time.time() * 1000)}.rb"
+                src = Path(work_dir) / filename
+                src.write_text(submission.code, encoding="utf-8")
+                run_fn = lambda stdin: runner.run_executable(["ruby", filename], stdin)
 
-        else:
-            return submission
-
-        for idx, tc in enumerate(test_cases, start=1):
-            stdout, elapsed_ms, error = run_fn(tc.input_data)
-            actual = stdout if stdout is not None else ''
-            expected = tc.expected_output
-            case_runtime = elapsed_ms
-            error_msg = ''
-
-            if elapsed_ms:
-                max_runtime = max(max_runtime, elapsed_ms)
-
-            parsed = _case_status_from_error(error, actual, expected)
-            if isinstance(parsed, tuple):
-                case_status, error_msg = parsed
-                actual = actual or error_msg
             else:
-                case_status = parsed
+                return submission
 
-            if case_status == 'Time Limit Exceeded':
-                # # Attempt to clean up any dangling containers from this image
-                # try:
-                #     # List running containers based on the judge image
-                #     list_res = subprocess.run(
-                #         ['docker', 'ps', '-q', '--filter',
-                #          f'ancestor={getattr(settings, "OJ_DOCKER_IMAGE", "oj-judge:latest")}"'],
-                #         capture_output=True,
-                #         text=True,
-                #         timeout=5,
-                #     )
-                #     container_ids = list_res.stdout.strip().splitlines()
-                #     for cid in container_ids:
-                #         subprocess.run(['docker', 'kill', cid], capture_output=True, text=True)
-                # except Exception:
-                #     pass
-                case_runtime = case_runtime or problem.time_limit
+            # ── Run each test case inside the SAME container ────────
+            for idx, tc in enumerate(test_cases, start=1):
+                runner.last_memory_kb = None
+                stdout, elapsed_ms, error = run_fn(tc.input_data)
+                actual = stdout if stdout is not None else ""
+                expected = tc.expected_output
 
-            save_case_result(
-                submission, tc, idx, case_status, case_runtime,
-                actual, expected, error_msg,
-            )
-            case_statuses.append(case_status)
+                if elapsed_ms:
+                    max_runtime = max(max_runtime, elapsed_ms)
+                if runner.last_memory_kb:
+                    max_memory_kb = max(max_memory_kb, runner.last_memory_kb)
 
-        finalize_submission(submission, case_statuses, max_runtime, problem)
+                # Hard TLE by in-container timer.
+                if elapsed_ms and elapsed_ms > problem.time_limit:
+                    error = "Time Limit Exceeded"
+
+                parsed = _case_status_from_error(error, actual, expected)
+                if isinstance(parsed, tuple):
+                    case_status, error_msg = parsed
+                    actual = actual or error_msg
+                else:
+                    case_status = parsed
+                    error_msg = ""
+
+                save_case_result(
+                    submission, tc, idx, case_status, elapsed_ms,
+                    actual, expected, error_msg,
+                )
+                case_statuses.append(case_status)
+
+        finalize_submission(submission, case_statuses, max_runtime,
+                            max_memory_kb, problem)
 
     except DockerNotAvailableError as exc:
-        submission.status = 'Runtime Error'
-        submission.save(update_fields=['status'])
+        submission.status = "Runtime Error"
+        submission.save(update_fields=["status"])
         if test_cases:
             save_case_result(
-                submission, test_cases[0], 1, 'Runtime Error', None,
-                '', test_cases[0].expected_output, str(exc),
+                submission, test_cases[0], 1, "Runtime Error", None,
+                "", test_cases[0].expected_output, str(exc),
             )
 
     finally:

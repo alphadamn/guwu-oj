@@ -11,15 +11,31 @@ BRANCH = 'main'
 COMMITS_URL = f'https://api.github.com/repos/{REPO}/commits'
 COMMITS_PAGE_URL = f'https://github.com/{REPO}/commits/{BRANCH}/'
 CACHE_KEY = 'devlog_github_commits'
-CACHE_TTL = 60 * 10  # 10 minutes
+DEFAULT_CACHE_TTL = 60 * 10  # 10 minutes — fallback if SystemConfig is missing.
+
+
+def _cache_ttl():
+    """TTL for the GitHub commits cache, from :class:`devlog.models.CacheConfig`."""
+    try:
+        from devlog.models import CacheConfig
+        cfg = CacheConfig.objects.filter(pk=1).only('github_cache_seconds').first()
+        if cfg is not None and cfg.github_cache_seconds is not None:
+            ttl = int(cfg.github_cache_seconds)
+            if ttl > 0:
+                return ttl
+    except Exception:
+        pass
+    return DEFAULT_CACHE_TTL
 
 
 def get_commits(limit=15, force_refresh=False):
-    """Return a list of recent commit dicts, cached for 10 minutes.
+    """Return a list of recent commit dicts, cached per ``github_cache_seconds``.
 
     Each item: {sha, short_sha, message, author, date, url}.
     Falls back gracefully (empty list) when GitHub is unreachable.
     """
+    ttl = _cache_ttl()
+
     if not force_refresh:
         cached = cache.get(CACHE_KEY)
         if cached is not None:
@@ -45,7 +61,7 @@ def get_commits(limit=15, force_refresh=False):
                 'date': author.get('date', ''),
                 'url': item.get('html_url', ''),
             })
-        cache.set(CACHE_KEY, commits, CACHE_TTL)
+        cache.set(CACHE_KEY, commits, ttl)
     except Exception as exc:  # noqa: BLE001 - never break the page on API errors
         logger.warning('Failed to fetch GitHub commits: %s', exc)
         # Cache the (empty) failure briefly so we don't hammer the API.

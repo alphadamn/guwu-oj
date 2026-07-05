@@ -1,0 +1,17 @@
+{% extends "emails/_base_email.html" %}
+{% block subject %}邮箱验证码 - {{ site_name }}{% endblock %}
+{% block body %}
+<p>你好，</p>
+<p>你正在 <strong>{{ site_name }}</strong> 使用此邮箱注册账号。请在注册页面输入以下验证码完成邮箱验证。</p>
+
+<div class="code-box">
+  <span class="label">你的邮箱验证码（{{ expire_minutes|default:10 }} 分钟内有效）</span>
+  <span class="code">{{ code }}</span>
+</div>
+
+<div class="note">
+  请勿将此验证码告知他人。如果你没有进行本次操作，请忽略此邮件。
+</div>
+
+<p>祝你在算法世界中玩得开心！<br>—— {{ site_name }} 团队</p>
+{% endblock %}

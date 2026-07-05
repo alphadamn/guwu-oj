@@ -1,12 +1,13 @@
 {% load static %}
+{% load feature_bans %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}谷物 OJ{% endblock %}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link href="{{ OJ_BOOTSTRAP_CSS|default:"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" }}" rel="stylesheet">
+    <link rel="stylesheet" href="{{ OJ_BOOTSTRAP_ICONS|default:"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" }}">
     <link rel="stylesheet" href="{% static 'css/main.css' %}">
     <script async defer src="https://buttons.github.io/buttons.js"></script>
     <style>
@@ -55,6 +56,30 @@
             to { transform: rotate(360deg); }
         }
     </style>
+    <style>
+        .guwu-punishment-header {
+            background: linear-gradient(135deg, #ff8a65 0%, #ff7043 50%, #f4511e 100%);
+            box-shadow: inset 0 -3px 0 rgba(0,0,0,.08);
+        }
+        .guwu-punishment-header.kind-permanent_ban {
+            background: linear-gradient(135deg, #7a0d0d 0%, #b71c1c 100%);
+        }
+        .guwu-punishment-header.kind-temporary_ban {
+            background: linear-gradient(135deg, #ef6c00 0%, #d84315 100%);
+        }
+        .guwu-punishment-header.kind-feature_ban {
+            background: linear-gradient(135deg, #1565c0 0%, #0277bd 100%);
+        }
+        .guwu-punishment-features li {
+            border: 0;
+            padding: .35rem .6rem;
+            color: #5c2c91;
+            background: #f5f0ff;
+            margin-bottom: .35rem;
+            border-radius: .5rem;
+        }
+        .guwu-punishment-title-text { color: #2b2b2b; }
+    </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -88,7 +113,11 @@
                     </li>
                     {% if user.is_authenticated %}
                     <li class="nav-item">
+                        {% if user|feature_disabled:"create_problem" %}
+                        <a class="nav-link text-muted disabled" aria-disabled="true" href="#" title="上传题目功能已被管理员禁用">上传题目</a>
+                        {% else %}
                         <a class="nav-link" href="{% url 'create_problem' %}">上传题目</a>
+                        {% endif %}
                     </li>
                     {% endif %}
                 </ul>
@@ -165,7 +194,17 @@
         </div>
     </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Expose the admin-configured Monaco CDN URL to frontend JS.
+        // Falls back to jsdelivr if the context variable is missing or empty.
+        (function () {
+            var fromServer = '{{ OJ_MONACO_BASE|default:""|safe }}';
+            window.OJ_MONACO_BASE = fromServer && fromServer.length > 10
+                ? fromServer
+                : 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs';
+        })();
+    </script>
+    <script src="{{ OJ_BOOTSTRAP_JS|default:"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" }}"></script>
     <script src="{% static 'js/main.js' %}"></script>
     <script>
     (function () {
@@ -184,6 +223,139 @@
         setTimeout(() => { if (form.classList.contains('is-searching')) stop(); }, 20000);
     })();
     </script>
+<!-- Shared punishment modal (populated on demand) -->
+<div class="modal fade" id="guwu-punishment-modal" tabindex="-1" aria-labelledby="guwu-punishment-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-md">
+        <div class="modal-content border-0 rounded-3 shadow-lg overflow-hidden">
+            <div class="modal-header text-white guwu-punishment-header d-flex align-items-center gap-2">
+                <i class="bi bi-exclamation-triangle-fill fs-5 guwu-punishment-icon"></i>
+                <h5 class="modal-title fw-semibold m-0" id="guwu-punishment-title">账号状态</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body py-4">
+                <p class="guwu-punishment-title-text fs-5 fw-bold mb-2"></p>
+                <p class="guwu-punishment-reason text-muted mb-3"></p>
+                <div class="guwu-punishment-ends-at d-none mb-3 small text-secondary">
+                    <i class="bi bi-clock me-1"></i><strong>截止时间：</strong><span class="guwu-punishment-ends-at-value"></span>
+                </div>
+                <ul class="guwu-punishment-features list-group list-group-flush d-none small"></ul>
+            </div>
+            <div class="modal-footer border-0 bg-light py-3">
+                <button type="button" class="btn btn-primary rounded-2 px-4 guwu-punishment-close" data-bs-dismiss="modal">我已了解</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    // This script is at the BOTTOM of <body>, so the shared modal
+    // (#guwu-punishment-modal) is already in the DOM before we run.
+
+    // 1) Hard-ban: CustomLoginView stashes the full punishment as JSON into
+    //    ``context['punishment_json']``. Use JSON.parse to avoid surprises
+    //    with embedded special chars.
+    var pagePunishment = null;
+    {% if punishment_json %}
+    try { pagePunishment = JSON.parse('{{ punishment_json|escapejs }}'); }
+    catch (e) { pagePunishment = null; }
+    {% endif %}
+
+    // 2) Feature-ban: after a successful redirect to home, the session
+    //    still carries ``punishment_notice``; show the modal once and
+    //    drop it.
+    {% if not punishment_json and request.session_punishment_notice %}
+    try { pagePunishment = JSON.parse('{{ request.session_punishment_notice|escapejs }}'); }
+    catch (e) { pagePunishment = null; }
+    {% endif %}
+
+    if (!pagePunishment || !pagePunishment.kind) return;
+
+    var modal = document.getElementById('guwu-punishment-modal');
+    if (!modal) return;
+
+    // Header: pick an icon + color class per punishment kind.
+    var header = modal.querySelector('.guwu-punishment-header');
+    var iconEl = modal.querySelector('.guwu-punishment-icon');
+    var titleEl = modal.querySelector('.guwu-punishment-title-text');
+    var reasonEl = modal.querySelector('.guwu-punishment-reason');
+    var endsAtBox = modal.querySelector('.guwu-punishment-ends-at');
+    var featuresBox = modal.querySelector('.guwu-punishment-features');
+    var closeBtn = modal.querySelector('.guwu-punishment-close');
+
+    // Reset per-kind classes / defaults
+    header.className =
+        'modal-header text-white guwu-punishment-header d-flex align-items-center gap-2';
+    header.classList.add('kind-' + (pagePunishment.kind || 'feature_ban'));
+
+    var iconClass = 'bi-info-circle-fill';
+    var buttonLabel = '我已了解';
+    var reasonPrefix = '原因：';
+
+    if (pagePunishment.kind === 'permanent_ban') {
+        iconClass = 'bi-shield-fill-exclamation';
+        reasonPrefix = '';
+        buttonLabel = '关闭';
+    } else if (pagePunishment.kind === 'temporary_ban') {
+        iconClass = 'bi-stop-circle-fill';
+        reasonPrefix = '';
+        buttonLabel = '关闭';
+    } else {
+        // feature ban
+        iconClass = 'bi-exclamation-triangle-fill';
+        buttonLabel = '知道了';
+    }
+    if (iconEl) iconEl.className = iconEl.className.replace(/bi-[a-z0-9-]+/i, iconClass);
+
+    // Title and reason
+    if (titleEl) titleEl.textContent = pagePunishment.title || '账号状态';
+    if (reasonEl) reasonEl.textContent =
+        reasonPrefix + (pagePunishment.reason || '未填写');
+
+    // Deadline
+    if (pagePunishment.ends_at) {
+        endsAtBox.classList.remove('d-none');
+        endsAtBox.querySelector('.guwu-punishment-ends-at-value').textContent =
+            pagePunishment.ends_at;
+    } else {
+        endsAtBox.classList.add('d-none');
+    }
+
+    // Feature list (for feature_ban; ignored for hard bans)
+    if (pagePunishment.feature_labels && pagePunishment.feature_labels.length > 0) {
+        featuresBox.classList.remove('d-none');
+        featuresBox.innerHTML = '';
+        pagePunishment.feature_labels.forEach(function (label) {
+            var li = document.createElement('li');
+            li.className = 'list-group-item small';
+            li.textContent = '• 已禁用：' + label;
+            featuresBox.appendChild(li);
+        });
+    } else {
+        featuresBox.classList.add('d-none');
+    }
+
+    // CTA button label
+    if (closeBtn) closeBtn.textContent = buttonLabel;
+
+    if (window.bootstrap && window.bootstrap.Modal) {
+        new window.bootstrap.Modal(modal).show();
+    } else {
+        modal.classList.add('show');
+        modal.setAttribute('aria-modal', 'true');
+        modal.style.display = 'block';
+    }
+    // After showing the session notice, clear it on the server side so
+    // the modal only appears once.
+    try {
+        fetch('{% url "clear_punishment_notice" %}', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [, ''])[1] },
+        }).catch(function () {});
+    } catch (e) {}
+})();
+</script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

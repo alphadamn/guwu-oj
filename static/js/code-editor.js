@@ -1,10 +1,35 @@
 /**
  * Monaco Editor wrapper for OJ submit page.
  * https://github.com/microsoft/monaco-editor
+ *
+ * The primary source is configurable in the admin panel (SiteConfig).
+ * If the configured source fails to load, the loader falls back
+ * through a list of well-known mirrors before giving up.
  */
 (function (global) {
     const MONACO_VERSION = '0.52.2';
-    const MONACO_BASE = `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs`;
+
+    // List of fallback mirrors. The FIRST entry is the one configured
+    // by the server via ``window.OJ_MONACO_BASE``; remaining entries
+    // act as fallbacks if the primary source fails on load.
+    const MONACO_BASE_CANDIDATES = [
+        (global.OJ_MONACO_BASE || '').toString().trim() ||
+            `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs`,
+        `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs`,
+        `https://unpkg.com/monaco-editor@${MONACO_VERSION}/min/vs`,
+        `https://cdn.bootcdn.net/ajax/libs/monaco-editor/${MONACO_VERSION}/min/vs`,
+        `https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/${MONACO_VERSION}/min/vs`,
+    ];
+    // De-duplicate while preserving order.
+    const seen = new Set();
+    const MONACO_BASES = [];
+    for (const url of MONACO_BASE_CANDIDATES) {
+        const key = url.replace(/\/+$/, '').toLowerCase();
+        if (!seen.has(key)) {
+            seen.add(key);
+            MONACO_BASES.push(url);
+        }
+    }
 
     const LANGUAGE_MAP = {
         Rust: 'rust',
@@ -100,22 +125,51 @@ fun main() {
 `,
     };
 
-    function loadMonaco() {
+    function loadMonaco(onProgress) {
         return new Promise((resolve, reject) => {
             if (global.monaco) {
                 resolve(global.monaco);
                 return;
             }
-            const script = document.createElement('script');
-            script.src = `${MONACO_BASE}/loader.js`;
-            script.onload = () => {
-                global.require.config({ paths: { vs: MONACO_BASE } });
-                global.require(['vs/editor/editor.main'], () => {
-                    resolve(global.monaco);
-                }, reject);
+            let index = 0;
+            const errors = [];
+            const tryNext = () => {
+                if (index >= MONACO_BASES.length) {
+                    reject(new Error(
+                        'Monaco editor failed to load from every configured CDN: ' +
+                        errors.join('; '),
+                    ));
+                    return;
+                }
+                const base = MONACO_BASES[index++];
+                if (typeof onProgress === 'function') {
+                    try {
+                        onProgress('正在加载编辑器（' + base + ')', 'text-muted');
+                    } catch (_) {}
+                }
+                const script = document.createElement('script');
+                script.src = `${base}/loader.js`;
+                script.onload = () => {
+                    try {
+                        global.require.config({ paths: { vs: base } });
+                        global.require(['vs/editor/editor.main'], () => {
+                            resolve(global.monaco);
+                        }, (err) => {
+                            errors.push('require failed for ' + base + ': ' + err);
+                            tryNext();
+                        });
+                    } catch (err) {
+                        errors.push('loader.js post-processing failed for ' + base + ': ' + err);
+                        tryNext();
+                    }
+                };
+                script.onerror = () => {
+                    errors.push('failed to load ' + base + '/loader.js');
+                    tryNext();
+                };
+                document.head.appendChild(script);
             };
-            script.onerror = () => reject(new Error('Failed to load Monaco Editor'));
-            document.head.appendChild(script);
+            tryNext();
         });
     }
 
@@ -130,6 +184,7 @@ fun main() {
             languageSelectId,
             problemId,
             initialLanguage = 'C++',
+            onProgress,
         } = options;
 
         const container = document.getElementById(containerId);
@@ -141,9 +196,16 @@ fun main() {
         let editor = null;
         let saveTimer = null;
 
-        function setStatus(msg) {
-            if (statusEl) {
-                statusEl.textContent = msg;
+        function setStatus(msg, cls) {
+            if (!statusEl) return;
+            statusEl.textContent = msg;
+            statusEl.className = (cls || 'text-muted');
+        }
+
+        function handleProgress(msg, cls) {
+            setStatus(msg, cls);
+            if (typeof onProgress === 'function') {
+                try { onProgress(msg, cls); } catch (_) {}
             }
         }
 
@@ -199,7 +261,7 @@ fun main() {
             setEditorContent(value);
         }
 
-        return loadMonaco().then((monaco) => {
+        return loadMonaco(handleProgress).then((monaco) => {
             const lang = LANGUAGE_MAP[initialLanguage] || 'cpp';
             const initial = loadDraft() || STARTERS[initialLanguage] || '';
 
@@ -264,6 +326,7 @@ fun main() {
                 textarea.value = editor.getValue();
             });
 
+            handleProgress('已就绪', 'text-success');
             return editor;
         });
     }

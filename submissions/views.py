@@ -13,15 +13,61 @@ from .judge_queue import enqueue_judge
 from .models import Submission
 
 
+def _submit_disabled(user) -> bool:
+    """True when ``user`` has the ``submit`` feature disabled and the
+    deadline (if any) is still in the future."""
+    try:
+        fn = getattr(user, 'feature_disabled', None)
+        if callable(fn):
+            return bool(fn('submit'))
+    except Exception:
+        return False
+    return False
+
+
 @login_required
-@ratelimit(key='user', rate='3/m', method='POST')
+@ratelimit(key='user', rate='60/m', method='POST', block=False)
 def submit_solution(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
-    
+
+    # Feature-ban: when the user has the "禁止提交题目" feature flag active,
+    # refuse with a 403 to avoid spam creating rows.
+    if _submit_disabled(request.user):
+        if request.method == 'POST':
+            messages.error(request, '当前账号的提交功能已被管理员禁用，暂时无法提交解答。')
+        return render(request, 'submissions/submit.html', {
+            'problem': problem,
+            'submit_disabled': True,
+        })
+
+    # Submission-rate captcha: if the user has exceeded the admin-configured
+    # frequency, demand a valid captcha challenge before accepting the next
+    # submission.
+    requires_captcha = False
+    try:
+        from users.captcha import (
+            submission_requires_captcha as _sr_captcha,
+            check_submission_captcha as _check_submission_captcha,
+        )
+        requires_captcha = _sr_captcha(request)
+    except Exception:
+        _sr_captcha = None
+        _check_submission_captcha = None
+        requires_captcha = False
+
     if request.method == 'POST':
         code = request.POST.get('code')
         language = request.POST.get('language')
-        
+
+        if requires_captcha and _check_submission_captcha is not None:
+            ok, msg = _check_submission_captcha(request)
+            if not ok:
+                messages.error(request, msg or '图形验证码错误，请重新输入后再提交。')
+                return render(request, 'submissions/submit.html', {
+                    'problem': problem,
+                    'requires_captcha': True,
+                })
+
         max_bytes = settings.OJ_MAX_SUBMISSION_CODE_BYTES
         if code and len(code.encode('utf-8')) > max_bytes:
             messages.error(
@@ -36,11 +82,20 @@ def submit_solution(request, problem_id):
                 language=language,
                 status='Pending'
             )
+            # Increment rate-limit counter for captcha escalation.
+            try:
+                from users.captcha import record_submission_attempt
+                record_submission_attempt(request.user.id, success=True)
+            except Exception:
+                pass
             if language in JUDGED_LANGUAGES and problem.test_cases.exists():
                 enqueue_judge(submission.id)
             return redirect('submission_detail', submission_id=submission.id)
-    
-    return render(request, 'submissions/submit.html', {'problem': problem})
+
+    return render(request, 'submissions/submit.html', {
+        'problem': problem,
+        'requires_captcha': requires_captcha,
+    })
 
 
 @login_required

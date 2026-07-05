@@ -1,0 +1,33 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">导入 {{ opts.verbose_name }}（JSON 文件）</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            选择之前通过 “导出 JSON” 得到的文件；
+            导入时默认会覆盖现有同类型配置（可通过下方开关关闭）。
+        </p>
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label fw-semibold">JSON 文件</label>
+                <input type="file" name="file" accept="application/json,.json" required class="form-control">
+            </div>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" name="overwrite" id="overwrite" checked>
+                <label class="form-check-label" for="overwrite">
+                    导入前清空现有同名模型的所有行（推荐）。
+                </label>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-upload"></i> 上传并导入
+                </button>
+                <a href="../" class="btn btn-secondary">取消</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

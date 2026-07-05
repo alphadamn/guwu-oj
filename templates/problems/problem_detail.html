@@ -27,7 +27,7 @@
                     <span class="badge bg-secondary me-2">P{{ problem.id }}</span>
                     {{ problem.title }}
                 </h5>
-                <span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span>
+                <span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span>
             </div>
             <div class="card-body">
                 <div class="mb-4">
@@ -93,7 +93,7 @@
                     </tr>
                     <tr>
                         <td>难度</td>
-                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span></td>
                     </tr>
                     <tr>
                         <td>提交数</td>
@@ -132,9 +132,15 @@
                     <i class="bi bi-book"></i> 查看题解
                 </a>
                 {% if user.is_authenticated %}
+                    {% if submit_disabled %}
+                <button type="button" class="btn btn-primary w-100" disabled title="当前账号的提交功能已被管理员禁用">
+                    <i class="bi bi-send-slash"></i> 提交功能已被禁用
+                </button>
+                    {% else %}
                 <a href="{% url 'submit_solution' problem.id %}" class="btn btn-primary w-100">
                     <i class="bi bi-send"></i> 提交代码
                 </a>
+                    {% endif %}
                 {% else %}
                 <a href="{% url 'login' %}" class="btn btn-primary w-100">
                     <i class="bi bi-box-arrow-in-right"></i> 登录后提交

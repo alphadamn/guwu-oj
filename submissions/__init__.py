@@ -1,6 +1,4 @@
-import threading
-from .container_cleanup import start_container_cleanup
+from .container_cleanup import DockerCleanupThread
 
-# Start container cleanup daemon when submissions app loads
-thread = threading.Thread(target=start_container_cleanup, daemon=True, name='container-cleanup-init')
+thread = DockerCleanupThread(interval=5)
 thread.start()

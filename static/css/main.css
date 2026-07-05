@@ -109,17 +109,19 @@ main.container {
     box-shadow: var(--oj-shadow-hover);
 }
 
-/* Difficulty & status (unchanged colors) */
+/* Difficulty & status — use slugified class names
+   (see ``Problem.difficulty_slug``) so the selectors are unambiguous
+   regardless of ``+`` / ``-`` suffixes. */
 .difficulty-badge { font-size: 0.8rem; }
-.difficulty-入门 { background-color: #2ecc71; }
-.difficulty-普及- { background-color: #3498db; }
-.difficulty-普及 { background-color: #9b59b6; }
-.difficulty-普及+ { background-color: #e67e22; }
-.difficulty-提高- { background-color: #e74c3c; }
-.difficulty-提高 { background-color: #c0392b; }
-.difficulty-提高+ { background-color: #8e44ad; }
-.difficulty-省选 { background-color: #1abc9c; }
-.difficulty-NOI { background-color: #f39c12; }
+.difficulty-intro      { background-color: #2ecc71; }
+.difficulty-pminus     { background-color: #3498db; }
+.difficulty-puhui      { background-color: #9b59b6; }
+.difficulty-pplus      { background-color: #e67e22; }
+.difficulty-tminus     { background-color: #e74c3c; }
+.difficulty-tigao      { background-color: #c0392b; }
+.difficulty-tplus      { background-color: #8e44ad; }
+.difficulty-shengxuan  { background-color: #1abc9c; }
+.difficulty-noi        { background-color: #f39c12; }
 .status-Accepted { color: #2ecc71; font-weight: bold; }
 .status-Wrong { color: #e74c3c; font-weight: bold; }
 .status-Pending { color: #f39c12; font-weight: bold; }

@@ -6,12 +6,12 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-6">
-        <div class="card">
+        <div class="card shadow-sm">
             <div class="card-header bg-success text-white">
                 <h5 class="mb-0"><i class="bi bi-person-plus"></i> 用户注册</h5>
             </div>
             <div class="card-body">
-                <form method="post">
+                <form method="post" id="register-form">
                     {% csrf_token %}
                     <div class="mb-3">
                         <label for="id_username" class="form-label">用户名</label>
@@ -21,6 +21,27 @@
                         <label for="id_email" class="form-label">邮箱</label>
                         {{ form.email|as_crispy_field }}
                     </div>
+
+                    {% if email_verification_required %}
+                    <div class="mb-3">
+                        <label for="id_verification_code" class="form-label">邮箱验证码</label>
+                        <div class="input-group">
+                            {{ form.verification_code }}
+                            <button type="button" id="send-code-btn"
+                                    class="btn btn-outline-primary"
+                                    data-url="{% url 'send_verification_code' %}">
+                                发送验证码
+                            </button>
+                        </div>
+                        <small class="text-muted" id="send-code-hint">
+                            请先填写邮箱，然后点击「发送验证码」。验证码 10 分钟内有效。
+                        </small>
+                        {% if form.verification_code.errors %}
+                            <div class="text-danger small mt-1">{{ form.verification_code.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
                     <div class="mb-3">
                         <label for="id_nickname" class="form-label">昵称（可选）</label>
                         {{ form.nickname|as_crispy_field }}
@@ -33,6 +54,37 @@
                         <label for="id_password2" class="form-label">确认密码</label>
                         {{ form.password2|as_crispy_field }}
                     </div>
+
+                    {% if captcha_required %}
+                    <div class="mb-3 captcha-block">
+                        <label for="id_captcha_answer" class="form-label">图形验证码</label>
+                        <div class="input-group align-items-center">
+                            <input type="text"
+                                   class="form-control"
+                                   id="id_captcha_answer"
+                                   name="captcha_answer"
+                                   placeholder="请输入图形验证码"
+                                   autocomplete="off"
+                                   required>
+                            <button type="button" class="btn btn-outline-secondary captcha-refresh"
+                                    title="刷新验证码">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                        <img id="captcha-img"
+                             src="{{ captcha_url }}"
+                             alt="图形验证码"
+                             class="mt-2 rounded border"
+                             style="width:180px; height:50px; cursor:pointer;"
+                             title="点击刷新">
+                        <input type="hidden" id="id_captcha_id" name="captcha_id" value="{{ captcha_id }}">
+                        {% if form.captcha_answer.errors %}
+                            <div class="text-danger small mt-1">{{ form.captcha_answer.errors|striptags }}</div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-1">看不清？点击图片或刷新按钮更换验证码。</small>
+                    </div>
+                    {% endif %}
+
                     <button type="submit" class="btn btn-success w-100">注册</button>
                 </form>
                 <div class="mt-3 text-center">
@@ -42,4 +94,103 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const btn = document.getElementById('send-code-btn');
+    const hint = document.getElementById('send-code-hint');
+    const emailInput = document.getElementById('id_email');
+
+    // ---- Captcha refresh support ----
+    const captchaImg = document.getElementById('captcha-img');
+    const captchaId = document.getElementById('id_captcha_id');
+    const captchaUrl = '{{ captcha_url }}';
+
+    function refreshCaptcha() {
+        if (!captchaImg) return;
+        fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+            .then(function (resp) {
+                // Set the image to the new PNG; extract the new challenge_id.
+                const newId = resp.headers.get('X-Captcha-Id') || '';
+                if (newId && captchaId) captchaId.value = newId;
+                return resp.blob();
+            })
+            .then(function (blob) {
+                captchaImg.src = URL.createObjectURL(blob);
+            })
+            .catch(function () {
+                // Fallback: reload the image using a cache-busting query string.
+                captchaImg.src = captchaUrl + '?_=' + Date.now();
+            });
+    }
+    if (captchaImg) captchaImg.addEventListener('click', refreshCaptcha);
+    document.querySelectorAll('.captcha-refresh').forEach(function (el) {
+        el.addEventListener('click', refreshCaptcha);
+    });
+
+    if (!btn || !emailInput) return;
+
+    const originalLabel = btn.innerText;
+    let timerId = null;
+    let remaining = 0;
+
+    function setCooldown(seconds) {
+        remaining = seconds;
+        btn.disabled = true;
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('btn-outline-secondary');
+        btn.innerText = remaining + 's 后重发';
+        clearInterval(timerId);
+        timerId = setInterval(function () {
+            remaining -= 1;
+            if (remaining <= 0) {
+                clearInterval(timerId);
+                btn.disabled = false;
+                btn.classList.remove('btn-outline-secondary');
+                btn.classList.add('btn-outline-primary');
+                btn.innerText = originalLabel;
+            } else {
+                btn.innerText = remaining + 's 后重发';
+            }
+        }, 1000);
+    }
+
+    btn.addEventListener('click', function () {
+        const email = emailInput.value.trim();
+        if (!email) {
+            hint.innerText = '请先填写邮箱后再获取验证码。';
+            hint.classList.remove('text-muted');
+            hint.classList.add('text-danger');
+            emailInput.focus();
+            return;
+        }
+        btn.disabled = true;
+        btn.innerText = '发送中…';
+        const body = new FormData();
+        body.append('email', email);
+        const csrfToken = document.querySelector('#register-form [name=csrfmiddlewaretoken]');
+        if (csrfToken) body.append('csrfmiddlewaretoken', csrfToken.value);
+
+        fetch(btn.dataset.url, { method: 'POST', body: body, credentials: 'same-origin' })
+            .then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
+            .then(function (result) {
+                const data = result.data || {};
+                hint.innerText = data.message || (result.ok ? '已发送，请查收。' : '发送失败。');
+                hint.classList.remove('text-danger', 'text-success');
+                hint.classList.add(result.ok ? 'text-success' : 'text-danger');
+                if (result.ok) setCooldown(60);
+                else { btn.disabled = false; btn.innerText = originalLabel; }
+            })
+            .catch(function () {
+                hint.innerText = '网络错误，请稍后再试。';
+                hint.classList.remove('text-muted', 'text-success');
+                hint.classList.add('text-danger');
+                btn.disabled = false;
+                btn.innerText = originalLabel;
+            });
+    });
+})();
+</script>
 {% endblock %}

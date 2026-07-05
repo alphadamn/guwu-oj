@@ -38,10 +38,12 @@ class Submission(models.Model):
     
     class Meta:
         ordering = ['-created_at']
-    
+        verbose_name = '提交记录'
+        verbose_name_plural = '提交记录'
+
     def __str__(self):
         return f"Submission {self.id} - {self.user.username} - {self.problem.title}"
-    
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         # Clear relevant caches when submission is saved
@@ -95,9 +97,32 @@ class JudgeMachine(models.Model):
 
     class Meta:
         ordering = ['name']
-        verbose_name = 'Judge Machine'
-        verbose_name_plural = 'Judge Machines'
+        verbose_name = '评测机'
+        verbose_name_plural = '评测机'
 
     def __str__(self):
         status = '✓' if self.enabled else '✗'
         return f'{status} {self.name} ({self.host}:{self.port}/{self.db})'
+
+
+class JudgeConfig(models.Model):
+    """Global judge configuration settings."""
+    subprocess_timeout_sec = models.IntegerField(
+        default=5,
+        help_text='Global subprocess timeout in seconds (safety net for all executions)'
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = '评测配置'
+        verbose_name_plural = '评测配置'
+
+    def __str__(self):
+        return f'Judge Config (timeout: {self.subprocess_timeout_sec}s)'
+
+    def save(self, *args, **kwargs):
+        # Ensure only one config record exists
+        self.pk = 1
+        super().save(*args, **kwargs)
+        # Clear cache to force reload of settings
+        cache.delete('judge_config')

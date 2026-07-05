@@ -1,0 +1,14 @@
+{% extends "admin/change_list.html" %}
+{% block object-tools-items %}
+    {{ block.super }}
+    <li>
+        <a class="btn btn-sm btn-outline-primary" href="export/">
+            <i class="bi bi-download"></i> 导出 JSON
+        </a>
+    </li>
+    <li>
+        <a class="btn btn-sm btn-outline-success" href="import/">
+            <i class="bi bi-upload"></i> 导入 JSON
+        </a>
+    </li>
+{% endblock %}

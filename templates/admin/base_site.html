@@ -1,0 +1,238 @@
+{% extends "admin/base.html" %}
+{% load static %}
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+<h1 id="site-name"><a href="{% url 'admin:index' %}">{{ site_header|default:_('Django administration') }}</a></h1>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" type="text/css" href="{% static 'admin/css/calendar_overflow_fix.css' %}">
+<style>
+/* 顶层日历/时钟弹窗宿主：position:fixed + transform:none，绕开 SimpleUI 的 transform 祖先 */
+#__guwu_popup_root{position:fixed !important;top:0 !important;left:0 !important;width:0 !important;height:0 !important;overflow:visible !important;z-index:2147483000 !important;pointer-events:none !important;transform:none !important;-webkit-transform:none !important;will-change:auto !important;contain:none !important;}
+#__guwu_popup_root .calendarbox,
+#__guwu_popup_root .clockbox{position:absolute !important;pointer-events:auto !important;z-index:2147483000 !important;}
+/* 防止 .form-row overflow: hidden 把弹窗裁掉 */
+.form-row, .form-row > div, .form-row .datetime, .datetime{overflow:visible !important;}
+</style>
+{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<script>
+/* ============================================================
+ * Guwu: SimpleUI 下日历/时钟弹窗的定位重写
+ * - inline 注入，不受静态文件缓存影响
+ * - 不阻止 Django 原有的 click / submit 事件；不调用 e.preventDefault/stopPropagation
+ * - 只做三件事：覆盖 openCalendar/openClock/dismissCalendar/dismissClock，
+ *   用 getBoundingClientRect 把弹窗按视口坐标放置，并挂到顶层 #__guwu_popup_root
+ * ============================================================ */
+(function(){
+    'use strict';
+
+    function getPopupRoot(){
+        var root = document.getElementById('__guwu_popup_root');
+        if(!root){
+            root = document.createElement('div');
+            root.id = '__guwu_popup_root';
+            var s = root.style;
+            s.position = 'fixed'; s.top = '0px'; s.left = '0px';
+            s.width = '0px'; s.height = '0px';
+            s.overflow = 'visible'; s.zIndex = '2147483000';
+            s.pointerEvents = 'none'; s.transform = 'none';
+            s.webkitTransform = 'none'; s.willChange = 'auto'; s.contain = 'none';
+            if(document.body && document.body.firstChild){
+                document.body.insertBefore(root, document.body.firstChild);
+            } else if(document.body){
+                document.body.appendChild(root);
+            }
+        }
+        return root;
+    }
+
+    function vpSize(){
+        var d = document.documentElement;
+        return {
+            width: window.innerWidth || d.clientWidth || (document.body && document.body.clientWidth) || 800,
+            height: window.innerHeight || d.clientHeight || (document.body && document.body.clientHeight) || 600
+        };
+    }
+
+    function findLinkForBox(box){
+        if(!box || !box.id) return null;
+        var m = box.id.match(/^(calendar|clock)(?:box)?(\d+)$/i);
+        if(!m) return null;
+        var kind = m[1].toLowerCase(), idx = m[2];
+        if(kind === 'calendar') return document.getElementById('calendarlink' + idx);
+        return document.getElementById('clocklink' + idx);
+    }
+
+    function placePopup(box, link, xOffset, defaultTopOffset){
+        if(!box) return;
+        if(!link) link = findLinkForBox(box);
+        if(!link) return;
+
+        var root = getPopupRoot();
+        if(box.parentNode !== root){
+            try{ root.appendChild(box); }catch(e){}
+        }
+        box.style.position = 'absolute';
+        box.style.transform = 'none'; box.style.webkitTransform = 'none';
+        box.style.willChange = 'auto'; box.style.margin = '0';
+        box.style.float = 'none';
+        box.style.display = 'block';
+        box.style.visibility = 'visible';
+        box.style.pointerEvents = 'auto'; box.style.zIndex = '2147483000';
+
+        var v = vpSize();
+        var rect = link.getBoundingClientRect();
+        var boxH = box.offsetHeight || 260;
+        var boxW = box.offsetWidth || 300;
+        var topOffset = (typeof defaultTopOffset === 'number') ? defaultTopOffset : 75;
+        var gap = 8;
+
+        var top;
+        if(rect.top - topOffset >= 8){
+            top = rect.top - topOffset;
+        } else if(rect.bottom + gap + boxH <= v.height - 8){
+            top = rect.bottom + gap;
+        } else {
+            top = 8;
+        }
+        if(top + boxH > v.height - 8){
+            top = Math.max(8, v.height - boxH - 8);
+        }
+
+        var left = rect.left + (typeof xOffset === 'number' ? xOffset : 17);
+        if(left + boxW > v.width - 8) left = Math.max(8, v.width - boxW - 8);
+        if(left < 8) left = 8;
+
+        box.style.top = Math.round(top) + 'px';
+        box.style.left = Math.round(left) + 'px';
+
+        setTimeout(function(){
+            try{
+                if(!box || box.style.display === 'none') return;
+                var br = box.getBoundingClientRect();
+                var v2 = vpSize();
+                if(br.bottom > v2.height - 4) box.style.top = Math.max(4, v2.height - br.height - 4) + 'px';
+                if(br.top < 4) box.style.top = '4px';
+                if(br.right > v2.width - 4) box.style.left = Math.max(4, v2.width - br.width - 4) + 'px';
+                if(br.left < 4) box.style.left = '4px';
+            }catch(e){}
+        }, 20);
+    }
+
+    function applyToAllNewBoxes(){
+        var ids = ['calendarbox', 'clockbox'];
+        for(var k = 0; k < ids.length; k++){
+            for(var i = 0; i < 30; i++){
+                var el = document.getElementById(ids[k] + i);
+                if(!el) break;
+                if(el.style.display !== 'none' && el.getAttribute('data-guwu-placed') !== '1'){
+                    el.setAttribute('data-guwu-placed', '1');
+                    var link = findLinkForBox(el);
+                    placePopup(el, link, 17, ids[k] === 'calendarbox' ? 75 : 30);
+                }
+            }
+        }
+    }
+
+    function patch(){
+        if(window.DateTimeShortcuts && !window.DateTimeShortcuts.__guwuPatched){
+            window.DateTimeShortcuts.__guwuPatched = true;
+
+            // 日历
+            var origOpenCal = window.DateTimeShortcuts.openCalendar;
+            window.DateTimeShortcuts.openCalendar = function(num){
+                // 1) 先让 Django 原函数执行（它会设置 display + 绑定 dismiss 监听）
+                try{ origOpenCal.call(this, num); }catch(e){}
+                // 2) 再用我们的坐标覆盖
+                try{
+                    var calBox = document.getElementById(window.DateTimeShortcuts.calendarDivName1 + num);
+                    var calLink = document.getElementById(window.DateTimeShortcuts.calendarLinkName + num);
+                    if(calBox){
+                        calBox.style.display = 'block';
+                        calBox.style.visibility = 'visible';
+                        placePopup(calBox, calLink, 17, 75);
+                    }
+                }catch(e){}
+            };
+
+            // 时钟
+            var origOpenClock = window.DateTimeShortcuts.openClock;
+            window.DateTimeShortcuts.openClock = function(num){
+                try{ origOpenClock.call(this, num); }catch(e){}
+                try{
+                    var clockBox = document.getElementById(window.DateTimeShortcuts.clockDivName + num);
+                    var clockLink = document.getElementById(window.DateTimeShortcuts.clockLinkName + num);
+                    if(clockBox){
+                        clockBox.style.display = 'block';
+                        clockBox.style.visibility = 'visible';
+                        placePopup(clockBox, clockLink, 17, 30);
+                    }
+                }catch(e){}
+            };
+
+            // dismiss：保持与 open 对称；display:none + visibility:hidden
+            window.DateTimeShortcuts.dismissCalendar = function(num){
+                try{
+                    var box = document.getElementById(window.DateTimeShortcuts.calendarDivName1 + num);
+                    if(box){ box.style.display = 'none'; box.style.visibility = 'hidden'; }
+                    document.removeEventListener('click', window.DateTimeShortcuts.dismissCalendarFunc[num]);
+                }catch(e){}
+            };
+            window.DateTimeShortcuts.dismissClock = function(num){
+                try{
+                    var box = document.getElementById(window.DateTimeShortcuts.clockDivName + num);
+                    if(box){ box.style.display = 'none'; box.style.visibility = 'hidden'; }
+                    document.removeEventListener('click', window.DateTimeShortcuts.dismissClockFunc[num]);
+                }catch(e){}
+            };
+        }
+
+        // MutationObserver 兜底
+        if(!window.__guwuMo){
+            window.__guwuMo = true;
+            if(typeof MutationObserver !== 'undefined'){
+                var mo = new MutationObserver(function(mutations){
+                    for(var i = 0; i < mutations.length; i++){
+                        var added = mutations[i].addedNodes;
+                        for(var j = 0; j < added.length; j++){
+                            var n = added[j];
+                            if(n.nodeType === 1){
+                                var hit = false;
+                                if(n.id && /^(calendarbox\d+|clockbox\d+)$/i.test(n.id)) hit = true;
+                                if(!hit && n.querySelector && n.querySelector('[id^="calendarbox"], [id^="clockbox"]')) hit = true;
+                                if(hit){
+                                    try{ applyToAllNewBoxes(); }catch(e){}
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+                try{ mo.observe(document.body, { childList: true, subtree: true }); }catch(e){}
+            }
+        }
+        setTimeout(applyToAllNewBoxes, 30);
+        setTimeout(applyToAllNewBoxes, 300);
+        setTimeout(applyToAllNewBoxes, 2000);
+    }
+
+    if(document.readyState === 'complete' || document.readyState === 'interactive'){
+        patch();
+    } else {
+        document.addEventListener('DOMContentLoaded', patch, { once: true });
+        window.addEventListener('load', patch, { once: true });
+    }
+    setTimeout(patch, 100);
+    setTimeout(patch, 1000);
+})();
+</script>
+{% endblock %}
