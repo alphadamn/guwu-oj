@@ -46,9 +46,12 @@ def email_config():
 def apply_email_settings() -> None:
     """Push :class:`~devlog.models.EmailConfig` into ``django.conf.settings``.
 
-    Called before every send so that admin edits take effect without a gunicorn restart.
-    Any field left blank on the admin (except ``host`` / ``port`` / ``from_email``)
-    keeps the original ``settings.EMAIL_*`` value.
+    Called before every send so that admin edits take effect without a
+    gunicorn restart. ``email_host_password`` is treated specially: the
+    environment variable ``EMAIL_HOST_PASSWORD`` is the canonical source of
+    truth; the database field is only used as an *override* when it is
+    explicitly non-empty, so a commit to ``.env`` never has to wait on a DB
+    change.
     """
     cfg = email_config()
     if cfg is None:
@@ -57,8 +60,13 @@ def apply_email_settings() -> None:
     new_backend = (cfg.email_backend or '').strip() or settings.EMAIL_BACKEND
     new_host = (cfg.email_host or '').strip() or settings.EMAIL_HOST
     new_port = int(cfg.email_port or 0) or settings.EMAIL_PORT
-    new_user = cfg.email_host_user if cfg.email_host_user is not None else ''
-    new_password = cfg.email_host_password if cfg.email_host_password is not None else ''
+    new_user = (cfg.email_host_user or '').strip() or settings.EMAIL_HOST_USER
+    # Prefer the env var (canonical), fall back to the DB field when the admin
+    # explicitly set one; this keeps secrets in the .env file while still
+    # allowing an operator to override the SMTP password from the admin UI.
+    env_password = getattr(settings, 'EMAIL_HOST_PASSWORD', '') or ''
+    db_password = (cfg.email_host_password or '').strip()
+    new_password = db_password or env_password
     new_timeout = int(cfg.email_timeout or 0) or getattr(settings, 'EMAIL_TIMEOUT', 20)
 
     try:

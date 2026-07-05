@@ -243,7 +243,12 @@ class CaptchaConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
 
 @admin.register(EmailConfig)
 class EmailConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
-    """SMTP / 发件人 / 管理员收件人配置 — 保存后立即生效（无需重启）。"""
+    """SMTP / 发件人 / 管理员收件人配置 — 保存后立即生效（无需重启）。
+
+    ``email_host_password`` 是 *可选覆盖*：实际密码优先来自
+    ``.env`` / 环境变量 ``EMAIL_HOST_PASSWORD``，只有当数据库中
+    有非空的值时才会覆盖它。这样敏感凭据只保留在系统环境中。
+    """
 
     fieldsets = (
         (
@@ -255,7 +260,9 @@ class EmailConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         (
             '账号',
             {'fields': ('email_host_user', 'email_host_password'),
-             'description': '邮箱用户名 / 授权码。'},
+             'description': '邮箱用户名 / 授权码。密码字段 *不* 在列表中展示，'
+                            '仅作为管理员可选覆盖。实际密码优先来自 ``.env`` 的 '
+                            '``EMAIL_HOST_PASSWORD``。'},
         ),
         (
             '展示 / 收件人',
@@ -274,6 +281,21 @@ class EmailConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         'email_timeout',
         'updated_at',
     )
+
+    # Password-style widget so the secret is not shown as plain text.
+    def get_form(self, request, obj=None, **kwargs):
+        from django.forms import PasswordInput
+        form_class = super().get_form(request, obj=obj, **kwargs)
+        form_class.base_fields['email_host_password'].widget = PasswordInput(
+            render_value=True, attrs={'autocomplete': 'new-password'}
+        )
+        return form_class
+
+    def get_queryset(self, request):
+        # Never fetch the password column for the changelist.
+        qs = super().get_queryset(request)
+        return qs.defer('email_host_password')
+
     actions = ('send_test_email',)
 
     @admin.action(description='发送测试邮件（给管理员收件人 + 当前用户邮箱）')

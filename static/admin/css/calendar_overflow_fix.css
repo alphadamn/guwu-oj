@@ -1,0 +1,32 @@
+/* 修复 Django admin 日期/时间弹窗被 .form-row 的 overflow:hidden 裁掉 */
+.form-row,
+.form-row > div,
+.form-row .datetime,
+.datetime {
+    overflow: visible !important;
+}
+
+/* 顶层日历/时钟弹窗宿主 */
+#__guwu_popup_root {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: visible !important;
+    z-index: 2147483000 !important;
+    pointer-events: none !important;
+    transform: none !important;
+    -webkit-transform: none !important;
+    will-change: auto !important;
+    contain: none !important;
+}
+#__guwu_popup_root .calendarbox,
+#__guwu_popup_root .clockbox {
+    position: absolute !important;
+    pointer-events: auto !important;
+    z-index: 2147483000 !important;
+    /* 注意：不再用 display: block !important;
+       否则 dismissCalendar 把 display 设为 none 会被覆盖
+       导致弹窗永远关不掉。*/
+}
