@@ -3,7 +3,18 @@
     height: 520px;
     border: 1px solid #dee2e6;
     border-radius: 6px;
-    overflow: hidden;
+    /* overflow: visible prevents error details popup from being cut off
+       at the edge of the editor container */
+    overflow: visible;
+    position: relative;
+}
+
+/* Monaco internal popup widgets — ensure they render above everything */
+.monaco-editor-host .monaco-hover,
+.monaco-editor-host .zone-widget,
+.monaco-editor-host .monaco-zone,
+.monaco-editor-host .monaco-editor-overlay-message-widget {
+    z-index: 100000 !important;
 }
 
 .monaco-editor-toolbar {

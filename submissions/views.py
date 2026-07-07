@@ -2,6 +2,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, JsonResponse
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 from django_ratelimit.decorators import ratelimit
@@ -172,22 +173,40 @@ def submission_list(request):
 
 @login_required
 def all_submissions(request):
-    submissions = Submission.objects.all()
-    
+    submissions = Submission.objects.select_related(
+        'user', 'problem'
+    ).all()
+
     # Filter by problem
     problem_id = request.GET.get('problem')
     if problem_id:
         submissions = submissions.filter(problem_id=problem_id)
-    
+
     # Filter by user
     username = request.GET.get('user')
     if username:
         submissions = submissions.filter(user__username=username)
-    
+
     # Filter by status
     status = request.GET.get('status')
     if status:
         submissions = submissions.filter(status=status)
-    
-    submissions = submissions.order_by('-created_at')[:100]
-    return render(request, 'submissions/all_list.html', {'submissions': submissions})
+
+    submissions = submissions.order_by('-created_at')
+
+    # Pagination: 20 records per page instead of flat [:100]
+    paginator = Paginator(submissions, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    # Preserve filter query string across pagination links
+    query_params = request.GET.copy()
+    query_params.pop('page', None)
+    query_string = query_params.urlencode()
+
+    return render(request, 'submissions/all_list.html', {
+        'page_obj': page_obj,
+        'submissions': page_obj,  # Backward-compat alias for template
+        'is_paginated': page_obj.has_other_pages(),
+        'query_string': query_string,
+    })

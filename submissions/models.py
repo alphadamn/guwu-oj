@@ -12,9 +12,12 @@ class Submission(models.Model):
         ('C++', 'C++'),
         ('Python', 'Python'),
         ('Java', 'Java'),
-        ('Assembly', 'Assembly'),
-        ('Rust', 'Rust'),
+        ('JavaScript', 'JavaScript'),
         ('Golang', 'Golang'),
+        ('Rust', 'Rust'),
+        ('Ruby', 'Ruby'),
+        ('Kotlin', 'Kotlin'),
+        ('Assembly', 'Assembly'),
     ]
     
     STATUS_CHOICES = [
@@ -30,7 +33,7 @@ class Submission(models.Model):
     problem = models.ForeignKey(Problem, on_delete=models.CASCADE, related_name='submissions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='submissions')
     code = models.TextField()
-    language = models.CharField(max_length=10, choices=LANGUAGE_CHOICES)
+    language = models.CharField(max_length=32, choices=LANGUAGE_CHOICES)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='Pending')
     runtime = models.IntegerField(blank=True, null=True)  # in milliseconds
     memory = models.IntegerField(blank=True, null=True)  # in KB
@@ -46,12 +49,19 @@ class Submission(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Clear relevant caches when submission is saved
-        cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
-        cache.delete(f'problem_pass_rate_{self.problem.id}')  # Clear pass rate cache for this problem
-        cache.delete('leaderboard_users')  # Clear leaderboard cache
-        cache.delete_pattern('problem_list_query_*')  # Clear problem list query caches
-        cache.delete('home_stats')  # Clear home stats cache
+        # Clear only caches directly related to this problem.
+        # Avoids Redis KEYS (O(N) blocking) used by delete_pattern;
+        # also avoids invalidating unrelated keys on every submission.
+        problem_id = self.problem_id
+        cache.delete(f'problem_pass_rate_{problem_id}')
+        # Use SCAN-based iteration (non-blocking) for pattern matches.
+        try:
+            from django_redis import get_redis_connection
+            redis_conn = get_redis_connection('default')
+            for key in redis_conn.scan_iter(match=f'problem_list_query_{problem_id}_*', count=200):
+                redis_conn.delete(key)
+        except Exception:
+            pass  # Non-redis backend or unavailable — fail silently on cache cleanup
 
 
 class SubmissionTestResult(models.Model):
@@ -121,8 +131,21 @@ class JudgeConfig(models.Model):
         return f'Judge Config (timeout: {self.subprocess_timeout_sec}s)'
 
     def save(self, *args, **kwargs):
-        # Ensure only one config record exists
-        self.pk = 1
-        super().save(*args, **kwargs)
+        # Thread-safe singleton: use a transaction + get_or_create on a
+        # fixed pk. The naive self.pk = 1 before save is a race condition.
+        from django.db import transaction
+        with transaction.atomic():
+            if not self.pk:
+                existing, created = JudgeConfig.objects.get_or_create(pk=1)
+                if not created:
+                    existing.subprocess_timeout_sec = self.subprocess_timeout_sec
+                    existing.save()
+                    self.pk = existing.pk
+                    return
+            else:
+                # Existing record — enforce pk=1 to prevent multiple rows
+                if self.pk != 1:
+                    self.pk = 1
+                super().save(*args, **kwargs)
         # Clear cache to force reload of settings
         cache.delete('judge_config')

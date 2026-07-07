@@ -174,30 +174,38 @@ def registration_enabled():
 # Health / alerting helpers.
 # ---------------------------------------------------------------------
 
-def _send_health_alert(component_name, headline, detail_html=None, detail_plain=None):
-    """Send a styled HTML alert email — from a background thread.
+def _send_health_alert(component_name, headline, detail_html=None, detail_plain=None, sync=False):
+    """Send a styled HTML alert email.
 
     Recipients = Django ``settings.MANAGERS`` union ``EmailConfig.admin_recipients``
     (the latter is editable from the admin panel).
+
+    Args:
+        component_name: Human-readable component name for the alert headline.
+        headline: One-line alert summary used in the body.
+        detail_html: Optional rich-text details (inserted into the HTML body).
+        detail_plain: Optional plain-text details (included after the separator).
+        sync: If True, send synchronously (important for cron jobs / one-off
+            processes where the parent process might exit before a daemon
+            thread finishes). Default False (background thread).
     """
-    print('send')
     try:
         cfg = load_health_config()
         if cfg is not None and not getattr(cfg, 'health_alert_enabled', True):
-            print(5)
             return
     except BaseException:
         pass
 
     # --- Apply admin-managed SMTP settings (so admin changes take effect) ---
-    print(6)
     extra_recipients: list[str] = []
+    site_name = 'Guwu Online Judge'
     try:
         from devlog.email_config_helpers import (
             apply_email_settings, site_name_for_email, admin_recipient_list,
         )
         apply_email_settings()
         site_name = site_name_for_email()
+        extra_recipients = admin_recipient_list()
     except BaseException:
         pass
 
@@ -279,21 +287,53 @@ def _send_health_alert(component_name, headline, detail_html=None, detail_plain=
         plain_lines.extend(["", "——", detail_plain])
     plain = "\n".join(plain_lines)
     subject = f"[{site_name}] 自检警告：{component_name}"
-    print(html)
+
+    # --- Compose recipient list: MANAGERS + admin_recipient_list ---
+    recipients: list[str] = []
+    try:
+        from django.conf import settings as _dj_settings
+        for entry in getattr(_dj_settings, 'MANAGERS', []) or []:
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                recipients.append(str(entry[1]))
+            elif isinstance(entry, str) and '@' in entry:
+                recipients.append(entry)
+    except BaseException:
+        pass
+    if extra_recipients:
+        recipients.extend(extra_recipients)
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_recipients: list[str] = []
+    for addr in recipients:
+        if addr and addr not in seen:
+            seen.add(addr)
+            unique_recipients.append(addr)
+
     def _do_send():
+        if not unique_recipients:
+            return
         try:
-            # Mail managers (Django's builtin mailing)
-            try:
-                print(1112)
-                mail_managers(subject, plain, html_message=html, fail_silently=True)
-            except BaseException:
-                pass
+            from django.core.mail import EmailMultiAlternatives
+            from django.conf import settings as _dj_settings
+            from_email = getattr(_dj_settings, 'DEFAULT_FROM_EMAIL', None) or None
+            msg = EmailMultiAlternatives(
+                subject=subject,
+                body=plain,
+                from_email=from_email,
+                to=unique_recipients,
+            )
+            msg.attach_alternative(html, "text/html")
+            msg.send(fail_silently=True)
         except BaseException:
             pass
 
-    thread = threading.Thread(target=_do_send, name="devlog-health-alert", daemon=True)
-    thread.start()
-    thread.join(timeout=1.0)
+    if sync:
+        _do_send()
+    else:
+        thread = threading.Thread(
+            target=_do_send, name="devlog-health-alert", daemon=True,
+        )
+        thread.start()
 
 
 def _check_judging_system(max_wait_seconds=None):
@@ -371,12 +411,22 @@ int main() {
 
 
 def _refresh_auto_components(force_refresh=False):
-    print('aaaa')
+    """Entry point for the health-check refresh.
+
+    * ``force_refresh=True`` (cron jobs / admin button): run the probes
+      synchronously in the caller's thread. Any exceptions raised by the
+      probes are logged (but not re-raised) so the job shows as completed.
+    * ``force_refresh=False`` (page view): launch a short-lived background
+      thread that only re-runs the probes when the cached results are stale.
+    """
     if force_refresh:
         try:
-            _do_refresh_auto_components(force_refresh=True)
-        except BaseException:
-            pass
+            _do_refresh_auto_components(force_refresh=True, sync_alert=True)
+        except BaseException as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "Health-check refresh failed: %s", exc, exc_info=True,
+            )
         return
 
     try:
@@ -400,9 +450,16 @@ def _refresh_auto_components(force_refresh=False):
     t.join(timeout=0.5)
 
 
-def _do_refresh_auto_components(force_refresh=False):
-    """Probe all auto-check components. Tuning knobs come from
-    :class:`CacheConfig` and :class:`HealthCheckConfig`."""
+def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
+    """Probe all auto-check components.
+
+    When ``force_refresh=False`` the cached result is returned if present
+    (avoiding re-probes on every page view). ``force_refresh=True`` (used
+    by the cron job and admin button) always re-probes.
+
+    ``sync_alert=True`` tells ``_send_health_alert`` to send mail
+    synchronously (important for one-off processes like cron jobs).
+    """
     health_cfg = load_health_config()
     cache_cfg = load_cache_config()
 
@@ -436,7 +493,6 @@ def _do_refresh_auto_components(force_refresh=False):
 
     auto = list(ServiceComponent.objects.filter(auto_check=True))
     if not auto:
-        print(3)
         return
 
     cache_key = 'devlog_health_checks'
@@ -459,9 +515,10 @@ def _do_refresh_auto_components(force_refresh=False):
             checks['database'] = False
             _send_health_alert(
                 component_name='数据库',
-                headline='数据库无法响应健康检查 SQL（SELECT 1）',
-                detail_html=f'<br><strong>异常：</strong><code style="color:#991b1b;">{e}</code>',
+                headline='数据库无法响应健康检查 SQL (SELECT 1)',
+                detail_html=f'<br/><strong>异常：</strong><code style="color:#991b1b;">{e}</code>',
                 detail_plain=f'异常：{e}',
+                sync=sync_alert,
             )
         # redis / cache
         try:
@@ -475,20 +532,20 @@ def _do_refresh_auto_components(force_refresh=False):
             _send_health_alert(
                 component_name='Redis / 缓存',
                 headline='缓存 (Redis) 写入或读取失败',
-                detail_html=f'<br><strong>异常：</strong><code style="color:#991b1b;">{e}</code>',
+                detail_html=f'<br/><strong>异常：</strong><code style="color:#991b1b;">{e}</code>',
                 detail_plain=f'异常：{e}',
+                sync=sync_alert,
             )
         # judging system
         judge_ac_count = _check_judging_system()
-        print(judge_ac_count)
         checks['judge'] = judge_ac_count
         if judge_ac_count <= 1:
-            print('send')
             _send_health_alert(
                 component_name='测评系统',
                 headline='健康检查用例在测评系统中通过率过低',
-                detail_html=f'<br><strong>通过数量：</strong><code style="color:#991b1b;">{judge_ac_count}</code> （预期 ≥ {judge_pass}）',
-                detail_plain=f'通过数量：{judge_ac_count}（预期 ≥ {judge_pass}）',
+                detail_html=f'<br/><strong>通过数量：</strong><code style="color:#991b1b;">{judge_ac_count}</code> (预期 >= {judge_pass})',
+                detail_plain=f'通过数量：{judge_ac_count} (预期 >= {judge_pass})',
+                sync=sync_alert,
             )
 
         try:

@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.db.models import Count
 from django.utils.translation import gettext_lazy as _
@@ -7,7 +7,35 @@ from .models import User, UserPunishment, IpBan
 
 
 # ---------------------------------------------------------------------------
-# User admin (new punishment fields + bulk actions)
+# Permission helpers
+# ---------------------------------------------------------------------------
+# Fields that can lead to privilege escalation. Only superusers may modify
+# these directly. (Django's auth groups / user_permissions also fall into
+# this category because they could be used to grant dangerous permissions.)
+PRIVILEGE_ESCALATION_FIELDS = (
+    'is_staff', 'is_superuser', 'groups', 'user_permissions',
+)
+
+
+def _is_superuser(request) -> bool:
+    return bool(getattr(request, 'user', None) and request.user.is_active
+                and request.user.is_superuser)
+
+
+def _has_userpunishment_perm(request, action: str = 'change') -> bool:
+    """Check if current user has users.{action}_userpunishment."""
+    return bool(getattr(request, 'user', None) and request.user.is_active
+                and request.user.has_perm(f'users.{action}_userpunishment'))
+
+
+def _has_ipban_perm(request, action: str = 'change') -> bool:
+    """Check if current user has users.{action}_ipban."""
+    return bool(getattr(request, 'user', None) and request.user.is_active
+                and request.user.has_perm(f'users.{action}_ipban'))
+
+
+# ---------------------------------------------------------------------------
+# User admin
 # ---------------------------------------------------------------------------
 
 @admin.register(User)
@@ -97,6 +125,113 @@ class UserAdmin(BaseUserAdmin):
         }),
     )
 
+    # ------ Security overrides ----------------------------------------------
+    def get_readonly_fields(self, request, obj=None):
+        base = tuple(super().get_readonly_fields(request, obj))
+        extra = []
+
+        # 1. Privilege-escalation fields: only superusers can edit.
+        if not _is_superuser(request):
+            extra.extend(PRIVILEGE_ESCALATION_FIELDS)
+
+        # 2. Punishment fields on User: editable if user has
+        #    users.delete_userpunishment permission (unban = delete/撤销).
+        can_unban = _is_superuser(request) or _has_userpunishment_perm(request, 'delete')
+        if not can_unban:
+            extra.extend([
+                'is_permanently_banned', 'banned_until', 'banned_reason',
+                'disabled_features', 'disabled_features_until',
+            ])
+
+        return base + tuple(extra)
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        if _is_superuser(request):
+            return fieldsets
+        # Hide the "password" reset field for non-superusers on existing
+        # users so they cannot reset another user's password via the admin.
+        result = []
+        for title, conf in fieldsets:
+            new_fields = []
+            for f in conf.get('fields', ()):
+                if isinstance(f, (list, tuple)):
+                    cleaned = tuple(x for x in f if x != 'password')
+                    new_fields.append(cleaned if cleaned else f)
+                elif f == 'password':
+                    continue
+                else:
+                    new_fields.append(f)
+            if new_fields:
+                result.append((title, {**conf, 'fields': tuple(new_fields)}))
+        return result
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+
+        # 1. Privilege-escalation actions: only superusers.
+        privilege_actions = {'grant_staff', 'revoke_staff'}
+        # 2. Actions that create new punishment records (needs add).
+        add_punishment_actions = {
+            'ban_permanently', 'ban_7_days', 'ban_30_days',
+            'disable_submissions_7_days',
+        }
+        # 3. Action that clears punishment status (needs delete).
+        unban_action = {'unban'}
+
+        if not _is_superuser(request):
+            for key in privilege_actions:
+                actions.pop(key, None)
+
+        can_add_punishment = (
+            _is_superuser(request)
+            or _has_userpunishment_perm(request, 'add')
+        )
+        if not can_add_punishment:
+            for key in add_punishment_actions:
+                actions.pop(key, None)
+
+        can_delete_punishment = (
+            _is_superuser(request)
+            or _has_userpunishment_perm(request, 'delete')
+        )
+        if not can_delete_punishment:
+            for key in unban_action:
+                actions.pop(key, None)
+
+        return actions
+
+    def has_change_permission(self, request, obj=None):
+        if not super().has_change_permission(request, obj):
+            return False
+        if _is_superuser(request):
+            return True
+        # Non-superusers cannot edit a superuser at all.
+        if obj is not None and getattr(obj, 'is_superuser', False):
+            return False
+        return True
+
+    def save_model(self, request, obj, form, change):
+        if _is_superuser(request):
+            super().save_model(request, obj, form, change)
+            return
+
+        # Non-superusers: silently drop any attempt to modify privilege-
+        # escalation fields in case get_readonly_fields was somehow bypassed
+        # (e.g. a crafted POST). We re-read the DB values for those fields.
+        if change and obj.pk:
+            try:
+                original = User.objects.only(*PRIVILEGE_ESCALATION_FIELDS).get(pk=obj.pk)
+                for field in PRIVILEGE_ESCALATION_FIELDS:
+                    setattr(obj, field, getattr(original, field))
+            except User.DoesNotExist:
+                pass
+        else:
+            # New users created by non-superusers: never grant staff.
+            obj.is_staff = False
+            obj.is_superuser = False
+        super().save_model(request, obj, form, change)
+
     # ------ Helpers ---------------------------------------------------------
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -148,11 +283,17 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='设为管理员')
     def grant_staff(self, request, queryset):
+        if not _is_superuser(request):
+            self.message_user(request, '仅超级用户可执行此操作。', level=messages.ERROR)
+            return
         updated = queryset.update(is_staff=True)
         self.message_user(request, f'已将 {updated} 个用户设为管理员。')
 
     @admin.action(description='取消管理员')
     def revoke_staff(self, request, queryset):
+        if not _is_superuser(request):
+            self.message_user(request, '仅超级用户可执行此操作。', level=messages.ERROR)
+            return
         updated = queryset.exclude(pk=request.user.pk).update(is_staff=False)
         self.message_user(request, f'已取消 {updated} 个用户的管理员权限。')
 
@@ -180,6 +321,9 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='永久封禁')
     def ban_permanently(self, request, queryset):
+        if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
+            self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
+            return
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_PERMANENT_BAN, days=None, feature='',
@@ -187,6 +331,9 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='临时封禁 7 天')
     def ban_7_days(self, request, queryset):
+        if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
+            self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
+            return
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_TEMP_BAN, days=7, feature='',
@@ -194,6 +341,9 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='临时封禁 30 天')
     def ban_30_days(self, request, queryset):
+        if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
+            self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
+            return
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_TEMP_BAN, days=30, feature='',
@@ -201,7 +351,9 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='解除封禁 / 恢复提交权限')
     def unban(self, request, queryset):
-        from django.utils import timezone
+        if not (_is_superuser(request) or _has_userpunishment_perm(request, 'delete')):
+            self.message_user(request, '需要用户处罚删除权限才能执行此操作。', level=messages.ERROR)
+            return
         updated = queryset.exclude(pk=request.user.pk).update(
             is_permanently_banned=False,
             banned_until=None,
@@ -213,6 +365,9 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='禁止提交题目 7 天')
     def disable_submissions_7_days(self, request, queryset):
+        if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
+            self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
+            return
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_FEATURE, days=7, feature='submit',
@@ -220,7 +375,7 @@ class UserAdmin(BaseUserAdmin):
 
 
 # ---------------------------------------------------------------------------
-# UserPunishment: historical log of every ban / feature restriction
+# UserPunishment admin — governed by Django auth permissions
 # ---------------------------------------------------------------------------
 
 class UserPunishmentAdmin(admin.ModelAdmin):
@@ -250,7 +405,7 @@ admin.site.register(UserPunishment, UserPunishmentAdmin)
 
 
 # ---------------------------------------------------------------------------
-# IpBan
+# IpBan admin — governed by Django auth permissions
 # ---------------------------------------------------------------------------
 
 class IpBanAdmin(admin.ModelAdmin):

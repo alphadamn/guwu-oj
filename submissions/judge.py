@@ -45,7 +45,7 @@ from .sandbox import (
 )
 
 JUDGED_LANGUAGES = {"C++", "Python", "Java", "C", "Assembly", "Rust",
-                    "Golang", "JavaScript", "TypeScript", "Ruby", "Kotlin"}
+                    "Golang", "JavaScript", "Ruby", "Kotlin"}
 COMPILE_TIMEOUT_SEC = 30
 HOST_TIMEOUT_SAFETY_MARGIN_SEC = 1.0
 MAX_STORED_OUTPUT_LEN = 4000
@@ -58,7 +58,6 @@ LANG_IMAGE = {
     "Python": "oj-python:latest",
     "Java": "oj-java:latest",
     "JavaScript": "oj-other:latest",
-    "TypeScript": "oj-other:latest",
     "Golang": "oj-other:latest",
     "Rust": "oj-other:latest",
     "Ruby": "oj-other:latest",
@@ -523,14 +522,6 @@ def judge_submission(submission_id):
                     submission.save(update_fields=["status"])
                     return submission
                 run_fn = lambda stdin: runner.run_executable(["java", class_name], stdin)
-
-            elif submission.language == "TypeScript":
-                _, err = runner.compile_typescript(submission.code)
-                if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
-                run_fn = lambda stdin: runner.run_executable(["node", "main.js"], stdin)
 
             elif submission.language == "Kotlin":
                 _, err = runner.compile_kotlin(submission.code)
