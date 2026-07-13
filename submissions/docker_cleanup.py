@@ -60,7 +60,7 @@ def cleanup_stale_judge_containers(
 ):
     try:
         list_res = subprocess.run(
-            ["docker", "ps", "-q"], capture_output=True, text=True, timeout=5
+            ["docker", "ps", "-aq"], capture_output=True, text=True, timeout=5
         )
         for cid in list_res.stdout.strip().splitlines():
             if not cid:
@@ -90,4 +90,5 @@ def cleanup_stale_judge_containers(
                     cid, running_seconds,
                 )
     except (subprocess.TimeoutExpired, OSError):
-        logger.exception("Judge container cleanup failed")
+        logger.exception("Judge container cleanup failed trying backup")
+        subprocess.run(['docker', 'rm', '-f', '$(docker ps -aq)'])
