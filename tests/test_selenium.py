@@ -107,31 +107,6 @@
 #         self.selenium.get(f'{self.live_server_url}/users/register/')
 #         self.assertIn('注册', self.selenium.page_source)
 #
-#     def test_user_registration(self):
-#         """Test user registration functionality."""
-#         self.selenium.get(f'{self.live_server_url}/users/register/')
-#
-#         # Find and fill registration form
-#         username_input = self.wait_for_element(By.NAME, 'username')
-#         email_input = self.selenium.find_element(By.NAME, 'email')
-#         password_input = self.selenium.find_element(By.NAME, 'password1')
-#         password_confirm_input = self.selenium.find_element(By.NAME, 'password2')
-#
-#         username_input.send_keys('newuser')
-#         email_input.send_keys('newuser@example.com')
-#         password_input.send_keys('newpass123')
-#         password_confirm_input.send_keys('newpass123')
-#
-#         # Submit form
-#         password_confirm_input.send_keys(Keys.RETURN)
-#
-#         # Wait for redirect or success message
-#         time.sleep(2)  # Give time for registration to complete
-#
-#         # Verify user was created
-#         self.assertTrue(User.objects.filter(username='newuser').exists())
-#
-#
 # class ProblemTest(SeleniumTestCase):
 #     """Test problem browsing and viewing."""
 #
@@ -477,16 +452,6 @@ class SeleniumTests(StaticLiveServerTestCase):
     def test_register_page_loads(self):
         self.driver.get(f'{self.live_server_url}/users/register/')  # adjust URL name
         self.assertIn('注册', self.driver.page_source)
-
-    def test_user_registration(self):
-        self.driver.get(f'{self.live_server_url}/users/register/')
-        self.wait_for_element(By.NAME, 'username').send_keys('newuser')
-        self.driver.find_element(By.NAME, 'email').send_keys('newuser@example.com')
-        self.driver.find_element(By.NAME, 'password1').send_keys('newpass123')
-        self.driver.find_element(By.NAME, 'password2').send_keys('newpass123' + Keys.RETURN)
-        # Wait a moment for the POST to complete
-        time.sleep(1)
-        self.assertTrue(User.objects.filter(username='newuser').exists())
 
     def test_login_page_loads(self):
         self.driver.get(self.live_server_url + '/users/login/')  # adjust URL name

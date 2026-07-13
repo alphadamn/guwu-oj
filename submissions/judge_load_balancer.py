@@ -41,9 +41,7 @@ class JudgeLoadBalancer:
             'socket_timeout': 3,
             'decode_responses': decode_responses,
         }
-        password = os.environ.get('RQ_REDIS_PASSWORD', '')
-        if password:
-            kwargs['password'] = password
+        kwargs['password'] = settings.RQ_REDIS_CONNECTION_KWARGS['password']
         kwargs.update(settings.RQ_REDIS_CONNECTION_KWARGS)
         return redis.Redis(**kwargs)
 
