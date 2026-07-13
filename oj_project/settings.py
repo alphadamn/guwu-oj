@@ -2,7 +2,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -114,10 +114,25 @@ def _redis_tls_kwargs(enabled, ca_cert_path, direct=False):
     return kwargs
 
 
+def _rq_redis_password():
+    password = os.environ.get('RQ_REDIS_PASSWORD', '')
+    if DEMO_MODE or TEST_MODE:
+        return password
+    if len(password) < 12:
+        raise ValueError('RQ_REDIS_PASSWORD must be at least 12 characters long')
+    if not any(char.isalpha() for char in password):
+        raise ValueError('RQ_REDIS_PASSWORD must contain a letter')
+    if not any(char.isdigit() for char in password):
+        raise ValueError('RQ_REDIS_PASSWORD must contain a digit')
+    if not any(not char.isalnum() for char in password):
+        raise ValueError('RQ_REDIS_PASSWORD must contain a special character')
+    return password
+
+
 def _redis_url(host, port, db, password='', tls=False, ca_cert_path=''):
     scheme = 'rediss' if tls else 'redis'
     if password:
-        url = f'{scheme}://:{password}@{host}:{port}/{db}'
+        url = f'{scheme}://:{quote(password, safe="")}@{host}:{port}/{db}'
     else:
         url = f'{scheme}://{host}:{port}/{db}'
     if tls:
@@ -126,7 +141,7 @@ def _redis_url(host, port, db, password='', tls=False, ca_cert_path=''):
 
 
 def _rq_redis_kwargs():
-    password = os.environ.get('RQ_REDIS_PASSWORD', '')
+    password = _rq_redis_password()
     tls_enabled = _env_enabled('RQ_REDIS_TLS')
     ca_cert_path = os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt')
     kwargs = {
@@ -141,7 +156,7 @@ def _rq_redis_kwargs():
 
 
 def _rq_queue_entry(host, port, db):
-    password = os.environ.get('RQ_REDIS_PASSWORD', '')
+    password = _rq_redis_password()
     tls_enabled = _env_enabled('RQ_REDIS_TLS')
     ca_cert_path = os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt')
     entry = {
