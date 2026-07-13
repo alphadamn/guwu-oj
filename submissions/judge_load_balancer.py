@@ -3,9 +3,9 @@
 import logging
 import os
 import random
+import redis
 from django.conf import settings
 from django.core.cache import cache
-from django_redis import get_redis_connection
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ class JudgeLoadBalancer:
         return getattr(settings, 'JUDGE_MACHINES', [])
 
     def _machine_redis(self, machine, decode_responses=False):
-        from django.conf import settings
         kwargs = {
             'host': machine['host'],
             'port': machine['port'],
@@ -45,6 +44,7 @@ class JudgeLoadBalancer:
         password = os.environ.get('RQ_REDIS_PASSWORD', '')
         if password:
             kwargs['password'] = password
+        kwargs.update(settings.RQ_REDIS_CONNECTION_KWARGS)
         return redis.Redis(**kwargs)
 
     def get_enabled_machines(self):
@@ -64,15 +64,7 @@ class JudgeLoadBalancer:
 
         # Perform health check by connecting to Redis
         try:
-            import redis
-            redis_conn = redis.Redis(
-                host=machine['host'],
-                port=machine['port'],
-                db=machine['db'],
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                decode_responses=True
-            )
+            redis_conn = self._machine_redis(machine, decode_responses=True)
             redis_conn.ping()
             is_healthy = True
             logger.info(f'Judge machine {machine["name"]} is healthy')
@@ -98,14 +90,7 @@ class JudgeLoadBalancer:
     def _get_queue_length(self, machine):
         """Get number of pending/enqueued jobs on this machine's queue."""
         try:
-            import redis
-            r = redis.Redis(
-                host=machine['host'],
-                port=machine['port'],
-                db=machine['db'],
-                socket_connect_timeout=3,
-                socket_timeout=3,
-            )
+            r = self._machine_redis(machine)
             return r.llen(f"rq:queue:{machine['queue']}")
         except Exception:
             return 9999
@@ -113,14 +98,7 @@ class JudgeLoadBalancer:
     def _get_busy_count(self, machine):
         """Get number of jobs currently being executed by this machine's worker."""
         try:
-            import redis
-            r = redis.Redis(
-                host=machine['host'],
-                port=machine['port'],
-                db=machine['db'],
-                socket_connect_timeout=3,
-                socket_timeout=3,
-            )
+            r = self._machine_redis(machine)
             return int(r.get(f"judge:busy:{machine['name']}") or 0)
         except Exception:
             return 9999
@@ -128,14 +106,7 @@ class JudgeLoadBalancer:
     def _incr_busy(self, machine):
         """Increment busy count when a job is dispatched to this machine."""
         try:
-            import redis
-            r = redis.Redis(
-                host=machine['host'],
-                port=machine['port'],
-                db=machine['db'],
-                socket_connect_timeout=3,
-                socket_timeout=3,
-            )
+            r = self._machine_redis(machine)
             r.incr(f"judge:busy:{machine['name']}")
             r.expire(f"judge:busy:{machine['name']}", 3600)
         except Exception:
@@ -144,14 +115,7 @@ class JudgeLoadBalancer:
     def _decr_busy(self, machine):
         """Decrement busy count when a job finishes on this machine."""
         try:
-            import redis
-            r = redis.Redis(
-                host=machine['host'],
-                port=machine['port'],
-                db=machine['db'],
-                socket_connect_timeout=3,
-                socket_timeout=3,
-            )
+            r = self._machine_redis(machine)
             val = r.decr(f"judge:busy:{machine['name']}")
             print(val, f"judge:busy:{machine['name']}")
             if val <= 0:

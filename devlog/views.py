@@ -363,7 +363,6 @@ def _check_judging_system(max_wait_seconds=None):
         ).first()
         print(222)
         if not health_problem:
-            print(11111)
             return 0
 
         health_user, _ = User.objects.get_or_create(
@@ -401,7 +400,10 @@ int main() {
         return int(ac_count)
 
     except BaseException:
-        return 0
+        try:
+            return submission.test_results.filter(status='Accepted').count()
+        except:
+            return 0
     finally:
         if submission is not None and getattr(submission, 'pk', None):
             try:
@@ -447,7 +449,6 @@ def _refresh_auto_components(force_refresh=False):
         daemon=True,
     )
     t.start()
-    t.join(timeout=0.5)
 
 
 def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
@@ -497,6 +498,11 @@ def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
 
     cache_key = 'devlog_health_checks'
     checks = None
+    # Track whether we actually ran a fresh probe. Only create new
+    # HealthSample records for real probes (not cache hits). This
+    # prevents repeated page refreshes from polluting the uptime
+    # stats with stale data.
+    did_fresh_probe = False
     if not force_refresh:
         try:
             checks = _djcache.get(cache_key)
@@ -504,6 +510,7 @@ def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
             checks = None
 
     if checks is None:
+        did_fresh_probe = True
         checks = {}
         # database
         try:
@@ -553,6 +560,11 @@ def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
         except BaseException:
             pass
 
+    # Only write samples / update status when we actually ran the
+    # probes. Cache hits must not alter DB state.
+    if not did_fresh_probe:
+        return
+
     now = timezone.now()
     samples_to_create = []
     comps_to_save = []
@@ -560,12 +572,10 @@ def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
     for comp in auto:
         key = comp.health_key or (comp.name_en or '').lower() or (comp.name or '').lower()
         raw = checks.get(key)
-        print(key, raw)
 
         if key == 'judge':
             score = int(raw) if isinstance(raw, int) else (0 if raw is None else int(raw or 0))
             ok = score >= judge_pass
-            print(score)
             if score >= judge_pass:
                 new_status = ServiceComponent.STATUS_OPERATIONAL
             elif score == judge_deg:
@@ -575,7 +585,6 @@ def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
             else:
                 new_status = ServiceComponent.STATUS_MAJOR
         elif raw is None:
-            print(1)
             continue
         else:
             ok = bool(raw)
@@ -681,7 +690,22 @@ def status_page(request):
         file_changes_qs = FileChange.objects.filter(detected_at__gte=cutoff)
     except BaseException:
         file_changes_qs = FileChange.objects.all()
-    file_changes = list(file_changes_qs.select_related('annotated_by')[:40])
+    file_changes_raw = list(file_changes_qs.select_related('annotated_by')[:40])
+    file_changes = []
+    for fc in file_changes_raw:
+        file_changes.append({
+            'obj': fc,
+            'path': fc.path,
+            'change_type': fc.change_type,
+            'badge_class': fc.badge_class,
+            'change_type_display': fc.get_change_type_display(),
+            'detected_at': fc.detected_at,
+            'remarks': fc.remarks,
+            'annotated_by': fc.annotated_by,
+            'description_html': render_markdown(fc.description or ''),
+            'description_plain': fc.description or '',
+            'pk': fc.pk,
+        })
 
     context = {
         'components': components,

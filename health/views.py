@@ -27,7 +27,13 @@ def health_check(request):
     
     # Check Redis connection
     try:
-        redis_client = Redis(host=redis_host, port=redis_port, db=redis_db)
+        redis_client = Redis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            password=redis_password,
+            **CACHE_REDIS_DIRECT_CONNECTION_KWARGS,
+        )
         redis_client.ping()
         health_status['checks']['redis'] = 'ok'
     except Exception as e:

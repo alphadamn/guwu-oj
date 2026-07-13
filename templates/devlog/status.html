@@ -156,15 +156,15 @@
                     {% for change in file_changes %}
                     <div class="commit-item">
                         <div class="d-flex align-items-start gap-2">
-                            <span class="badge bg-{{ change.badge_class }}">{{ change.get_change_type_display }}</span>
+                            <span class="badge bg-{{ change.badge_class }}">{{ change.change_type_display }}</span>
                             <span class="change-path flex-grow-1">{{ change.path }}</span>
                         </div>
                         <div class="small text-muted mt-1">{{ change.detected_at|date:"Y-m-d H:i" }}</div>
                         {% if change.remarks %}
                         <div class="small mt-1"><i class="bi bi-tag text-primary"></i> {{ change.remarks }}</div>
                         {% endif %}
-                        {% if change.description %}
-                        <div class="small text-muted mt-1">{{ change.description|linebreaksbr }}</div>
+                        {% if change.description_html %}
+                        <div class="small text-muted mt-1">{{ change.description_html|safe }}</div>
                         {% endif %}
                         {% if can_manage %}
                         <a class="small text-decoration-none" data-bs-toggle="collapse" href="#ann{{ change.pk }}">
@@ -176,7 +176,7 @@
                                 <input type="text" name="remarks" class="form-control form-control-sm mb-1"
                                        placeholder="备注（简短）" value="{{ change.remarks }}" maxlength="255">
                                 <textarea name="description" class="form-control form-control-sm mb-1"
-                                          rows="2" placeholder="详细描述">{{ change.description }}</textarea>
+                                          rows="2" placeholder="详细描述（支持 Markdown）">{{ change.description_plain }}</textarea>
                                 <button class="btn btn-sm btn-primary" type="submit">保存</button>
                             </form>
                         </div>

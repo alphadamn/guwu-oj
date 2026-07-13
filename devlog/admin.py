@@ -287,7 +287,7 @@ class EmailConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         from django.forms import PasswordInput
         form_class = super().get_form(request, obj=obj, **kwargs)
         form_class.base_fields['email_host_password'].widget = PasswordInput(
-            render_value=True, attrs={'autocomplete': 'new-password'}
+            render_value=False, attrs={'autocomplete': 'new-password'}
         )
         return form_class
 
@@ -432,6 +432,29 @@ class DevLogEntryAdmin(admin.ModelAdmin):
     list_filter = ('pinned', 'created_at')
     search_fields = ('title', 'version', 'body')
     autocomplete_fields = ('author',)
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'version', 'pinned', 'author'),
+        }),
+        ('内容（Markdown）', {
+            'fields': ('body', 'body_preview'),
+            'description': '在 body 中输入 Markdown 文本，下方会显示渲染预览。',
+        }),
+    )
+    readonly_fields = ('body_preview',)
+
+    def body_preview(self, obj):
+        from problems.markdown_utils import render_markdown
+        from django.utils.html import format_html
+        html = render_markdown(obj.body or '')
+        if not html:
+            return '(内容为空)'
+        return format_html(
+            '<div style="border:1px solid #dee2e6;border-radius:6px;padding:12px;'
+            'background:#f8f9fa;margin-top:8px;">{}</div>',
+            html
+        )
+    body_preview.short_description = 'Markdown 预览（只读）'
 
 
 @admin.register(FileChange)
@@ -439,7 +462,29 @@ class FileChangeAdmin(admin.ModelAdmin):
     list_display = ('path', 'change_type', 'detected_at', 'remarks', 'annotated_by')
     list_filter = ('change_type', 'detected_at')
     search_fields = ('path', 'remarks', 'description')
-    readonly_fields = ('path', 'change_type', 'file_hash', 'old_hash', 'size', 'detected_at')
+    readonly_fields = ('path', 'change_type', 'file_hash', 'old_hash', 'size', 'detected_at', 'description_preview')
+    fieldsets = (
+        (None, {
+            'fields': ('path', 'change_type', 'detected_at', 'file_hash', 'old_hash', 'size'),
+        }),
+        ('标注（支持 Markdown）', {
+            'fields': ('annotated_by', 'remarks', 'description', 'description_preview'),
+            'description': '在 description 中输入 Markdown 文本，下方会显示渲染预览。',
+        }),
+    )
+
+    def description_preview(self, obj):
+        from problems.markdown_utils import render_markdown
+        from django.utils.html import format_html
+        html = render_markdown(obj.description or '')
+        if not html:
+            return '(内容为空)'
+        return format_html(
+            '<div style="border:1px solid #dee2e6;border-radius:6px;padding:12px;'
+            'background:#f8f9fa;margin-top:8px;">{}</div>',
+            html
+        )
+    description_preview.short_description = 'Markdown 预览（只读）'
 
 
 @admin.register(FileSnapshot)
