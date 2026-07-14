@@ -32,10 +32,10 @@
 {% endblock %}
 
 {% block content %}
-<div class="row">
+<div class="row submission-layout">
     <div class="col-lg-8">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
+        <div class="card submission-card">
+            <div class="card-header submission-titlebar">
                 <h5 class="mb-0">
                     <i class="bi bi-send"></i> 提交代码 - {{ problem.title }}
                 </h5>
@@ -52,7 +52,7 @@
                 <form method="post" id="submit-form">
                     {% csrf_token %}
                 {% endif %}
-                    <div class="mb-3">
+                    <div class="mb-3 submission-language-field">
                         <label for="language" class="form-label">编程语言</label>
                         <select class="form-select" name="language" id="language"{% if submit_disabled %} disabled{% endif %} required>
                             <option value="C">C</option>
@@ -132,19 +132,21 @@
                         </div>
                     </div>
                     {% endif %}
+                    <div class="submission-actions">
                     <button type="submit" class="btn btn-primary"{% if submit_disabled %} disabled{% endif %}>
                         <i class="bi bi-send"></i> 提交
                     </button>
                     <a href="{% url 'problem_detail' problem.id %}" class="btn btn-secondary">
                         <i class="bi bi-arrow-left"></i> 返回题目
                     </a>
+                    </div>
                 </form>
             </div>
         </div>
     </div>
     
     <div class="col-lg-4">
-        <div class="card">
+        <div class="card submission-sidebar-card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
             </div>
@@ -174,7 +176,7 @@
             </div>
         </div>
         
-        <div class="card">
+        <div class="card submission-sidebar-card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="bi bi-keyboard"></i> 编辑器快捷键</h5>
             </div>
