@@ -1,0 +1,19 @@
+[Unit]
+Description=Guwu OJ RQ Judge Worker (judge-1)
+After=network.target docker.service redis-server.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/guwu-oj
+EnvironmentFile=/root/guwu-oj/.env
+Environment=OJ_ROLE=worker
+ExecStart=/root/guwu-oj/venv/bin/python manage.py rqworker judge-1 --worker-class oj_project.customrq.AutoReconnectWorker
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

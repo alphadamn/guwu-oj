@@ -43,10 +43,12 @@ class Problem(models.Model):
     
     class Meta:
         ordering = ['-created_at']
-    
+        verbose_name = '题目'
+        verbose_name_plural = '题目'
+
     def __str__(self):
         return f"P{self.id} - {self.title}"
-    
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         # Clear relevant caches when problem is saved
@@ -66,6 +68,27 @@ class Problem(models.Model):
         cache.delete('home_recent_problems')
         cache.delete('home_stats')
         super().delete(*args, **kwargs)
+
+    @property
+    def difficulty_slug(self):
+        """Return a CSS-safe identifier for :attr:`difficulty`.
+
+        The raw difficulty values (``普及-``, ``普及+``, ``提高+`` ...) contain
+        ``+`` / ``-`` which are special in CSS selectors. Using a slugified
+        class name (``pminus`` / ``pplus`` / ``tminus`` / ``tplus``) means the
+        CSS rule always matches unambiguously.
+        """
+        return {
+            '入门': 'intro',
+            '普及-': 'pminus',
+            '普及': 'puhui',
+            '普及+': 'pplus',
+            '提高-': 'tminus',
+            '提高': 'tigao',
+            '提高+': 'tplus',
+            '省选': 'shengxuan',
+            'NOI': 'noi',
+        }.get(self.difficulty or '', 'puhui')
 
     @property
     def pass_rate(self):
@@ -96,6 +119,8 @@ class TestCase(models.Model):
 
     class Meta:
         ordering = ['order', 'id']
+        verbose_name = '测试用例'
+        verbose_name_plural = '测试用例'
 
     def __str__(self):
         return f"TestCase {self.id} for P{self.problem_id}"
@@ -113,7 +138,9 @@ class Solution(models.Model):
     
     class Meta:
         ordering = ['-created_at']
-    
+        verbose_name = '官方题解'
+        verbose_name_plural = '官方题解'
+
     def __str__(self):
         return f"{self.problem.title} - {self.title}"
     

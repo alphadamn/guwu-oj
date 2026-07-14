@@ -1,0 +1,233 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}开发者日志 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+    .devlog-hero {
+        background: linear-gradient(135deg, #0d6efd 0%, #6610f2 100%);
+        color: #fff; border-radius: 1rem; padding: 1.75rem 2rem; margin-bottom: 1.5rem;
+    }
+    .status-banner { border-radius: .75rem; padding: 1rem 1.25rem; font-weight: 600; }
+    .status-dot { width: .8rem; height: .8rem; border-radius: 50%; display: inline-block; }
+    .dot-success { background:#198754;} .dot-warning{background:#ffc107;}
+    .dot-danger{background:#dc3545;} .dot-info{background:#0dcaf0;} .dot-secondary{background:#6c757d;}
+    .component-row { display:flex; align-items:center; justify-content:space-between; padding:.75rem 0; border-bottom:1px solid #f0f0f0; }
+    .component-row:last-child { border-bottom:none; }
+    .uptime-bar { height:8px; border-radius:4px; background:#e9ecef; overflow:hidden; min-width:140px; width:160px; max-width:160px; }
+    .uptime-fill { height:100%; background:linear-gradient(90deg,#198754,#20c997); transition: width .4s ease; }
+    .commit-item { padding:.6rem 0; border-bottom:1px solid #f0f0f0; }
+    .commit-item:last-child { border-bottom:none; }
+    .commit-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.78rem; }
+    .devlog-entry { border-left:3px solid #0d6efd; padding-left:1rem; margin-bottom:1.25rem; }
+    .devlog-entry .entry-body :is(h1,h2,h3){ font-size:1.05rem; margin:.6rem 0 .35rem; }
+    .change-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.82rem; word-break:break-all; }
+    .sticky-side { position: sticky; top: 84px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="devlog-hero animate-in visible">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+        <div>
+            <h1 class="h3 mb-1"><i class="bi bi-activity me-2"></i>开发者日志 &amp; 服务状态</h1>
+            <p class="mb-0 opacity-75">实时服务状态、更新日志与代码提交记录。最后刷新 {{ now|date:"Y-m-d H:i" }}</p>
+        </div>
+        {% if can_manage %}
+        <div class="d-flex gap-2">
+            <button class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#addEntryModal">
+                <i class="bi bi-plus-lg"></i> 添加日志
+            </button>
+            <form method="post" action="{% url 'devlog:rescan' %}" class="m-0">
+                {% csrf_token %}
+                <button class="btn btn-outline-light btn-sm" type="submit">
+                    <i class="bi bi-arrow-repeat"></i> 扫描文件改动
+                </button>
+            </form>
+            <form method="post" action="{% url 'devlog:clear_page_cache' %}" class="m-0">
+                {% csrf_token %}
+                <button class="btn btn-outline-light btn-sm" type="submit">
+                    <i class="bi bi-database-fill-dash"></i> 清除页面缓存
+                </button>
+            </form>
+            <form method="post" action="{% url 'devlog:clear_all_caches' %}" class="m-0">
+                {% csrf_token %}
+                <button class="btn btn-warning btn-sm" type="submit">
+                    <i class="bi bi-lightning-fill"></i> 一键清除全部缓存
+                </button>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- LEFT: status + changelog -->
+    <div class="col-lg-7">
+        <div class="status-banner bg-{{ overall_class }} bg-opacity-10 border border-{{ overall_class }} border-opacity-25 mb-4 d-flex align-items-center gap-2">
+            <span class="status-dot dot-{{ overall_class }}"></span>
+            <span class="text-{{ overall_class }}">{{ overall_label }}</span>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white fw-semibold"><i class="bi bi-hdd-network me-1"></i> 服务组件</div>
+            <div class="card-body">
+                {% for c in components %}
+                <div class="component-row">
+                    <div>
+                        <div class="fw-medium">{{ c.name }}
+                            {% if c.auto_check %}<i class="bi bi-robot text-muted small" title="自动健康检查"></i>{% endif %}
+                        </div>
+                        {% if c.description %}<div class="small text-muted">{{ c.description }}</div>{% endif %}
+                    </div>
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="text-end d-none d-sm-block">
+                            <div class="small text-muted">{{ uptime_window_days }} 天可用率 · {{ c.uptime_display }}</div>
+                            <div class="uptime-bar"><div class="uptime-fill" style="width: {{ c.uptime_pct }}%"></div></div>
+                        </div>
+                        <span class="badge bg-{{ c.badge_class }}">{{ c.status_display }}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-muted mb-0">尚未配置服务组件。{% if can_manage %}请到 <a href="/admin/devlog/servicecomponent/">后台</a> 添加。{% endif %}</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-white fw-semibold"><i class="bi bi-journal-text me-1"></i> 更新日志</div>
+            <div class="card-body">
+                {% for item in entries %}
+                <div class="devlog-entry">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        {% if item.obj.version %}<span class="badge bg-primary">{{ item.obj.version }}</span>{% endif %}
+                        {% if item.obj.pinned %}<i class="bi bi-pin-angle-fill text-warning" title="置顶"></i>{% endif %}
+                        <strong>{{ item.obj.title }}</strong>
+                    </div>
+                    <div class="small text-muted mb-2">
+                        {{ item.obj.created_at|date:"Y-m-d H:i" }}{% if item.obj.author %} · {{ item.obj.author.username }}{% endif %}
+                    </div>
+                    {% if item.html %}<div class="entry-body">{{ item.html|safe }}</div>{% endif %}
+                </div>
+                {% empty %}
+                <p class="text-muted mb-0">还没有更新日志。</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: GitHub commits + file changes -->
+    <div class="col-lg-5">
+        <div class="sticky-side">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-white d-flex align-items-center justify-content-between">
+                    <span class="fw-semibold"><i class="bi bi-github me-1"></i> GitHub Commits</span>
+                    <a href="{{ commits_page_url }}" target="_blank" rel="noopener" class="small text-decoration-none">
+                        全部 <i class="bi bi-box-arrow-up-right"></i>
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% for commit in commits %}
+                    <div class="commit-item">
+                        <a href="{{ commit.url }}" target="_blank" rel="noopener" class="text-decoration-none fw-medium">
+                            {{ commit.message }}
+                        </a>
+                        <div class="small text-muted mt-1">
+                            <span class="commit-sha badge bg-light text-dark border">{{ commit.short_sha }}</span>
+                            {{ commit.author }} · {{ commit.date|slice:":10" }}
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted small mb-0">
+                        暂时无法获取提交记录，请稍后再试或
+                        <a href="{{ commits_page_url }}" target="_blank" rel="noopener">前往 GitHub 查看</a>。
+                    </p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="card shadow-sm">
+                <div class="card-header bg-white d-flex align-items-center justify-content-between">
+                    <span class="fw-semibold"><i class="bi bi-file-earmark-diff me-1"></i> 服务器文件改动</span>
+                    {% if last_scan %}<span class="small text-muted">{{ last_scan|date:"m-d H:i" }}</span>{% endif %}
+                </div>
+                <div class="card-body" style="max-height: 600px; overflow-y:auto;">
+                    {% for change in file_changes %}
+                    <div class="commit-item">
+                        <div class="d-flex align-items-start gap-2">
+                            <span class="badge bg-{{ change.badge_class }}">{{ change.change_type_display }}</span>
+                            <span class="change-path flex-grow-1">{{ change.path }}</span>
+                        </div>
+                        <div class="small text-muted mt-1">{{ change.detected_at|date:"Y-m-d H:i" }}</div>
+                        {% if change.remarks %}
+                        <div class="small mt-1"><i class="bi bi-tag text-primary"></i> {{ change.remarks }}</div>
+                        {% endif %}
+                        {% if change.description_html %}
+                        <div class="small text-muted mt-1">{{ change.description_html|safe }}</div>
+                        {% endif %}
+                        {% if can_manage %}
+                        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#ann{{ change.pk }}">
+                            <i class="bi bi-pencil"></i> 备注
+                        </a>
+                        <div class="collapse mt-2" id="ann{{ change.pk }}">
+                            <form method="post" action="{% url 'devlog:annotate_change' change.pk %}">
+                                {% csrf_token %}
+                                <input type="text" name="remarks" class="form-control form-control-sm mb-1"
+                                       placeholder="备注（简短）" value="{{ change.remarks }}" maxlength="255">
+                                <textarea name="description" class="form-control form-control-sm mb-1"
+                                          rows="2" placeholder="详细描述（支持 Markdown）">{{ change.description_plain }}</textarea>
+                                <button class="btn btn-sm btn-primary" type="submit">保存</button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-muted small mb-0">
+                        暂无记录的文件改动。{% if can_manage %}点击上方「扫描文件改动」开始监控。{% endif %}
+                    </p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if can_manage %}
+<div class="modal fade" id="addEntryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'devlog:add_entry' %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title">添加开发者日志</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">版本号（可选）</label>
+                        <input type="text" name="version" class="form-control" placeholder="如 v26.6.2">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">标题 <span class="text-danger">*</span></label>
+                        <input type="text" name="title" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">内容（支持 Markdown）</label>
+                        <textarea name="body" class="form-control" rows="6"></textarea>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="pinned" id="pinnedCheck">
+                        <label class="form-check-label" for="pinnedCheck">置顶</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

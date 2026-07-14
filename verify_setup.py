@@ -137,9 +137,9 @@ def check_redis_connection():
         print(f"Redis URL: {redis_url}")
         
         # Parse Redis URL
-        if redis_url.startswith('redis://'):
+        if redis_url.startswith(('redis://', 'rediss://')):
             # Extract host and port
-            url_parts = redis_url.replace('redis://', '').split('/')
+            url_parts = redis_url.split('://', 1)[1].split('/')
             host_port = url_parts[0].split(':')
             host = host_port[0]
             port = int(host_port[1]) if len(host_port) > 1 else 6379
@@ -150,7 +150,7 @@ def check_redis_connection():
             print(f"Redis database: {db}")
             
             # Test connection
-            r = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+            r = redis.Redis.from_url(redis_url, decode_responses=True)
             r.ping()
             print_success("Redis connection successful")
             

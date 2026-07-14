@@ -129,6 +129,28 @@ redis-server
 
 ### 9. 启动 RQ Worker (用于异步评测)
 
+#### Redis 密码与 TLS 配置
+
+判题队列 Redis 必须同时启用 TLS 和密码认证。不要将真实密码写入版本控制；在 Web 服务器和每台判题机的受限 `.env` 文件中设置相同的 `RQ_REDIS_PASSWORD`。密码至少 12 个字符，并包含字母、数字和特殊字符。
+
+```dotenv
+RQ_REDIS_HOST=judge-redis.example.internal
+RQ_REDIS_PORT=6379
+RQ_REDIS_DB=0
+RQ_REDIS_PASSWORD=<generated-secret>
+RQ_REDIS_TLS=true
+RQ_REDIS_CA_CERT=/etc/redis/tls/ca.crt
+```
+
+Redis 服务端必须使用相同密码配置 `requirepass`，并保持 `port 0` 与 TLS 端口配置。每次修改密码时，先更新所有 Web/判题机 `.env` 文件，再重启 Redis，最后重启所有 RQ worker。Django-RQ 从 `RQ_QUEUES` 的 URL 和 `REDIS_CONNECTION_KWARGS` 自动读取密码与 TLS 参数；`rqworker` 命令不应额外传入 Redis URL。
+
+可使用下列命令验证认证与 TLS，其中未提供密码的命令必须返回 `NOAUTH Authentication required`：
+
+```bash
+REDISCLI_AUTH="$RQ_REDIS_PASSWORD" redis-cli --tls --cacert "$RQ_REDIS_CA_CERT" \
+  -h "$RQ_REDIS_HOST" -p "$RQ_REDIS_PORT" ping
+```
+
 **macOS 用户需要设置环境变量:**
 ```bash
 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker default high low
@@ -342,7 +364,6 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 | Python | — | `python3` |
 | Java | `javac` | `java` |
 | JavaScript | — | `node` |
-| TypeScript | `tsc` | `node` |
 | Go | `go build` | 原生执行 |
 | Rust | `rustc --edition=2021` | 原生执行 |
 | Ruby | — | `ruby` |

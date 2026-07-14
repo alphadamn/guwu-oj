@@ -8,7 +8,7 @@ from django.core.cache import cache
 ALLOWED_TAGS = bleach.sanitizer.ALLOWED_TAGS | frozenset({
     'p', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'br',
-    'img', 'blockquote', 'span', 'div',
+    'img', 'blockquote', 'span', 'div', 'del', 's', 'strike',
 })
 
 ALLOWED_ATTRIBUTES = {
@@ -49,6 +49,19 @@ def _restore_math(html, storage):
     return html
 
 
+_STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~')
+
+
+def _apply_strikethrough(text):
+    """将 ~~text~~ 转换为 <del>text</del>。在代码块外执行替换。"""
+    # 先保护代码块，避免 ~~ 在 ``` 中被替换
+    parts = re.split(r'(```[\s\S]*?```|`[^`\n]+`)', text)
+    for i, part in enumerate(parts):
+        if i % 2 == 0:  # 偶数索引是非代码部分
+            parts[i] = _STRIKETHROUGH_RE.sub(r'<del>\1</del>', part)
+    return ''.join(parts)
+
+
 def render_markdown(text):
     if not text:
         return ''
@@ -64,6 +77,7 @@ def render_markdown(text):
     
     # Render markdown
     text, math_blocks = _protect_math(text)
+    text = _apply_strikethrough(text)
     html = markdown.markdown(
         text,
         extensions=['extra', 'fenced_code', 'tables', 'nl2br', 'sane_lists'],

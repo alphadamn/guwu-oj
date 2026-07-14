@@ -5,67 +5,148 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/code-editor.css' %}">
+<style>
+    .submission-captcha-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 6px 20px -10px rgba(15, 23, 42, 0.25);
+    }
+    .submission-captcha-header {
+        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+        letter-spacing: 0.02em;
+    }
+    #captcha-img {
+        transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.2s ease;
+    }
+    #captcha-img:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+        cursor: pointer;
+    }
+    #captcha-img.refreshing {
+        filter: blur(2px) opacity(0.6);
+    }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="row">
+<div class="row submission-layout">
     <div class="col-lg-8">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
+        <div class="card submission-card">
+            <div class="card-header submission-titlebar">
                 <h5 class="mb-0">
                     <i class="bi bi-send"></i> 提交代码 - {{ problem.title }}
                 </h5>
             </div>
             <div class="card-body">
+                {% if submit_disabled %}
+                <div class="alert alert-danger small mb-3">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    当前账号的提交功能已被管理员禁用，暂时无法提交解答。如需申诉请联系管理员。
+                </div>
+                <form method="post" id="submit-form" onsubmit="return false;" novalidate>
+                    {% csrf_token %}
+                {% else %}
                 <form method="post" id="submit-form">
                     {% csrf_token %}
-                    <div class="mb-3">
+                {% endif %}
+                    <div class="mb-3 submission-language-field">
                         <label for="language" class="form-label">编程语言</label>
-                        <select class="form-select" name="language" id="language" required>
+                        <select class="form-select" name="language" id="language"{% if submit_disabled %} disabled{% endif %} required>
                             <option value="C">C</option>
                             <option value="C++" selected>C++</option>
                             <option value="Python">Python</option>
                             <option value="Java">Java</option>
                             <option value="JavaScript">JavaScript (Node.js)</option>
-                            <option value="TypeScript">TypeScript</option>
                             <option value="Golang">Go</option>
                             <option value="Rust">Rust</option>
                             <option value="Ruby">Ruby</option>
                             <option value="Kotlin">Kotlin</option>
-                            <option value="Assembly">Assembly (ARM64 Linux)</option>
+                            <option value="Assembly">Assembly (x86_64 Linux)</option>
                         </select>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">代码</label>
                         <div class="monaco-editor-toolbar">
                             <span class="toolbar-label">IDE</span>
-                            <button type="button" class="btn btn-outline-light btn-sm btn-toolbar" id="btn-format-code" title="格式化">
+                            <button type="button" class="btn btn-outline-light btn-sm btn-toolbar" id="btn-format-code" title="格式化"{% if submit_disabled %} disabled{% endif %}>
                                 <i class="bi bi-braces"></i> 格式化
                             </button>
-                            <button type="button" class="btn btn-outline-light btn-sm btn-toolbar" id="btn-reset-template" title="载入模板">
+                            <button type="button" class="btn btn-outline-light btn-sm btn-toolbar" id="btn-reset-template" title="载入模板"{% if submit_disabled %} disabled{% endif %}>
                                 <i class="bi bi-file-earmark-code"></i> 模板
                             </button>
                             <span id="code-editor-status"></span>
                         </div>
                         <div id="monaco-editor" class="monaco-editor-host" aria-label="代码编辑器"></div>
-                        <textarea name="code" id="code" class="d-none" required></textarea>
+                        <textarea name="code" id="code" class="d-none"{% if submit_disabled %} disabled{% endif %} required></textarea>
                         <div class="form-text mt-2">
                             支持语法高亮、自动补全、括号配对、Ctrl+F 查找、Ctrl+S 保存草稿（按题目与语言分别存储）。
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary">
+                    {% if requires_captcha %}
+                    {% if captcha_error_message %}
+                    <div class="mb-3 alert alert-danger d-flex align-items-start gap-2 border-0 rounded shadow-sm" role="alert" style="background:linear-gradient(135deg,#fee2e2,#fecaca);">
+                        <i class="bi bi-exclamation-circle-fill fs-5 text-danger"></i>
+                        <div class="flex-grow-1">
+                            <div class="fw-semibold text-danger-emphasis">无法提交</div>
+                            <div class="small text-danger">{{ captcha_error_message }}</div>
+                            <div class="small text-body-secondary mt-1">
+                                点击下方验证码图片或 “换一张” 刷新后重试。
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="mb-4 submission-captcha-card border rounded overflow-hidden shadow-sm">
+                        <div class="submission-captcha-header text-white px-3 py-2 d-flex align-items-center gap-2">
+                            <i class="bi bi-shield-exclamation fs-5"></i>
+                            <span class="fw-semibold">提交过于频繁，请先完成图形验证码</span>
+                        </div>
+                        <div class="px-3 py-3 bg-light-subtle">
+                            <p class="mb-2 small text-muted">
+                                在当前时间窗口内您的提交次数较多，请输入下方图形验证码后再继续。
+                            </p>
+                            <div class="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2">
+                                <img id="captcha-img" src="{% url 'captcha_image' %}"
+                                     class="rounded border border-2 border-primary-subtle cursor-pointer bg-white"
+                                     style="height:56px;"
+                                     title="点击图片刷新验证码"
+                                     alt="图形验证码">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="captcha-refresh" title="刷新验证码">
+                                    <i class="bi bi-arrow-clockwise"></i> 换一张
+                                </button>
+                                <input type="text" class="form-control flex-grow-1" id="captcha-answer"
+                                       name="captcha_answer"
+                                       placeholder="请输入图形验证码"
+                                       autocomplete="off"
+                                       maxlength="20"
+                                       required>
+                                <input type="hidden" id="captcha-id" name="captcha_id" value="">
+                            </div>
+                            <small class="text-muted d-block mt-2">
+                                <i class="bi bi-lightbulb"></i>
+                                看不清图片？点击图片或“换一张”按钮刷新；
+                                大小写不敏感。
+                            </small>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="submission-actions">
+                    <button type="submit" class="btn btn-primary"{% if submit_disabled %} disabled{% endif %}>
                         <i class="bi bi-send"></i> 提交
                     </button>
                     <a href="{% url 'problem_detail' problem.id %}" class="btn btn-secondary">
                         <i class="bi bi-arrow-left"></i> 返回题目
                     </a>
+                    </div>
                 </form>
             </div>
         </div>
     </div>
     
     <div class="col-lg-4">
-        <div class="card">
+        <div class="card submission-sidebar-card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="bi bi-info-circle"></i> 题目信息</h5>
             </div>
@@ -89,13 +170,13 @@
                     </tr>
                     <tr>
                         <td>难度</td>
-                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span></td>
                     </tr>
                 </table>
             </div>
         </div>
         
-        <div class="card">
+        <div class="card submission-sidebar-card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="bi bi-keyboard"></i> 编辑器快捷键</h5>
             </div>
@@ -117,12 +198,22 @@
 <script src="{% static 'js/code-editor.js' %}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    var statusEl = document.getElementById('code-editor-status');
+    function setStatus(text, cls) {
+        if (!statusEl) return;
+        statusEl.textContent = text;
+        statusEl.className = 'badge ' + (cls || 'text-muted');
+    }
+    setStatus('正在加载代码编辑器 (' + (window.OJ_MONACO_BASE || '') + ')', 'text-muted');
     initOJCodeEditor({
         containerId: 'monaco-editor',
         textareaId: 'code',
         languageSelectId: 'language',
         problemId: {{ problem.id }},
         initialLanguage: document.getElementById('language').value,
+        onProgress: setStatus,
+    }).then(function () {
+        setStatus('已就绪', 'text-success');
     }).catch(function (err) {
         console.error(err);
         var ta = document.getElementById('code');
@@ -132,7 +223,48 @@ document.addEventListener('DOMContentLoaded', function () {
         ta.rows = 20;
         document.getElementById('monaco-editor').style.display = 'none';
         alert('代码编辑器加载失败，已回退为普通文本框。请检查网络后刷新页面。');
+        setStatus('编辑器加载失败', 'text-danger');
     });
+
+    // Captcha widget: refresh on demand, and keep the hidden captcha_id
+    // field in sync with the image response header. Also auto-focus the
+    // answer input so the flow is faster.
+    var img = document.getElementById('captcha-img');
+    var idEl = document.getElementById('captcha-id');
+    var answerEl = document.getElementById('captcha-answer');
+    if (img && idEl) {
+        function refreshCaptcha() {
+            img.classList.add('refreshing');
+            var ts = Date.now();
+            var src = '{% url 'captcha_image' %}?_=' + ts;
+            fetch(src, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+                .then(function (resp) {
+                    var newId = (resp.headers.get('X-Captcha-Id') || '').trim();
+                    if (newId) idEl.value = newId;
+                    return resp.blob();
+                })
+                .then(function (blob) {
+                    var reader = new FileReader();
+                    reader.onload = function () {
+                        img.src = reader.result;
+                        img.classList.remove('refreshing');
+                    };
+                    reader.readAsDataURL(blob);
+                })
+                .catch(function () {
+                    img.src = src;
+                    img.classList.remove('refreshing');
+                });
+        }
+        img.addEventListener('click', refreshCaptcha);
+        var btn = document.getElementById('captcha-refresh');
+        if (btn) btn.addEventListener('click', refreshCaptcha);
+        // Auto-load an initial challenge on pageload; focus the answer input.
+        refreshCaptcha();
+        if (answerEl) {
+            setTimeout(function () { try { answerEl.focus({ preventScroll: false }); } catch (e) {} }, 250);
+        }
+    }
 });
 </script>
 {% endblock %}

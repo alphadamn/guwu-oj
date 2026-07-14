@@ -53,7 +53,7 @@
                     <tr>
                         <td><span class="badge bg-secondary">P{{ problem.id }}</span></td>
                         <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
-                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span></td>
+                        <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span></td>
                         <td>
                             {% if problem.tags %}
                                 {% for tag in problem.tags.split|slice:":3" %}

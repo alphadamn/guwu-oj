@@ -87,14 +87,59 @@ def problem_list(request):
     return response
 
 
-@cache_page(60 * 15)  # Cache for 15 minutes
+# Intentionally NOT cached — the page exposes user-specific state
+# (whether the logged-in user has the `submit` feature disabled).
 def problem_detail(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
-    return render(request, 'problems/problem_detail.html', {'problem': problem, 'count': problem.submissions.filter(status='Accepted').count()})
+    submit_disabled = False
+    if request.user.is_authenticated:
+        fn = getattr(request.user, 'feature_disabled', None)
+        if callable(fn):
+            try:
+                submit_disabled = bool(fn('submit'))
+            except Exception:
+                submit_disabled = False
+    return render(request, 'problems/problem_detail.html', {
+        'problem': problem,
+        'count': problem.submissions.filter(status='Accepted').count(),
+        'submit_disabled': submit_disabled,
+    })
 
 
 @login_required
 def create_problem(request):
+    # Feature-ban: if the user has `create_problem` disabled, don't let them through.
+    create_disabled = False
+    if request.user.is_authenticated:
+        fn = getattr(request.user, 'feature_disabled', None)
+        if callable(fn):
+            try:
+                create_disabled = bool(fn('create_problem'))
+            except Exception:
+                create_disabled = False
+    if create_disabled:
+        try:
+            import json as _json
+            from django.utils import timezone as _tz
+            ends_at = getattr(request.user, 'disabled_features_until', None)
+            payload = {
+                'kind': 'feature_ban',
+                'title': '上传题目功能已被禁用',
+                'reason': '你当前无法在谷物 OJ 上传新题目，若认为这是误判可联系管理员申诉。',
+                'features': ['create_problem'],
+                'feature_labels': ['禁止上传新题目'],
+                'username': getattr(request.user, 'username', ''),
+            }
+            if ends_at:
+                try:
+                    payload['ends_at'] = _tz.localtime(ends_at).strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    pass
+            request.session['punishment_notice'] = _json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            messages.error(request, '当前账号的上传题目功能已被管理员禁用。')
+        return redirect('home')
+
     if request.method == 'POST':
         form = ProblemForm(request.POST)
         test_cases = parse_test_cases_from_post(request.POST)

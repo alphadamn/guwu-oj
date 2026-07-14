@@ -2,6 +2,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, JsonResponse
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 from django_ratelimit.decorators import ratelimit
@@ -13,15 +14,61 @@ from .judge_queue import enqueue_judge
 from .models import Submission
 
 
+def _submit_disabled(user) -> bool:
+    """True when ``user`` has the ``submit`` feature disabled and the
+    deadline (if any) is still in the future."""
+    try:
+        fn = getattr(user, 'feature_disabled', None)
+        if callable(fn):
+            return bool(fn('submit'))
+    except Exception:
+        return False
+    return False
+
+
 @login_required
-@ratelimit(key='user', rate='3/m', method='POST')
+@ratelimit(key='user', rate='60/m', method='POST', block=False)
 def submit_solution(request, problem_id):
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
-    
+
+    # Feature-ban: when the user has the "禁止提交题目" feature flag active,
+    # refuse with a 403 to avoid spam creating rows.
+    if _submit_disabled(request.user):
+        if request.method == 'POST':
+            messages.error(request, '当前账号的提交功能已被管理员禁用，暂时无法提交解答。')
+        return render(request, 'submissions/submit.html', {
+            'problem': problem,
+            'submit_disabled': True,
+        })
+
+    # Submission-rate captcha: if the user has exceeded the admin-configured
+    # frequency, demand a valid captcha challenge before accepting the next
+    # submission.
+    requires_captcha = False
+    try:
+        from users.captcha import (
+            submission_requires_captcha as _sr_captcha,
+            check_submission_captcha as _check_submission_captcha,
+        )
+        requires_captcha = _sr_captcha(request)
+    except Exception:
+        _sr_captcha = None
+        _check_submission_captcha = None
+        requires_captcha = False
+
     if request.method == 'POST':
         code = request.POST.get('code')
         language = request.POST.get('language')
-        
+
+        if requires_captcha and _check_submission_captcha is not None:
+            ok, msg = _check_submission_captcha(request)
+            if not ok:
+                messages.error(request, msg or '图形验证码错误，请重新输入后再提交。')
+                return render(request, 'submissions/submit.html', {
+                    'problem': problem,
+                    'requires_captcha': True,
+                })
+
         max_bytes = settings.OJ_MAX_SUBMISSION_CODE_BYTES
         if code and len(code.encode('utf-8')) > max_bytes:
             messages.error(
@@ -36,11 +83,20 @@ def submit_solution(request, problem_id):
                 language=language,
                 status='Pending'
             )
+            # Increment rate-limit counter for captcha escalation.
+            try:
+                from users.captcha import record_submission_attempt
+                record_submission_attempt(request.user.id, success=True)
+            except Exception:
+                pass
             if language in JUDGED_LANGUAGES and problem.test_cases.exists():
                 enqueue_judge(submission.id)
             return redirect('submission_detail', submission_id=submission.id)
-    
-    return render(request, 'submissions/submit.html', {'problem': problem})
+
+    return render(request, 'submissions/submit.html', {
+        'problem': problem,
+        'requires_captcha': requires_captcha,
+    })
 
 
 @login_required
@@ -117,22 +173,40 @@ def submission_list(request):
 
 @login_required
 def all_submissions(request):
-    submissions = Submission.objects.all()
-    
+    submissions = Submission.objects.select_related(
+        'user', 'problem'
+    ).all()
+
     # Filter by problem
     problem_id = request.GET.get('problem')
     if problem_id:
         submissions = submissions.filter(problem_id=problem_id)
-    
+
     # Filter by user
     username = request.GET.get('user')
     if username:
         submissions = submissions.filter(user__username=username)
-    
+
     # Filter by status
     status = request.GET.get('status')
     if status:
         submissions = submissions.filter(status=status)
-    
-    submissions = submissions.order_by('-created_at')[:100]
-    return render(request, 'submissions/all_list.html', {'submissions': submissions})
+
+    submissions = submissions.order_by('-created_at')
+
+    # Pagination: 20 records per page instead of flat [:100]
+    paginator = Paginator(submissions, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    # Preserve filter query string across pagination links
+    query_params = request.GET.copy()
+    query_params.pop('page', None)
+    query_string = query_params.urlencode()
+
+    return render(request, 'submissions/all_list.html', {
+        'page_obj': page_obj,
+        'submissions': page_obj,  # Backward-compat alias for template
+        'is_paginated': page_obj.has_other_pages(),
+        'query_string': query_string,
+    })

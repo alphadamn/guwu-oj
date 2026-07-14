@@ -12,6 +12,9 @@
     --oj-shadow-hover: 0 12px 40px rgba(15, 23, 42, 0.14);
     --oj-radius: 14px;
     --oj-transition: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    --oj-surface-glass: rgba(255, 255, 255, 0.78);
+    --oj-border: rgba(148, 163, 184, 0.22);
+    --oj-focus: 0 0 0 4px rgba(59, 130, 246, 0.18);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -29,6 +32,7 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+    letter-spacing: -0.005em;
 }
 
 body::before {
@@ -49,7 +53,7 @@ main.container {
 /* Navbar */
 .oj-navbar {
     background: var(--oj-nav-bg) !important;
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(20px) saturate(150%);
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
     transition: box-shadow var(--oj-transition);
 }
@@ -65,11 +69,13 @@ main.container {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    transition: transform var(--oj-transition);
+    letter-spacing: -0.025em;
+    transition: opacity 180ms ease, transform 220ms ease;
 }
 
 .navbar-brand:hover {
-    transform: scale(1.03);
+    opacity: 0.84;
+    transform: translateY(-1px);
 }
 
 .nav-link {
@@ -101,25 +107,41 @@ main.container {
     border-radius: var(--oj-radius);
     box-shadow: var(--oj-shadow);
     margin-bottom: 1.25rem;
-    transition: transform var(--oj-transition), box-shadow var(--oj-transition);
+    border: 1px solid var(--oj-border);
+    transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 260ms ease, border-color 260ms ease;
     overflow: hidden;
 }
 
 .card:hover {
     box-shadow: var(--oj-shadow-hover);
+    border-color: rgba(59, 130, 246, 0.18);
 }
 
-/* Difficulty & status (unchanged colors) */
+.btn, .form-control, .form-select {
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease;
+}
+
+.btn:focus-visible, .form-control:focus, .form-select:focus {
+    box-shadow: var(--oj-focus);
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+/* Difficulty & status — use slugified class names
+   (see ``Problem.difficulty_slug``) so the selectors are unambiguous
+   regardless of ``+`` / ``-`` suffixes. */
 .difficulty-badge { font-size: 0.8rem; }
-.difficulty-入门 { background-color: #2ecc71; }
-.difficulty-普及- { background-color: #3498db; }
-.difficulty-普及 { background-color: #9b59b6; }
-.difficulty-普及+ { background-color: #e67e22; }
-.difficulty-提高- { background-color: #e74c3c; }
-.difficulty-提高 { background-color: #c0392b; }
-.difficulty-提高+ { background-color: #8e44ad; }
-.difficulty-省选 { background-color: #1abc9c; }
-.difficulty-NOI { background-color: #f39c12; }
+.difficulty-intro      { background-color: #2ecc71; }
+.difficulty-pminus     { background-color: #3498db; }
+.difficulty-puhui      { background-color: #9b59b6; }
+.difficulty-pplus      { background-color: #e67e22; }
+.difficulty-tminus     { background-color: #e74c3c; }
+.difficulty-tigao      { background-color: #c0392b; }
+.difficulty-tplus      { background-color: #8e44ad; }
+.difficulty-shengxuan  { background-color: #1abc9c; }
+.difficulty-noi        { background-color: #f39c12; }
 .status-Accepted { color: #2ecc71; font-weight: bold; }
 .status-Wrong { color: #e74c3c; font-weight: bold; }
 .status-Pending { color: #f39c12; font-weight: bold; }
@@ -139,10 +161,11 @@ main.container {
 .home-hero {
     position: relative;
     border-radius: calc(var(--oj-radius) + 4px);
-    padding: 3rem 2.5rem;
+    padding: clamp(2.25rem, 6vw, 4.5rem) clamp(1.5rem, 5vw, 3.5rem);
     margin-bottom: 2rem;
     overflow: hidden;
-    background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 50%, #1e293b 100%);
+    background: linear-gradient(135deg, rgba(30, 58, 95, 0.98), rgba(15, 23, 42, 0.98) 58%, rgba(30, 41, 59, 0.96));
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.2);
     color: #fff;
 }
 
@@ -153,7 +176,7 @@ main.container {
     border-radius: 50%;
     filter: blur(60px);
     opacity: 0.5;
-    animation: hero-float 8s ease-in-out infinite;
+    animation: hero-float 10s ease-in-out infinite;
 }
 
 .home-hero::before {
@@ -186,7 +209,7 @@ main.container {
 .hero-title {
     font-size: clamp(1.75rem, 4vw, 2.5rem);
     font-weight: 800;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.045em;
     margin-bottom: 0.75rem;
 }
 
@@ -215,12 +238,13 @@ main.container {
     padding: 0.65rem 1.25rem;
     font-weight: 600;
     border-radius: 10px;
-    transition: transform var(--oj-transition), box-shadow var(--oj-transition);
+    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease, filter 220ms ease;
 }
 
 .hero-actions .btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    filter: brightness(1.06);
 }
 
 .btn-hero-primary {
@@ -248,7 +272,9 @@ main.container {
 }
 
 .stat-card {
-    background: var(--oj-surface);
+    background: var(--oj-surface-glass);
+    backdrop-filter: blur(18px) saturate(130%);
+    border: 1px solid var(--oj-border);
     border-radius: var(--oj-radius);
     padding: 1.25rem 1.5rem;
     text-align: center;
@@ -257,7 +283,7 @@ main.container {
 }
 
 .stat-card:hover {
-    transform: translateY(-4px);
+    transform: translateY(-3px);
     box-shadow: var(--oj-shadow-hover);
 }
 
@@ -287,7 +313,8 @@ main.container {
 }
 
 .feature-card {
-    background: var(--oj-surface);
+    background: var(--oj-surface-glass);
+    backdrop-filter: blur(18px) saturate(130%);
     border-radius: var(--oj-radius);
     padding: 1.75rem 1.5rem;
     text-align: center;
@@ -297,7 +324,7 @@ main.container {
 }
 
 .feature-card:hover {
-    transform: translateY(-6px);
+    transform: translateY(-3px);
     box-shadow: var(--oj-shadow-hover);
     border-color: rgba(59, 130, 246, 0.2);
 }
@@ -315,7 +342,7 @@ main.container {
 }
 
 .feature-card:hover .feature-icon {
-    transform: scale(1.1) rotate(-3deg);
+    transform: scale(1.04);
 }
 
 .feature-icon.blue { background: linear-gradient(135deg, #dbeafe, #93c5fd); color: #2563eb; }
@@ -350,6 +377,16 @@ main.container {
     background-color: rgba(59, 130, 246, 0.06);
 }
 
+.home-hero .btn-outline-light {
+    border-color: rgba(255, 255, 255, 0.38);
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+}
+
+.home-hero .btn-outline-light:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
 .recent-table a {
     text-decoration: none;
     font-weight: 500;
@@ -374,6 +411,16 @@ main.container {
     background-color: rgba(59, 130, 246, 0.06);
 }
 
+@media (prefers-reduced-transparency: reduce) {
+    .oj-navbar, .stat-card, .feature-card, .home-hero .btn-outline-light {
+        backdrop-filter: none;
+    }
+
+    .stat-card, .feature-card {
+        background: var(--oj-surface);
+    }
+}
+
 .quick-link-item a {
     text-decoration: none;
     color: var(--oj-text);
@@ -389,6 +436,100 @@ main.container {
 
 .quick-link-item:hover a i {
     transform: translateX(4px);
+}
+
+/* Reading and submission surfaces */
+.problem-detail-layout,
+.submission-layout {
+    align-items: flex-start;
+}
+
+.problem-titlebar,
+.submission-titlebar {
+    background: linear-gradient(135deg, #172033, #263a5b);
+    color: #fff;
+    border: 0;
+    padding: 1rem 1.25rem;
+}
+
+.problem-titlebar h5,
+.submission-titlebar h5 {
+    letter-spacing: -0.02em;
+}
+
+.problem-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.85rem;
+    color: #0f172a;
+    font-size: 0.95rem;
+    letter-spacing: -0.01em;
+}
+
+.problem-section-title::before {
+    content: "";
+    width: 0.3rem;
+    height: 1.15rem;
+    border-radius: 999px;
+    background: var(--oj-primary);
+}
+
+.problem-sidebar-card,
+.submission-sidebar-card,
+.problem-actions-card {
+    position: sticky;
+    top: 5.5rem;
+    background: var(--oj-surface-glass);
+    backdrop-filter: blur(18px) saturate(130%);
+}
+
+.problem-sidebar-card + .problem-sidebar-card,
+.problem-sidebar-card + .problem-actions-card,
+.submission-sidebar-card + .submission-sidebar-card {
+    margin-top: 1rem;
+}
+
+.problem-actions-card {
+    top: 20rem;
+}
+
+.submission-actions {
+    display: flex;
+    gap: 0.65rem;
+    align-items: center;
+    padding-top: 0.4rem;
+}
+
+.submission-actions .btn-primary {
+    min-width: 7.5rem;
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
+}
+
+.submission-language-field .form-select {
+    max-width: 22rem;
+    border-radius: 10px;
+}
+
+@media (max-width: 991.98px) {
+    .problem-sidebar-card,
+    .submission-sidebar-card,
+    .problem-actions-card {
+        position: static;
+    }
+
+    .problem-actions-card {
+        margin-top: 1rem;
+    }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+    .problem-sidebar-card,
+    .submission-sidebar-card,
+    .problem-actions-card {
+        backdrop-filter: none;
+        background: var(--oj-surface);
+    }
 }
 
 .section-header {

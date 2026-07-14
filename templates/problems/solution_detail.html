@@ -1,6 +1,12 @@
 {% extends 'base.html' %}
+{% load static %}
+{% load problem_extras %}
 
 {% block title %}{{ solution.title }} - 题解 - 洛谷风格 OJ{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/problem-markdown.css' %}">
+{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -33,7 +39,7 @@
                 
                 <div class="mb-4">
                     <h6>题解内容</h6>
-                    <div class="problem-content">{{ solution.content|linebreaks }}</div>
+                    <div class="problem-markdown">{{ solution.content|markdown }}</div>
                 </div>
                 
                 <div class="mb-4">
@@ -80,7 +86,7 @@
                     </tr>
                     <tr>
                         <td>难度</td>
-                        <td><span class="badge difficulty-badge difficulty-{{ solution.problem.difficulty }}">{{ solution.problem.difficulty }}</span></td>
+                        <td><span class="badge difficulty-badge difficulty-{{ solution.problem.difficulty_slug }}">{{ solution.problem.difficulty }}</span></td>
                     </tr>
                 </table>
             </div>

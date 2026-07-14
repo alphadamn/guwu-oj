@@ -5,13 +5,16 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-6">
-        <div class="card">
+        <div class="card shadow-sm">
             <div class="card-header bg-primary text-white">
                 <h5 class="mb-0"><i class="bi bi-box-arrow-in-right"></i> 用户登录</h5>
             </div>
             <div class="card-body">
                 <form method="post">
                     {% csrf_token %}
+                    {% if next %}
+                    <input type="hidden" name="next" value="{{ next }}">
+                    {% endif %}
                     <div class="mb-3">
                         <label for="id_username" class="form-label">用户名</label>
                         <input type="text" class="form-control" name="username" id="id_username" required autofocus>
@@ -20,13 +23,78 @@
                         <label for="id_password" class="form-label">密码</label>
                         <input type="password" class="form-control" name="password" id="id_password" required>
                     </div>
+
+                    {% if captcha_required %}
+                    <div class="mb-3 captcha-block">
+                        <label for="id_captcha_answer" class="form-label">图形验证码</label>
+                        <div class="input-group align-items-center">
+                            <input type="text" class="form-control" id="id_captcha_answer"
+                                   name="captcha_answer" placeholder="请输入图形验证码"
+                                   autocomplete="off" required>
+                            <button type="button" class="btn btn-outline-secondary captcha-refresh"
+                                    title="刷新验证码">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                        <img id="captcha-img"
+                             src="{{ captcha_url }}"
+                             alt="图形验证码"
+                             class="mt-2 rounded border"
+                             style="width:180px; height:50px; cursor:pointer;"
+                             title="点击刷新">
+                        <input type="hidden" id="id_captcha_id" name="captcha_id" value="">
+                        <small class="text-muted d-block mt-1">
+                            登录失败后需要输入图形验证码；看不清？点击图片或刷新按钮更换。
+                        </small>
+                    </div>
+                    {% endif %}
+
                     <button type="submit" class="btn btn-primary w-100">登录</button>
                 </form>
                 <div class="mt-3 text-center">
-                    <p class="mb-0">还没有账号？ <a href="{% url 'register' %}">立即注册</a></p>
+                    <p class="mb-0">
+                        还没有账号？ <a href="{% url 'register' %}">立即注册</a>
+                        &nbsp;·&nbsp;
+                        <a href="{% url 'password_reset' %}">忘记密码？</a>
+                    </p>
                 </div>
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const captchaImg = document.getElementById('captcha-img');
+    const captchaId = document.getElementById('id_captcha_id');
+    const captchaUrl = '{{ captcha_url }}';
+    if (!captchaImg) return;
+
+    function refreshCaptcha() {
+        fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+            .then(function (resp) {
+                const newId = resp.headers.get('X-Captcha-Id') || '';
+                if (newId && captchaId) captchaId.value = newId;
+                return resp.blob();
+            })
+            .then(function (blob) { captchaImg.src = URL.createObjectURL(blob); })
+            .catch(function () { captchaImg.src = captchaUrl + '?_=' + Date.now(); });
+    }
+
+    captchaImg.addEventListener('click', refreshCaptcha);
+    document.querySelectorAll('.captcha-refresh').forEach(function (el) {
+        el.addEventListener('click', refreshCaptcha);
+    });
+
+    fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+        .then(function (resp) {
+            const newId = resp.headers.get('X-Captcha-Id') || '';
+            if (newId && captchaId) captchaId.value = newId;
+            return resp.blob();
+        })
+        .then(function (blob) { captchaImg.src = URL.createObjectURL(blob); });
+})();
+</script>
 {% endblock %}

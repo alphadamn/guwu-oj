@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load feature_bans %}
 
 {% block title %}首页 - 谷物 OJ{% endblock %}
 
@@ -53,7 +54,7 @@
     <div class="feature-card animate-in delay-2">
         <div class="feature-icon amber"><i class="bi bi-lightning-charge"></i></div>
         <h5>沙箱评测</h5>
-        <p class="text-muted mb-0 small">主流语言均支持自动评测，逐点反馈结果</p>
+        <p class="text-muted mb-0 small">语言均支持自动评测，逐点反馈结果</p>
     </div>
     <div class="feature-card animate-in delay-3">
         <div class="feature-icon rose"><i class="bi bi-trophy"></i></div>
@@ -87,7 +88,7 @@
                                     <td class="ps-4"><span class="badge bg-secondary">P{{ problem.id }}</span></td>
                                     <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
                                     <td class="pe-4">
-                                        <span class="badge difficulty-badge difficulty-{{ problem.difficulty }}">{{ problem.difficulty }}</span>
+                                        <span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span>
                                     </td>
                                 </tr>
                                 {% endfor %}
@@ -130,7 +131,11 @@
                         <a href="{% url 'my_submissions' %}"><i class="bi bi-person"></i> 我的提交</a>
                     </li>
                     <li class="list-group-item quick-link-item">
+                        {% if user|feature_disabled:"create_problem" %}
+                        <span class="text-muted" title="上传题目功能已被管理员禁用"><i class="bi bi-cloud-upload"></i> 上传题目</span>
+                        {% else %}
                         <a href="{% url 'create_problem' %}"><i class="bi bi-cloud-upload"></i> 上传题目</a>
+                        {% endif %}
                     </li>
                     {% endif %}
                 </ul>
