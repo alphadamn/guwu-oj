@@ -1,4 +1,1 @@
-from .container_cleanup import DockerCleanupThread
-
-thread = DockerCleanupThread(interval=5)
-thread.start()
+# Worker-only: container cleanup is started from tasks.py, not on web app load.

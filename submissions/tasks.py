@@ -50,8 +50,8 @@ def judge_submission_task(submission_id):
         # Release the judge machine regardless of outcome
         try:
             from submissions.judge_load_balancer import load_balancer
-            load_balancer.release_machine(submission_id)
-            print('12')
+            queue_name = job.origin if job else None
+            load_balancer.release_machine(submission_id, queue_name=queue_name)
         except Exception as e:
             logger.warning(f'Error releasing machine for submission {submission_id}: {e}')
 

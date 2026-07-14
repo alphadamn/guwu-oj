@@ -205,9 +205,15 @@ if not DEMO_MODE:
         }
     }
 
-    rq_host = '64.90.3.112'
+    # The web process connects to the judge Redis endpoint; the judge worker
+    # connects to the same endpoint through loopback. Keep these deployment
+    # addresses outside source control so both hosts can run one revision.
+    rq_host = os.environ.get('RQ_REDIS_HOST', '127.0.0.1')
     rq_port = int(os.environ.get('RQ_REDIS_PORT', '6379'))
     rq_db = int(os.environ.get('RQ_REDIS_DB', '0'))
+    judge_1_host = os.environ.get('JUDGE_1_HOST', rq_host)
+    judge_1_port = int(os.environ.get('JUDGE_1_PORT', str(rq_port)))
+    judge_1_db = int(os.environ.get('JUDGE_1_REDIS_DB', str(rq_db)))
 
     RQ_QUEUES = {
         'default': _rq_queue_entry(rq_host, rq_port, rq_db),
@@ -218,9 +224,9 @@ if not DEMO_MODE:
     JUDGE_MACHINES = [
         {
             'name': 'judge-1',
-            'host': '64.90.3.112',
-            'port': rq_port,
-            'db': rq_db,
+            'host': judge_1_host,
+            'port': judge_1_port,
+            'db': judge_1_db,
             'queue': 'judge-1',
             'enabled': True,
             'weight': 1,

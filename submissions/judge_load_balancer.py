@@ -3,9 +3,7 @@
 import logging
 import os
 import random
-import redis
 from django.conf import settings
-from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +31,8 @@ class JudgeLoadBalancer:
         return getattr(settings, 'JUDGE_MACHINES', [])
 
     def _machine_redis(self, machine, decode_responses=False):
+        import redis
+        from django.conf import settings
         kwargs = {
             'host': machine['host'],
             'port': machine['port'],
@@ -41,9 +41,16 @@ class JudgeLoadBalancer:
             'socket_timeout': 3,
             'decode_responses': decode_responses,
         }
-        kwargs['password'] = settings.RQ_REDIS_CONNECTION_KWARGS['password']
-        kwargs.update(settings.RQ_REDIS_CONNECTION_KWARGS)
+        kwargs.update(getattr(settings, 'RQ_REDIS_CONNECTION_KWARGS', {}))
         return redis.Redis(**kwargs)
+
+    def _find_machine(self, name=None, queue=None):
+        for m in self.machines:
+            if name and m.get('name') == name:
+                return m
+            if queue and m.get('queue') == queue:
+                return m
+        return None
 
     def get_enabled_machines(self):
         """Get list of enabled judge machines."""
@@ -52,109 +59,116 @@ class JudgeLoadBalancer:
         return [m for m in self.machines if m.get('enabled', True)]
 
     def check_machine_health(self, machine):
-        """Check if a judge machine is healthy by connecting to its Redis instance."""
+        """Check Redis, worker heartbeat, and optionally local Docker on workers."""
+        from django.core.cache import cache
+        from submissions.judge_health import evaluate_machine_health
+
         cache_key = f'{self.health_check_cache_prefix}{machine["name"]}'
-        
-        # Check cache first
         cached_health = cache.get(cache_key)
         if cached_health is not None:
             return cached_health
 
-        # Perform health check by connecting to Redis
-        try:
-            redis_conn = self._machine_redis(machine, decode_responses=True)
-            redis_conn.ping()
-            is_healthy = True
-            logger.info(f'Judge machine {machine["name"]} is healthy')
-        except Exception as e:
-            is_healthy = False
-            logger.warning(f'Judge machine {machine["name"]} health check failed: {e}')
+        redis_client = self._machine_redis(machine, decode_responses=True)
+        check_local_docker = getattr(settings, 'OJ_ROLE', 'web') == 'worker'
+        checks = evaluate_machine_health(machine, redis_client, check_local_docker=check_local_docker)
 
-        # Cache the result
+        is_healthy = checks['redis'][0] and checks['worker'][0]
+        if check_local_docker:
+            is_healthy = is_healthy and checks.get('docker', (True,))[0] and checks.get('images', (True,))[0]
+
+        if is_healthy:
+            logger.info('Judge machine %s is healthy', machine['name'])
+        else:
+            failed = {name: detail for name, (ok, detail) in checks.items() if not ok}
+            logger.warning('Judge machine %s health check failed: %s', machine['name'], failed)
+
         cache.set(cache_key, is_healthy, self.health_check_ttl)
         return is_healthy
 
     def get_healthy_machines(self):
         """Get list of healthy judge machines."""
         enabled_machines = self.get_enabled_machines()
-        healthy_machines = []
-        
-        for machine in enabled_machines:
-            if self.check_machine_health(machine):
-                healthy_machines.append(machine)
-        
-        return healthy_machines
+        return [m for m in enabled_machines if self.check_machine_health(m)]
 
     def _get_queue_length(self, machine):
-        """Get number of pending/enqueued jobs on this machine's queue."""
         try:
-            r = self._machine_redis(machine)
-            return r.llen(f"rq:queue:{machine['queue']}")
+            return self._machine_redis(machine).llen(f"rq:queue:{machine['queue']}")
         except Exception:
             return 9999
 
     def _get_busy_count(self, machine):
-        """Get number of jobs currently being executed by this machine's worker."""
         try:
-            r = self._machine_redis(machine)
-            return int(r.get(f"judge:busy:{machine['name']}") or 0)
+            return int(self._machine_redis(machine).get(f"judge:busy:{machine['name']}") or 0)
         except Exception:
             return 9999
 
     def _incr_busy(self, machine):
-        """Increment busy count when a job is dispatched to this machine."""
         try:
             r = self._machine_redis(machine)
-            r.incr(f"judge:busy:{machine['name']}")
-            r.expire(f"judge:busy:{machine['name']}", 3600)
+            key = f"judge:busy:{machine['name']}"
+            r.incr(key)
+            r.expire(key, 3600)
         except Exception:
-            pass
+            logger.exception('Failed to increment busy count for %s', machine.get('name'))
 
     def _decr_busy(self, machine):
-        """Decrement busy count when a job finishes on this machine."""
         try:
             r = self._machine_redis(machine)
-            val = r.decr(f"judge:busy:{machine['name']}")
-            print(val, f"judge:busy:{machine['name']}")
+            key = f"judge:busy:{machine['name']}"
+            val = r.decr(key)
             if val <= 0:
-                r.delete(f"judge:busy:{machine['name']}")
+                r.delete(key)
+            logger.info('Decremented busy count for %s to %s', machine.get('name'), max(val, 0))
         except Exception:
-            pass
+            logger.exception('Failed to decrement busy count for %s', machine.get('name'))
 
     def _set_submission_machine(self, submission_id, machine_name):
-        """Record which machine is processing a submission."""
+        """Record which machine is processing a submission using Django cache."""
         try:
+            from django.core.cache import cache
             cache.set(f'judge:sub_machine:{submission_id}', machine_name, 3600)
         except Exception:
-            pass
+            logger.exception(
+                'Failed to record submission %s on machine %s',
+                submission_id, machine_name,
+            )
 
     def _get_and_clear_submission_machine(self, submission_id):
-        """Get and clear the machine assignment for a submission."""
+        """Get and clear the machine assignment for a submission using Django cache."""
         try:
+            from django.core.cache import cache
             key = f'judge:sub_machine:{submission_id}'
             machine_name = cache.get(key)
-            print(machine_name)
             if machine_name:
                 cache.delete(key)
             return machine_name
         except Exception:
-            return None
+            logger.exception('Failed to lookup submission machine for %s', submission_id)
+        return None
 
-    def release_machine(self, submission_id):
-        """Called by the task when judging completes to decrement busy count."""
+    def release_machine(self, submission_id, queue_name=None):
+        """Decrement busy count when judging completes."""
         machine_name = self._get_and_clear_submission_machine(submission_id)
-        if machine_name:
-            # Find the machine config to get host/port/db
-            for m in self.machines:
-                if m['name'] == machine_name:
-                    self._decr_busy(m)
-                    logger.debug(f'Released machine {machine_name} for submission {submission_id}')
-                    return
+        machine = self._find_machine(name=machine_name)
+
+        if machine is None and queue_name:
+            machine = self._find_machine(queue=queue_name)
+            if machine:
+                logger.info(
+                    'Recovered machine %s for submission %s via queue %s',
+                    machine['name'], submission_id, queue_name,
+                )
+
+        if machine is None:
+            logger.warning(
+                'Could not resolve judge machine for submission %s (queue=%s)',
+                submission_id, queue_name,
+            )
+            return
+
+        self._decr_busy(machine)
 
     def select_machine(self):
-        """Select the least-loaded healthy judge machine.
-        Machines with fewer pending jobs are preferred.
-        Among equally-loaded machines, weight is used for tie-breaking."""
         if not self.multi_judge_enabled:
             return None
 
@@ -163,43 +177,41 @@ class JudgeLoadBalancer:
             logger.warning('No healthy judge machines available, falling back to default queue')
             return None
 
-        # Query queue lengths AND busy counts for all healthy machines
         machine_loads = []
         for m in healthy_machines:
             qlen = self._get_queue_length(m)
             busy = self._get_busy_count(m)
-            total_load = qlen + busy  # pending + currently executing
+            total_load = qlen + busy
             machine_loads.append((total_load, m))
             logger.debug(f'  {m["name"]}: queue={qlen}, busy={busy}, total={total_load}')
 
-        # Sort by queue length (ascending — less loaded first)
         machine_loads.sort(key=lambda x: x[0])
-
-        # Group machines with the same (minimum) queue length
         min_load = machine_loads[0][0]
-        candidates = [m for qlen, m in machine_loads if qlen == min_load]
+        candidates = [m for load, m in machine_loads if load == min_load]
 
-        # If only one candidate, return it
         if len(candidates) == 1:
-            logger.info(f'Selected judge machine: {candidates[0]["name"]} '
-                        f'(load: {min_load}, only idle candidate)')
-            return candidates[0]
+            selected = candidates[0]
+            logger.info(
+                f'Selected judge machine: {selected["name"]} '
+                f'(load: {min_load}, only idle candidate)'
+            )
+            return selected
 
-        # Tie-break among equally-loaded machines using weighted random
         total_weight = sum(m.get('weight', 1) for m in candidates)
         rand = random.uniform(0, total_weight)
         current = 0
         for m in candidates:
             current += m.get('weight', 1)
             if rand <= current:
-                logger.info(f'Selected judge machine: {m["name"]} '
-                            f'(load: {min_load}, weighted among {len(candidates)} candidates)')
+                logger.info(
+                    f'Selected judge machine: {m["name"]} '
+                    f'(load: {min_load}, weighted among {len(candidates)} candidates)'
+                )
                 return m
 
         return candidates[-1]
 
     def get_queue_for_machine(self, machine):
-        """Get RQ queue configuration for a specific judge machine."""
         if not machine:
             return 'default'
 
@@ -215,5 +227,4 @@ class JudgeLoadBalancer:
         }
 
 
-# Global load balancer instance
 load_balancer = JudgeLoadBalancer()
