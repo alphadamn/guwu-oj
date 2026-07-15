@@ -14,6 +14,10 @@ env:
   DB_PASSWORD: postgres
   DB_HOST: 127.0.0.1
   DB_PORT: 5432
+
+  CACHE_REDIS_TLS: 'false'
+  RQ_REDIS_TLS: 'false'
+
   CACHE_REDIS_PASSWORD: ci-rq-password-123!
   RQ_REDIS_PASSWORD: ci-rq-password-123!
 
