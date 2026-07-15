@@ -45,8 +45,6 @@ jobs:
           sudo service redis-server restart   # 改为 restart 确保配置重载
           sleep 2
           redis-cli --no-auth-warning -a "$RQ_REDIS_PASSWORD" ping && echo "Redis ready"
-          # 关闭 AppArmor（Ubuntu 默认）
-          sudo systemctl stop apparmor || true
 
       - name: Setup Python
         run: |
