@@ -46,7 +46,9 @@ jobs:
         run: |
           sudo apt-get install -y -qq python3-venv > /dev/null 2>&1
           python3 -m venv venv
+          venv/bin/pip install --upgrade pip -q
           venv/bin/pip install -r requirements.txt -q
+          venv/bin/python -c "import simpleui; print('SimpleUI installed')"
 
       - name: Installing package list
         run: apt list --installed
