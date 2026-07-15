@@ -535,8 +535,8 @@ SIMPLEUI_LOGO = '/apple-touch-icon.png'
 SIMPLEUI_INDEX = '/admin/'
 
 # 主题：'Default / dark | 2023 年开始 simpleui 支持多主题。
-# 通过 SIMPLEUI_DEFAULT_THEME = 'admin.light' 或 'admin.dark'
-SIMPLEUI_DEFAULT_THEME = 'admin.light'
+# 使用 SimpleUI 安装包中实际存在的主题文件名。
+SIMPLEUI_DEFAULT_THEME = 'light.css'
 
 # 站点信息 / 登录页面标题
 # 手动构建菜单。SimpleUI 对每个菜单模型项会生成递增内部 eid (从 1001 开始)。
