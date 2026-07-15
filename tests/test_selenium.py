@@ -303,6 +303,7 @@
 #     failures = test_runner.run_tests(['__main__'])
 # tests/test_selenium.py
 import time
+
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.core.cache import cache
@@ -311,6 +312,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.edge.service import Service
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
@@ -328,8 +330,14 @@ class SeleniumTests(StaticLiveServerTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        # Configure Edge WebDriver (headless can be enabled for CI)
+        cls.driver_path = EdgeChromiumDriverManager().install()
+        cls._start_driver()
+
+    @classmethod
+    def _start_driver(cls):
+        """Start a browser configured not to wait on third-party assets."""
         options = webdriver.EdgeOptions()
+        options.page_load_strategy = 'eager'
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
@@ -337,9 +345,10 @@ class SeleniumTests(StaticLiveServerTestCase):
         options.add_argument('--allow-insecure-localhost')
         options.add_argument('--disable-gpu')
         cls.driver = webdriver.Edge(
-            service=Service(EdgeChromiumDriverManager().install()),
-            options=options
+            service=Service(cls.driver_path),
+            options=options,
         )
+        cls.driver.set_page_load_timeout(30)
         cls.driver.implicitly_wait(10)
         cls.wait = WebDriverWait(cls.driver, 10)
 
@@ -349,8 +358,18 @@ class SeleniumTests(StaticLiveServerTestCase):
         super().tearDownClass()
 
     def setUp(self):
-        # Clear cookies between tests
-        self.driver.delete_all_cookies()
+        super().setUp()
+        # A previous page can leave EdgeDriver unresponsive while it waits on
+        # a third-party asset in GitHub Actions. Recreate only that failed
+        # browser session so one flaky command cannot fail the whole suite.
+        try:
+            self.driver.delete_all_cookies()
+        except WebDriverException:
+            try:
+                self.driver.quit()
+            except WebDriverException:
+                pass
+            self._start_driver()
         # Clear cache between tests
         cache.clear()
         
