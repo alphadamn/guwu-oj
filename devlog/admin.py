@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.shortcuts import render
+from django.urls import path
 from django.utils import timezone
 
 from .models import (
@@ -20,6 +22,30 @@ admin.site.site_header = '谷物 OJ 管理中心'
 admin.site.site_title = '谷物 OJ 后台'
 admin.site.index_title = '欢迎使用谷物 OJ — 快速查看系统运行状态与配置'
 admin.site.enable_nav_sidebar = True
+
+
+def env_generator_view(request):
+    """Render the browser-only deployment environment-file generator."""
+    return render(request, 'admin/devlog/env_generator.html', {
+        'title': '.env 配置生成器',
+    })
+
+
+_original_admin_get_urls = admin.site.get_urls
+
+
+def _admin_get_urls():
+    custom_urls = [
+        path(
+            'env-generator/',
+            admin.site.admin_view(env_generator_view),
+            name='env_generator',
+        ),
+    ]
+    return custom_urls + _original_admin_get_urls()
+
+
+admin.site.get_urls = _admin_get_urls
 
 
 def _register_singleton_admin(klass, short_description, fieldsets=None, list_display=None):
