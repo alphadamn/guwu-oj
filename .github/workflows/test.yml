@@ -34,13 +34,15 @@ jobs:
 
       - name: Start Redis
         run: |
-          sudo apt-get install -y -qq redis-server > /dev/null 2>&1
-          sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
-          sudo sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
-          echo 'requirepass ci-rq-password-123!' | sudo tee -a /etc/redis/redis.conf > /dev/null
-          sudo service redis-server start
-          sleep 1
-          redis-cli --no-auth-warning -a "$RQ_REDIS_PASSWORD" ping && echo "Redis ready"
+        sudo apt-get install -y -qq redis-server > /dev/null 2>&1
+        sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+        sudo sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
+        echo 'requirepass ci-rq-password-123!' | sudo tee -a /etc/redis/redis.conf > /dev/null
+        sudo service redis-server start
+        sleep 1
+        redis-cli --no-auth-warning -a "$RQ_REDIS_PASSWORD" ping && echo "Redis ready"
+        # 临时禁用 SELinux 以允许测试进程连接
+        sudo setenforce 0 || true
 
       - name: Setup Python
         run: |
