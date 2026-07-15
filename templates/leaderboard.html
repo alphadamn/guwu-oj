@@ -39,7 +39,7 @@
                         <td>
                             <a href="{% url 'profile' user.username %}">
                                 {% if user.has_avatar %}
-                                    <img src="{{ user.avatar_url }}" class="rounded-circle me-2" alt="Avatar" style="width: 30px; height: 30px; object-fit: cover;">
+                                    <img data-avatar-url="{{ user.avatar_url }}" class="rounded-circle me-2" alt="Avatar" style="width: 30px; height: 30px; object-fit: cover;">
                                 {% endif %}
                                 {{ user.nickname|default:user.username }}
                             </a>

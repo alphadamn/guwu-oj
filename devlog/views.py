@@ -361,7 +361,7 @@ def _check_judging_system(max_wait_seconds=None):
         health_problem = Problem.objects.filter(
             title='Health Check A+B', is_public=False
         ).first()
-        print(222)
+
         if not health_problem:
             return 0
 

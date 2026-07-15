@@ -10,3 +10,4 @@ db.sqlite3
 server.key
 staticfiles
 .idea
+dump.rdb

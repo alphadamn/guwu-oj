@@ -170,7 +170,9 @@ class User(AbstractUser):
 
         super().save(*args, **kwargs)
         # Clear relevant caches when user is saved
-        cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
+        delete_pattern = getattr(cache, 'delete_pattern', None)
+        if callable(delete_pattern):
+            delete_pattern('views.decorators.cache.*')  # Clear all view caches
         cache.delete('leaderboard_users')  # Clear leaderboard cache
         cache.delete('home_stats')  # Clear home stats cache
 
@@ -204,7 +206,9 @@ class AvatarBlob(models.Model):
         cache_key = f'avatar_data:{self.user.username}'
         freq_key_pattern = f'avatar_freq:{self.user.username}:*'
         cache.delete(cache_key)
-        cache.delete_pattern(freq_key_pattern)
+        delete_pattern = getattr(cache, 'delete_pattern', None)
+        if callable(delete_pattern):
+            delete_pattern(freq_key_pattern)
         
         super().save(*args, **kwargs)
 
@@ -222,10 +226,7 @@ class AvatarBlob(models.Model):
             return data
 
         try:
-            decompressed = gzip.decompress(data)
-            with open('tmp.png', 'wb') as f:
-                f.write(decompressed)
-            return decompressed
+            return gzip.decompress(data)
         except Exception as e:
             return data
 

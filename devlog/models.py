@@ -322,6 +322,18 @@ class CaptchaConfig(_Singleton):
         '验证码触发窗口（分钟）', default=60,
         help_text='统计提交频率的时间窗口长度，修改后立即生效。默认“每小时 30 次提交”后开始要求验证码。',
     )
+    captcha_avatar_captcha_enabled = models.BooleanField(
+        '头像高频访问时要求验证码', default=True,
+        help_text='当同一 IP 在时间窗口内请求头像达到阈值时，要求完成图形验证码。',
+    )
+    captcha_avatar_request_limit = models.PositiveSmallIntegerField(
+        '头像验证码触发阈值（次数）', default=30,
+        help_text='同一 IP 在窗口内请求头像达到该次数后要求图形验证码。',
+    )
+    captcha_avatar_request_window_minutes = models.PositiveSmallIntegerField(
+        '头像验证码触发窗口（分钟）', default=1,
+        help_text='统计同一 IP 头像请求次数的时间窗口长度。',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

@@ -26,7 +26,7 @@
                         {{ form.avatar|as_crispy_field }}
                         {% if user.has_avatar %}
                             <div class="mt-2">
-                                <img src="{{ user.avatar_url }}" class="rounded-circle" alt="Current avatar" style="width: 100px; height: 100px; object-fit: cover;">
+                                <img data-avatar-url="{{ user.avatar_url }}" class="rounded-circle" alt="Current avatar" style="width: 100px; height: 100px; object-fit: cover;">
                             </div>
                         {% endif %}
                     </div>

@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
-from django.utils.cache import patch_response_headers
+
 from django.utils.http import http_date
 from django_ratelimit.decorators import ratelimit
 from django.core.cache import cache
@@ -40,6 +40,9 @@ from .captcha import (
     login_requires_captcha,
     record_login_attempt,
     get_current_challenge_id,
+    record_avatar_request,
+    avatar_requires_captcha,
+    verify_avatar_captcha,
 )
 
 logger = logging.getLogger(__name__)
@@ -438,13 +441,37 @@ def edit_profile(request):
 
 
 @login_required
+def verify_avatar_captcha_view(request):
+    """Verify the CAPTCHA used to unlock high-frequency avatar requests."""
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'message': '请使用 POST 请求。'}, status=405)
+    challenge_id = (request.POST.get('captcha_id') or '').strip()
+    answer = (request.POST.get('captcha_answer') or '').strip()
+    if not challenge_id or not answer:
+        return JsonResponse({'ok': False, 'message': '请填写图形验证码。'}, status=400)
+    if not verify_avatar_captcha(request, challenge_id, answer):
+        return JsonResponse({'ok': False, 'message': '图形验证码错误或已失效，请重新获取。'}, status=400)
+    return JsonResponse({'ok': True, 'expires_in': 300})
+
+
+@login_required
 def avatar(request, username):
-    """Serve a user's avatar directly from the PostgreSQL database with Redis caching."""
+    """Serve a user's avatar directly from the PostgreSQL database with caching."""
     user = get_object_or_404(User, username=username)
     if not user.has_avatar:
         raise Http404('No avatar stored for this user')
 
     blob = user.avatar_blob
+
+    # Count by requester IP, not avatar username, so rotating usernames cannot
+    # bypass the protection. The current request is allowed to establish the
+    # threshold; later requests require a CAPTCHA proof.
+    record_avatar_request(request)
+    if avatar_requires_captcha(request):
+        return JsonResponse({
+            'captcha_required': True,
+            'message': '头像访问过于频繁，请完成图形验证码。',
+        }, status=429, headers={'X-Captcha-Required': '1'})
 
     cache_key = f'avatar_data:{username}'
     freq_key = f'avatar_freq:{username}'
@@ -452,21 +479,37 @@ def avatar(request, username):
     current_minute = int(time.time() // 60)
     minute_key = f'{freq_key}:{current_minute}'
 
-    request_count = cache.get_or_set(minute_key, 0, timeout=60)
-    request_count = cache.incr(minute_key)
-    cache.expire(minute_key, 60)
+    try:
+        if cache.add(minute_key, 1, timeout=60):
+            request_count = 1
+        else:
+            try:
+                request_count = cache.incr(minute_key)
+            except (ValueError, TypeError, AttributeError):
+                request_count = int(cache.get(minute_key) or 0) + 1
+                cache.set(minute_key, request_count, timeout=60)
+    except Exception as exc:
+        logger.warning('avatar cache frequency counter failed: %s', exc)
+        request_count = 1
 
     should_cache = request_count >= 5
+
+    def _avatar_response(data, content_type, cache_status):
+        response = HttpResponse(data, content_type=content_type)
+        response['Last-Modified'] = http_date(blob.updated_at.timestamp())
+        # Prevent browser, reverse-proxy, and Nginx proxy_cache storage.
+        response['Cache-Control'] = 'private, no-store, no-cache, must-revalidate, max-age=0'
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        response['X-Accel-Expires'] = '0'
+        response['X-Cache'] = cache_status
+        return response
 
     cached_data = cache.get(cache_key)
     if cached_data:
         cached_content_type, cached_image_data, cached_updated_at = cached_data
         if cached_updated_at == blob.updated_at.timestamp():
-            response = HttpResponse(cached_image_data, content_type=cached_content_type)
-            response['Last-Modified'] = http_date(blob.updated_at.timestamp())
-            patch_response_headers(response, cache_timeout=0)
-            response['X-Cache'] = 'HIT'
-            return response
+            return _avatar_response(cached_image_data, cached_content_type, 'HIT')
 
     image_data = blob.image_data
     content_type = blob.content_type
@@ -475,8 +518,4 @@ def avatar(request, username):
     if should_cache:
         cache.set(cache_key, (content_type, image_data, updated_at), timeout=3600)
 
-    response = HttpResponse(image_data, content_type=content_type)
-    response['Last-Modified'] = http_date(blob.updated_at.timestamp())
-    patch_response_headers(response, cache_timeout=0)
-    response['X-Cache'] = 'MISS'
-    return response
+    return _avatar_response(image_data, content_type, 'MISS')

@@ -246,6 +246,13 @@ class CaptchaConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
              'description': '当用户在 “窗口（分钟）” 时间内累计提交次数超过 “阈值” 时，'
                             '后续提交必须先输入图形验证码。修改后立即生效。'},
         ),
+        (
+            '头像访问保护',
+            {'fields': ('captcha_avatar_captcha_enabled',
+                        'captcha_avatar_request_limit',
+                        'captcha_avatar_request_window_minutes'),
+             'description': '按请求者 IP 统计头像访问频率。达到阈值后，头像请求会要求完成图形验证码。'},
+        ),
     )
     list_display = (
         'pk',
@@ -259,6 +266,9 @@ class CaptchaConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         'captcha_submission_captcha_enabled',
         'captcha_submission_limit',
         'captcha_submission_window_minutes',
+        'captcha_avatar_captcha_enabled',
+        'captcha_avatar_request_limit',
+        'captcha_avatar_request_window_minutes',
         'updated_at',
     )
 

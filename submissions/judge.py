@@ -34,6 +34,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
@@ -422,9 +423,12 @@ def finalize_submission(submission, case_results, max_runtime,
             submission.status = status
             submission.save(update_fields=["status", "runtime", "memory"])
             return
-    submission.status = "Accepted"
-    submission.save(update_fields=["status", "runtime", "memory"])
-    submission.user.solved_problems.add(problem)
+
+    with transaction.atomic():
+        submission.status = "Accepted"
+        submission.save(update_fields=["status", "runtime", "memory"])
+        if problem not in submission.user.solved_problems.all():
+            submission.user.solved_problems.add(problem)
 
 
 def _case_status_from_error(error, actual, expected):

@@ -167,7 +167,7 @@ def submission_status_api(request, submission_id):
 
 @login_required
 def submission_list(request):
-    submissions = Submission.objects.filter(user=request.user)
+    submissions = Submission.objects.filter(user=request.user).select_related('problem', 'user')
     return render(request, 'submissions/list.html', {'submissions': submissions})
 
 

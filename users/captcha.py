@@ -39,6 +39,7 @@ Usage
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import random
@@ -113,6 +114,9 @@ CAPTCHA_ON_ALL_POST = lambda: _cfg_bool('captcha_require_on_all_post', False)
 
 CACHE_PREFIX = 'captcha'
 _SESSION_KEY_CHALLENGE = '_captcha_challenge_id'
+_SESSION_KEY_AVATAR_PROOF_UNTIL = '_avatar_captcha_proof_until'
+_SESSION_KEY_AVATAR_PROOF_IP = '_avatar_captcha_proof_ip'
+AVATAR_PROOF_TTL_SECONDS = 5 * 60
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +348,8 @@ def get_current_challenge_id(request) -> str | None:
 
 
 def check_challenge(request, challenge_id: str, submitted_answer: str,
-                    *, consume: bool = True) -> bool:
+                    *, consume: bool = True,
+                    fail_open_on_cache_error: bool = True) -> bool:
     """Verify the submitted answer for ``challenge_id``.
 
     - Returns False on an empty/invalid ``challenge_id``.
@@ -379,8 +384,8 @@ def check_challenge(request, challenge_id: str, submitted_answer: str,
     try:
         expected = cache.get(_challenge_key(challenge_id))
     except Exception as exc:  # pragma: no cover - cache unavailable
-        logger.warning('Captcha cache read failed (%s); allowing', exc)
-        return True
+        logger.warning('Captcha cache read failed (%s)', exc)
+        return fail_open_on_cache_error
 
     if consume:
         try:
@@ -555,6 +560,107 @@ def check_submission_captcha(request) -> tuple[bool, str]:
     if check_challenge(request, challenge_id, submitted, consume=True):
         return True, ''
     return False, '图形验证码错误或已失效，请重新输入。'
+
+
+# ---------------------------------------------------------------------------
+# Avatar access protection
+# ---------------------------------------------------------------------------
+
+def _avatar_captcha_config() -> dict:
+    """Load avatar CAPTCHA settings with safe defaults."""
+    try:
+        from devlog.models import CaptchaConfig
+        cfg = CaptchaConfig.objects.first()
+        if cfg is None:
+            return {'enabled': True, 'limit': 30, 'window_seconds': 60}
+        return {
+            'enabled': bool(getattr(cfg, 'captcha_avatar_captcha_enabled', True)),
+            'limit': max(1, int(getattr(cfg, 'captcha_avatar_request_limit', 30) or 30)),
+            'window_seconds': max(
+                60,
+                int(getattr(cfg, 'captcha_avatar_request_window_minutes', 1) or 1) * 60,
+            ),
+        }
+    except Exception as exc:
+        logger.warning('avatar-captcha config unavailable: %s', exc)
+        return {'enabled': True, 'limit': 30, 'window_seconds': 60}
+
+
+def _avatar_rate_key(request, window_seconds: int) -> str:
+    ip = _client_ip(request)
+    # Avoid putting the raw client IP into cache keys visible to operators.
+    ip_digest = hashlib.sha256(ip.encode('utf-8')).hexdigest()[:32]
+    bucket = int(time.time()) // max(1, int(window_seconds))
+    return f'{CACHE_PREFIX}:rate:avatar:{ip_digest}:{bucket}'
+
+
+def record_avatar_request(request) -> int | None:
+    """Record an avatar request and return its current count.
+
+    ``None`` means the cache backend was unavailable. Callers should allow the
+    request in that case so a Redis outage does not take down avatar serving.
+    """
+    cfg = _avatar_captcha_config()
+    key = _avatar_rate_key(request, cfg['window_seconds'])
+    ttl = cfg['window_seconds'] + 10
+    try:
+        if cache.add(key, 1, timeout=ttl):
+            return 1
+        try:
+            return int(cache.incr(key))
+        except (ValueError, TypeError, AttributeError):
+            current = int(cache.get(key) or 0) + 1
+            cache.set(key, current, timeout=ttl)
+            return current
+    except Exception as exc:
+        logger.warning('avatar rate counter failed (%s); allowing', exc)
+        return None
+
+
+def avatar_requires_captcha(request) -> bool:
+    """Return whether this session must solve an avatar CAPTCHA."""
+    cfg = _avatar_captcha_config()
+    if not cfg['enabled']:
+        return False
+    try:
+        until = float(request.session.get(_SESSION_KEY_AVATAR_PROOF_UNTIL, 0) or 0)
+        proof_ip = request.session.get(_SESSION_KEY_AVATAR_PROOF_IP)
+        if until > time.time() and proof_ip == _client_ip(request):
+            return False
+        if until:
+            request.session.pop(_SESSION_KEY_AVATAR_PROOF_UNTIL, None)
+            request.session.pop(_SESSION_KEY_AVATAR_PROOF_IP, None)
+    except Exception:
+        pass
+
+    try:
+        count = cache.get(_avatar_rate_key(request, cfg['window_seconds']))
+        # The request that reaches the configured limit remains available;
+        # subsequent requests require verification.
+        return count is not None and int(count) > cfg['limit']
+    except Exception as exc:
+        logger.warning('avatar rate check failed (%s); allowing', exc)
+        return False
+
+
+def grant_avatar_captcha_proof(request) -> None:
+    request.session[_SESSION_KEY_AVATAR_PROOF_UNTIL] = time.time() + AVATAR_PROOF_TTL_SECONDS
+    request.session[_SESSION_KEY_AVATAR_PROOF_IP] = _client_ip(request)
+    request.session.modified = True
+
+
+def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str) -> bool:
+    """Strictly validate an avatar CAPTCHA and grant a short-lived proof."""
+    if not check_challenge(
+        request,
+        challenge_id,
+        submitted_answer,
+        consume=True,
+        fail_open_on_cache_error=False,
+    ):
+        return False
+    grant_avatar_captcha_proof(request)
+    return True
 
 
 # ---------------------------------------------------------------------------
