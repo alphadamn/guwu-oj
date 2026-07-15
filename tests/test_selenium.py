@@ -352,8 +352,11 @@ class SeleniumTests(StaticLiveServerTestCase):
         # Clear cookies between tests
         self.driver.delete_all_cookies()
         # Clear cache between tests
-        cache.clear()
-        
+        try:
+            cache.clear()
+        except Exception:
+            pass
+
         # Create a user that can be used for login tests
         self.test_user = User.objects.create_user(
             username='testuser',
@@ -377,7 +380,7 @@ class SeleniumTests(StaticLiveServerTestCase):
             is_public=True
         )
         self.problem.save()
-        
+
         # Add test cases for the problem
         TestCase.objects.create(
             problem=self.problem,
@@ -386,7 +389,7 @@ class SeleniumTests(StaticLiveServerTestCase):
             order=1,
             is_sample=True
         )
-        
+
         # print(f"Created problem with ID: {self.problem.id}, is_public: {self.problem.is_public}")
 
         # Create a second problem specifically for submission tests
@@ -404,7 +407,7 @@ class SeleniumTests(StaticLiveServerTestCase):
             is_public=True
         )
         self.submission_problem.save()
-        
+
         # Add test cases for the submission problem
         TestCase.objects.create(
             problem=self.submission_problem,
@@ -413,9 +416,9 @@ class SeleniumTests(StaticLiveServerTestCase):
             order=1,
             is_sample=True
         )
-        
+
         # print(f"Created submission problem with ID: {self.submission_problem.id}, is_public: {self.submission_problem.is_public}")
-        
+
         # Verify problems exist in database
         # print(f"Total problems in DB: {Problem.objects.count()}")
         # print(f"Public problems in DB: {Problem.objects.filter(is_public=True).count()}")
@@ -474,7 +477,7 @@ class SeleniumTests(StaticLiveServerTestCase):
         # print(f"Problem ID: {self.problem.id}")
         # print(f"Problem is_public: {self.problem.is_public}")
         # print(f"Problem exists: {Problem.objects.filter(id=self.problem.id).exists()}")
-        
+
         detail_url = f'/problem/{self.problem.id}/'  # adjust URL name
         self.driver.get(self.live_server_url + detail_url)
         self.wait_for_element(By.TAG_NAME, 'body')
