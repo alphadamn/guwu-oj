@@ -114,8 +114,6 @@ CAPTCHA_ON_ALL_POST = lambda: _cfg_bool('captcha_require_on_all_post', False)
 
 CACHE_PREFIX = 'captcha'
 _SESSION_KEY_CHALLENGE = '_captcha_challenge_id'
-_SESSION_KEY_AVATAR_PROOF_UNTIL = '_avatar_captcha_proof_until'
-_SESSION_KEY_AVATAR_PROOF_IP = '_avatar_captcha_proof_ip'
 AVATAR_PROOF_TTL_SECONDS = 5 * 60
 
 
@@ -586,12 +584,18 @@ def _avatar_captcha_config() -> dict:
         return {'enabled': True, 'limit': 30, 'window_seconds': 60}
 
 
+def _avatar_ip_digest(request) -> str:
+    """Return a stable, non-reversible cache-key component for the client IP."""
+    return hashlib.sha256(_client_ip(request).encode('utf-8')).hexdigest()[:32]
+
+
 def _avatar_rate_key(request, window_seconds: int) -> str:
-    ip = _client_ip(request)
-    # Avoid putting the raw client IP into cache keys visible to operators.
-    ip_digest = hashlib.sha256(ip.encode('utf-8')).hexdigest()[:32]
     bucket = int(time.time()) // max(1, int(window_seconds))
-    return f'{CACHE_PREFIX}:rate:avatar:{ip_digest}:{bucket}'
+    return f'{CACHE_PREFIX}:rate:avatar:{_avatar_ip_digest(request)}:{bucket}'
+
+
+def _avatar_proof_key(request, proof: str) -> str:
+    return f'{CACHE_PREFIX}:proof:avatar:{_avatar_ip_digest(request)}:{proof}'
 
 
 def record_avatar_request(request) -> int | None:
@@ -618,22 +622,19 @@ def record_avatar_request(request) -> int | None:
 
 
 def avatar_requires_captcha(request) -> bool:
-    """Return whether this session must solve an avatar CAPTCHA."""
+    """Return whether this avatar request needs CAPTCHA verification.
+
+    Request counts are shared by IP. A successful CAPTCHA yields a random proof
+    token that is bound to the same IP but is held only in the current page's
+    JavaScript memory, so reloading the page does not keep a CAPTCHA bypass.
+    """
     cfg = _avatar_captcha_config()
     if not cfg['enabled']:
         return False
     try:
-        until = float(request.session.get(_SESSION_KEY_AVATAR_PROOF_UNTIL, 0) or 0)
-        proof_ip = request.session.get(_SESSION_KEY_AVATAR_PROOF_IP)
-        if until > time.time() and proof_ip == _client_ip(request):
+        proof = (request.headers.get('X-Avatar-Captcha-Proof') or '').strip()
+        if proof and cache.get(_avatar_proof_key(request, proof)):
             return False
-        if until:
-            request.session.pop(_SESSION_KEY_AVATAR_PROOF_UNTIL, None)
-            request.session.pop(_SESSION_KEY_AVATAR_PROOF_IP, None)
-    except Exception:
-        pass
-
-    try:
         count = cache.get(_avatar_rate_key(request, cfg['window_seconds']))
         # The request that reaches the configured limit remains available;
         # subsequent requests require verification.
@@ -643,14 +644,23 @@ def avatar_requires_captcha(request) -> bool:
         return False
 
 
-def grant_avatar_captcha_proof(request) -> None:
-    request.session[_SESSION_KEY_AVATAR_PROOF_UNTIL] = time.time() + AVATAR_PROOF_TTL_SECONDS
-    request.session[_SESSION_KEY_AVATAR_PROOF_IP] = _client_ip(request)
-    request.session.modified = True
+def grant_avatar_captcha_proof(request) -> str | None:
+    """Create a short-lived, IP-bound proof for the current page."""
+    proof = secrets.token_urlsafe(32)
+    try:
+        cache.set(
+            _avatar_proof_key(request, proof),
+            '1',
+            timeout=AVATAR_PROOF_TTL_SECONDS,
+        )
+        return proof
+    except Exception as exc:
+        logger.warning('avatar CAPTCHA proof write failed: %s', exc)
+        return None
 
 
-def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str) -> bool:
-    """Strictly validate an avatar CAPTCHA and grant a short-lived proof."""
+def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str) -> str | None:
+    """Strictly validate an avatar CAPTCHA and return a page-local proof."""
     if not check_challenge(
         request,
         challenge_id,
@@ -658,9 +668,8 @@ def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str) -> 
         consume=True,
         fail_open_on_cache_error=False,
     ):
-        return False
-    grant_avatar_captcha_proof(request)
-    return True
+        return None
+    return grant_avatar_captcha_proof(request)
 
 
 # ---------------------------------------------------------------------------

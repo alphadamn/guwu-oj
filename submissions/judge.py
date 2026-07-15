@@ -427,8 +427,7 @@ def finalize_submission(submission, case_results, max_runtime,
     with transaction.atomic():
         submission.status = "Accepted"
         submission.save(update_fields=["status", "runtime", "memory"])
-        if problem not in submission.user.solved_problems.all():
-            submission.user.solved_problems.get_or_create(problem)
+        submission.user.solved_problems.get_or_create(problem)
 
 
 def _case_status_from_error(error, actual, expected):

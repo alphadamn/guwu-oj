@@ -449,12 +449,12 @@ def verify_avatar_captcha_view(request):
     answer = (request.POST.get('captcha_answer') or '').strip()
     if not challenge_id or not answer:
         return JsonResponse({'ok': False, 'message': '请填写图形验证码。'}, status=400)
-    if not verify_avatar_captcha(request, challenge_id, answer):
+    proof = verify_avatar_captcha(request, challenge_id, answer)
+    if not proof:
         return JsonResponse({'ok': False, 'message': '图形验证码错误或已失效，请重新获取。'}, status=400)
-    return JsonResponse({'ok': True, 'expires_in': 300})
+    return JsonResponse({'ok': True, 'proof': proof, 'expires_in': 300})
 
 
-@login_required
 def avatar(request, username):
     """Serve a user's avatar directly from the PostgreSQL database with caching."""
     user = get_object_or_404(User, username=username)

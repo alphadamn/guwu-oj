@@ -6,6 +6,11 @@
     var challengeId = '';
     var imageUrl = '';
     var verificationInProgress = false;
+    var proofStorageKey = 'oj.avatarCaptchaProof';
+    var avatarProof = '';
+    try {
+        avatarProof = window.sessionStorage.getItem(proofStorageKey) || '';
+    } catch (error) {}
 
     function csrfToken() {
         var match = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
@@ -51,6 +56,27 @@
             element.style.display = 'block';
             element.classList.add('show');
         }
+    }
+
+    function hideModal() {
+        var element = ensureModal();
+        if (window.bootstrap && window.bootstrap.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(element).hide();
+        } else {
+            element.style.display = 'none';
+            element.classList.remove('show');
+        }
+    }
+
+    function saveProof(proof) {
+        avatarProof = proof || '';
+        try {
+            if (avatarProof) {
+                window.sessionStorage.setItem(proofStorageKey, avatarProof);
+            } else {
+                window.sessionStorage.removeItem(proofStorageKey);
+            }
+        } catch (error) {}
     }
 
     function loadChallenge() {
@@ -103,16 +129,14 @@
                 if (!response.ok || !data.ok) throw new Error(data.message || '验证失败。');
                 return data;
             });
-        }).then(function () {
+        }).then(function (data) {
             challengeId = '';
-            pending.slice().forEach(loadAvatar);
+            answerInput.value = '';
+            saveProof(data.proof);
+            hideModal();
+            var blockedImages = pending.slice();
             pending = [];
-            if (window.bootstrap && window.bootstrap.Modal) {
-                window.bootstrap.Modal.getOrCreateInstance(element).hide();
-            } else {
-                element.style.display = 'none';
-                element.classList.remove('show');
-            }
+            blockedImages.forEach(loadAvatar);
         }).catch(function (error) {
             error = error || new Error('验证失败。');
             element.querySelector('.avatar-captcha-error').textContent = error.message;
@@ -126,8 +150,11 @@
     function loadAvatar(image) {
         var url = image.getAttribute('data-avatar-url');
         if (!url) return;
-        fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (response) {
+        var headers = {};
+        if (avatarProof) headers['X-Avatar-Captcha-Proof'] = avatarProof;
+        fetch(url, { credentials: 'same-origin', cache: 'no-store', headers: headers }).then(function (response) {
             if (response.status === 429 && response.headers.get('X-Captcha-Required') === '1') {
+                saveProof('');
                 if (pending.indexOf(image) === -1) pending.push(image);
                 showModal();
                 if (!challengeId) loadChallenge();
