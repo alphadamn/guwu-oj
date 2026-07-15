@@ -1,16 +1,17 @@
+import json
 import os
 import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import quote, urlencode
+
 from dotenv import load_dotenv
+
+from .logging_config import LOGGING
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Logging configuration
-from .logging_config import LOGGING
 
 DEMO_MODE = os.environ.get('DEMO_MODE', 'false').lower() in ('1', 'true', 'yes')
 TEST_MODE = 'test' in sys.argv
@@ -100,6 +101,71 @@ WSGI_APPLICATION = 'oj_project.wsgi.application'
 
 def _env_enabled(name, default=True):
     return os.environ.get(name, str(default)).lower() in ('1', 'true', 'yes')
+
+
+def _parse_judge_machines(raw, fallback):
+    """Parse and validate the optional JSON-based judge machine config."""
+    raw = raw or ''
+    if not raw.strip():
+        return fallback
+
+    try:
+        machines = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('JUDGE_MACHINES_JSON must contain valid JSON') from exc
+
+    if not isinstance(machines, list) or not machines:
+        raise ValueError('JUDGE_MACHINES_JSON must be a non-empty JSON array')
+
+    validated = []
+    queues = set()
+    for index, machine in enumerate(machines, start=1):
+        if not isinstance(machine, dict):
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} must be an object')
+
+        name = machine.get('name')
+        host = machine.get('host')
+        queue = machine.get('queue')
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} requires a non-empty name')
+        if not isinstance(host, str) or not host.strip():
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} requires a non-empty host')
+        if not isinstance(queue, str) or not queue.strip():
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} requires a non-empty queue')
+        name = name.strip()
+        host = host.strip()
+        queue = queue.strip()
+        if queue in queues:
+            raise ValueError(f'JUDGE_MACHINES_JSON has duplicate queue: {queue}')
+        queues.add(queue)
+
+        try:
+            port = int(machine.get('port', 6379))
+            db = int(machine.get('db', 0))
+            weight = int(machine.get('weight', 1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f'JUDGE_MACHINES_JSON item {index} has invalid port, db, or weight'
+            ) from exc
+        if not 1 <= port <= 65535 or db < 0 or weight < 1:
+            raise ValueError(
+                f'JUDGE_MACHINES_JSON item {index} has out-of-range port, db, or weight'
+            )
+
+        enabled = machine.get('enabled', True)
+        if not isinstance(enabled, bool):
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} enabled must be boolean')
+
+        validated.append({
+            'name': name,
+            'host': host,
+            'port': port,
+            'db': db,
+            'queue': queue,
+            'enabled': enabled,
+            'weight': weight,
+        })
+    return validated
 
 
 def _redis_tls_kwargs(enabled, ca_cert_path, direct=False):
@@ -221,7 +287,7 @@ if not DEMO_MODE:
         'low': _rq_queue_entry(rq_host, rq_port, rq_db),
     }
 
-    JUDGE_MACHINES = [
+    default_judge_machines = [
         {
             'name': 'judge-1',
             'host': judge_1_host,
@@ -232,6 +298,10 @@ if not DEMO_MODE:
             'weight': 1,
         },
     ]
+    JUDGE_MACHINES = _parse_judge_machines(
+        os.environ.get('JUDGE_MACHINES_JSON', ''),
+        default_judge_machines,
+    )
 
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
     OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
@@ -465,8 +535,8 @@ SIMPLEUI_LOGO = '/apple-touch-icon.png'
 SIMPLEUI_INDEX = '/admin/'
 
 # 主题：'Default / dark | 2023 年开始 simpleui 支持多主题。
-# 通过 SIMPLEUI_DEFAULT_THEME = 'admin.light' 或 'admin.dark'
-SIMPLEUI_DEFAULT_THEME = 'admin.light'
+# 使用 SimpleUI 安装包中实际存在的主题文件名。
+SIMPLEUI_DEFAULT_THEME = 'light.css'
 
 # 站点信息 / 登录页面标题
 # 手动构建菜单。SimpleUI 对每个菜单模型项会生成递增内部 eid (从 1001 开始)。
@@ -533,6 +603,8 @@ SIMPLEUI_CONFIG = {
             'name': '系统配置',
             'icon': 'fas fa-cog',
             'models': [
+                {'name': '.env 配置生成器', 'icon': 'fas fa-file-code',
+                 'url': '/admin/env-generator/'},
                 {'name': '缓存配置', 'icon': 'fas fa-database',
                  'url': '/admin/devlog/cacheconfig/'},
                 {'name': '验证码配置', 'icon': 'fas fa-shield-alt',

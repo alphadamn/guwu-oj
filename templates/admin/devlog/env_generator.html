@@ -1,0 +1,211 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .env-generator { max-width: 1120px; margin: 24px auto; }
+    .env-generator .card { background: var(--body-bg, #fff); border: 1px solid #dfe3e8; border-radius: 10px; margin-bottom: 18px; }
+    .env-generator .card-header { font-weight: 600; padding: 12px 16px; border-bottom: 1px solid #dfe3e8; }
+    .env-generator .card-body { padding: 16px; }
+    .env-generator .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 14px; }
+    .env-generator label { display: block; font-weight: 600; margin-bottom: 5px; }
+    .env-generator input, .env-generator select { box-sizing: border-box; width: 100%; padding: 8px; border: 1px solid #b9c1c9; border-radius: 5px; }
+    .env-generator .hint { color: #6c757d; font-size: 12px; margin: 5px 0 0; }
+    .env-generator .machine { border: 1px dashed #b9c1c9; border-radius: 7px; padding: 14px; margin-bottom: 12px; }
+    .env-generator .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+    .env-generator button { cursor: pointer; border: 0; border-radius: 5px; padding: 9px 14px; color: #fff; background: #1677ff; }
+    .env-generator button.secondary, .env-generator .remove-machine { background: #6c757d; }
+    .env-generator .remove-machine { float: right; padding: 5px 9px; font-size: 12px; }
+    .env-generator textarea { box-sizing: border-box; width: 100%; min-height: 430px; resize: vertical; padding: 13px; border: 1px solid #b9c1c9; border-radius: 6px; background: #1f2937; color: #e5e7eb; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .env-generator .warning { border-left: 4px solid #f59e0b; background: #fffbeb; padding: 12px 14px; margin-bottom: 18px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="env-generator">
+    <h1>.env 配置生成器</h1>
+    <div class="warning">
+        此工具只在浏览器中生成文本，不会提交、保存或发送任何输入内容。生成的 `.env` 含有密钥和密码；请仅将其保存到受限服务器，绝不要提交到 Git。
+    </div>
+
+    <div class="card">
+        <div class="card-header">Django 与 PostgreSQL</div>
+        <div class="card-body grid">
+            <div><label for="django-secret">DJANGO_SECRET_KEY</label><input id="django-secret" type="password" placeholder="留空可自动生成"><p class="hint">生成一个用于部署的 Django 密钥。</p></div>
+            <div><label for="django-debug">DJANGO_DEBUG</label><select id="django-debug"><option value="false">false（生产）</option><option value="true">true（开发）</option></select></div>
+            <div><label for="django-hosts">DJANGO_ALLOWED_HOSTS</label><input id="django-hosts" value="example.com,www.example.com"></div>
+            <div><label for="db-name">DB_NAME</label><input id="db-name" value="ojdb"></div>
+            <div><label for="db-user">DB_USER</label><input id="db-user" value="ojuser"></div>
+            <div><label for="db-password">DB_PASSWORD</label><input id="db-password" type="password" placeholder="数据库密码"></div>
+            <div><label for="db-host">DB_HOST</label><input id="db-host" value="127.0.0.1"></div>
+            <div><label for="db-port">DB_PORT</label><input id="db-port" value="5432"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">缓存与 RQ Redis</div>
+        <div class="card-body grid">
+            <div><label for="cache-host">CACHE_REDIS_HOST</label><input id="cache-host" value="127.0.0.1"></div>
+            <div><label for="cache-port">CACHE_REDIS_PORT</label><input id="cache-port" value="6379"></div>
+            <div><label for="cache-db">CACHE_REDIS_DB</label><input id="cache-db" value="1"></div>
+            <div><label for="cache-password">CACHE_REDIS_PASSWORD</label><input id="cache-password" type="password"></div>
+            <div><label for="cache-tls">CACHE_REDIS_TLS</label><select id="cache-tls"><option value="false">false</option><option value="true">true</option></select></div>
+            <div><label for="cache-ca">CACHE_REDIS_CA_CERT</label><input id="cache-ca" value="/etc/redis/tls/ca.crt"></div>
+            <div><label for="rq-host">RQ_REDIS_HOST</label><input id="rq-host" value="127.0.0.1"></div>
+            <div><label for="rq-port">RQ_REDIS_PORT</label><input id="rq-port" value="6379"></div>
+            <div><label for="rq-db">RQ_REDIS_DB</label><input id="rq-db" value="0"></div>
+            <div><label for="rq-password">RQ_REDIS_PASSWORD</label><input id="rq-password" type="password"><p class="hint">生产环境至少 12 位，包含字母、数字和特殊字符。</p></div>
+            <div><label for="rq-tls">RQ_REDIS_TLS</label><select id="rq-tls"><option value="false">false</option><option value="true">true</option></select></div>
+            <div><label for="rq-ca">RQ_REDIS_CA_CERT</label><input id="rq-ca" value="/etc/redis/tls/ca.crt"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">评测机</div>
+        <div class="card-body">
+            <div class="grid">
+                <div><label for="multi-judge">OJ_MULTI_JUDGE_ENABLED</label><select id="multi-judge"><option value="true">true</option><option value="false">false</option></select></div>
+                <div><label for="oj-role">OJ_ROLE</label><select id="oj-role"><option value="web">web</option><option value="worker">worker</option></select></div>
+                <div><label for="docker-enabled">OJ_DOCKER_ENABLED</label><select id="docker-enabled"><option value="true">true</option><option value="false">false</option></select></div>
+                <div><label for="docker-image">OJ_DOCKER_IMAGE</label><input id="docker-image" value="oj-judge:latest"></div>
+                <div><label for="docker-pids">OJ_DOCKER_PIDS_LIMIT</label><input id="docker-pids" value="64"></div>
+                <div><label for="subprocess-timeout">OJ_SUBPROCESS_TIMEOUT_SEC</label><input id="subprocess-timeout" value="5"></div>
+            </div>
+            <div id="machines"></div>
+            <button class="secondary" type="button" id="add-machine">添加评测机</button>
+            <p class="hint">评测机配置会写入 JUDGE_MACHINES_JSON，支持多台机器并由应用统一解析。</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">SMTP 邮件</div>
+        <div class="card-body grid">
+            <div><label for="email-backend">EMAIL_BACKEND</label><input id="email-backend" value="django.core.mail.backends.smtp.EmailBackend"></div>
+            <div><label for="email-host">EMAIL_HOST</label><input id="email-host" placeholder="smtp.example.com"></div>
+            <div><label for="email-port">EMAIL_PORT</label><input id="email-port" value="587"></div>
+            <div><label for="email-user">EMAIL_HOST_USER</label><input id="email-user" placeholder="noreply@example.com"></div>
+            <div><label for="email-password">EMAIL_HOST_PASSWORD</label><input id="email-password" type="password" placeholder="SMTP 密码或授权码"></div>
+            <div><label for="email-tls">EMAIL_USE_TLS</label><select id="email-tls"><option value="true">true</option><option value="false">false</option></select></div>
+            <div><label for="email-ssl">EMAIL_USE_SSL</label><select id="email-ssl"><option value="false">false</option><option value="true">true</option></select></div>
+            <div><label for="from-email">DEFAULT_FROM_EMAIL</label><input id="from-email" placeholder="noreply@example.com"></div>
+            <div><label for="server-email">SERVER_EMAIL</label><input id="server-email" placeholder="noreply@example.com"></div>
+            <div><label for="admins-csv">ADMINS_CSV</label><input id="admins-csv" placeholder="Admin:admin@example.com"></div>
+        </div>
+    </div>
+
+    <div class="actions">
+        <button type="button" id="generate">生成 .env</button>
+        <button class="secondary" type="button" id="copy">复制内容</button>
+        <button class="secondary" type="button" id="download">下载 .env</button>
+    </div>
+    <textarea id="output" spellcheck="false" aria-label="生成的 .env 内容"></textarea>
+</div>
+
+<template id="machine-template">
+    <div class="machine">
+        <button class="remove-machine" type="button">删除</button>
+        <strong class="machine-title">评测机</strong>
+        <div class="grid" style="margin-top: 12px;">
+            <div><label>名称</label><input class="machine-name" value="judge-1"></div>
+            <div><label>主机 / IP</label><input class="machine-host" value="127.0.0.1"></div>
+            <div><label>Redis 端口</label><input class="machine-port" value="6379"></div>
+            <div><label>Redis DB</label><input class="machine-db" value="0"></div>
+            <div><label>队列</label><input class="machine-queue" value="judge-1"></div>
+            <div><label>权重</label><input class="machine-weight" value="1"></div>
+        </div>
+    </div>
+</template>
+{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const $ = (id) => document.getElementById(id);
+    const value = (id) => $(id).value.trim();
+    const machines = $('machines');
+
+    function quote(value) {
+        if (!value) return '';
+        return /[\s#"'\\]/.test(value) ? JSON.stringify(value) : value;
+    }
+
+    function addMachine(machine = {}) {
+        const node = $('machine-template').content.firstElementChild.cloneNode(true);
+        const index = machines.children.length + 1;
+        node.querySelector('.machine-title').textContent = `评测机 ${index}`;
+        node.querySelector('.machine-name').value = machine.name || `judge-${index}`;
+        node.querySelector('.machine-host').value = machine.host || '127.0.0.1';
+        node.querySelector('.machine-port').value = machine.port || '6379';
+        node.querySelector('.machine-db').value = machine.db || '0';
+        node.querySelector('.machine-queue').value = machine.queue || `judge-${index}`;
+        node.querySelector('.machine-weight').value = machine.weight || '1';
+        node.querySelector('.remove-machine').addEventListener('click', () => { node.remove(); renumberMachines(); });
+        machines.appendChild(node);
+    }
+
+    function renumberMachines() {
+        [...machines.children].forEach((node, index) => {
+            node.querySelector('.machine-title').textContent = `评测机 ${index + 1}`;
+        });
+    }
+
+    function secret() {
+        const bytes = new Uint8Array(48);
+        crypto.getRandomValues(bytes);
+        return [...bytes].map((byte) => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*-_'.charAt(byte % 72)).join('');
+    }
+
+    function generate() {
+        const djangoSecret = value('django-secret') || secret();
+        $('django-secret').value = djangoSecret;
+        const lines = [
+            '# Generated locally by Guwu OJ Admin. Do not commit this file.',
+            `DJANGO_SECRET_KEY=${quote(djangoSecret)}`,
+            `DJANGO_DEBUG=${value('django-debug')}`,
+            `DJANGO_ALLOWED_HOSTS=${quote(value('django-hosts'))}`,
+            '', '# PostgreSQL',
+            `DB_NAME=${quote(value('db-name'))}`,
+            `DB_USER=${quote(value('db-user'))}`,
+            `DB_PASSWORD=${quote(value('db-password'))}`,
+            `DB_HOST=${quote(value('db-host'))}`,
+            `DB_PORT=${quote(value('db-port'))}`,
+            '', '# Cache Redis',
+            `CACHE_REDIS_HOST=${quote(value('cache-host'))}`,
+            `CACHE_REDIS_PORT=${quote(value('cache-port'))}`,
+            `CACHE_REDIS_DB=${quote(value('cache-db'))}`,
+            `CACHE_REDIS_PASSWORD=${quote(value('cache-password'))}`,
+            `CACHE_REDIS_TLS=${value('cache-tls')}`,
+            '', '# RQ Redis',
+            `RQ_REDIS_HOST=${quote(value('rq-host'))}`,
+            `RQ_REDIS_PORT=${quote(value('rq-port'))}`,
+            `RQ_REDIS_DB=${quote(value('rq-db'))}`,
+            `RQ_REDIS_PASSWORD=${quote(value('rq-password'))}`,
+            `RQ_REDIS_TLS=${value('rq-tls')}`,
+        ];
+        if (value('cache-tls') === 'true') lines.push(`CACHE_REDIS_CA_CERT=${quote(value('cache-ca'))}`);
+        if (value('rq-tls') === 'true') lines.push(`RQ_REDIS_CA_CERT=${quote(value('rq-ca'))}`);
+        lines.push('', '# OJ runtime', `OJ_MULTI_JUDGE_ENABLED=${value('multi-judge')}`, `OJ_ROLE=${value('oj-role')}`, `OJ_DOCKER_ENABLED=${value('docker-enabled')}`, `OJ_DOCKER_IMAGE=${quote(value('docker-image'))}`, `OJ_DOCKER_PIDS_LIMIT=${quote(value('docker-pids'))}`, `OJ_SUBPROCESS_TIMEOUT_SEC=${quote(value('subprocess-timeout'))}`);
+        const machineConfig = [...machines.children].map((machine, index) => ({
+            name: machine.querySelector('.machine-name').value.trim() || `judge-${index + 1}`,
+            host: machine.querySelector('.machine-host').value.trim() || '127.0.0.1',
+            port: Number(machine.querySelector('.machine-port').value.trim() || 6379),
+            db: Number(machine.querySelector('.machine-db').value.trim() || 0),
+            queue: machine.querySelector('.machine-queue').value.trim() || `judge-${index + 1}`,
+            enabled: true,
+            weight: Number(machine.querySelector('.machine-weight').value.trim() || 1),
+        }));
+        lines.push('', '# Judge machines', `JUDGE_MACHINES_JSON=${quote(JSON.stringify(machineConfig))}`);
+        lines.push('', '# SMTP', `EMAIL_BACKEND=${quote(value('email-backend'))}`, `EMAIL_HOST=${quote(value('email-host'))}`, `EMAIL_PORT=${quote(value('email-port'))}`, `EMAIL_HOST_USER=${quote(value('email-user'))}`, `EMAIL_HOST_PASSWORD=${quote(value('email-password'))}`, `EMAIL_USE_TLS=${value('email-tls')}`, `EMAIL_USE_SSL=${value('email-ssl')}`, `DEFAULT_FROM_EMAIL=${quote(value('from-email'))}`, `SERVER_EMAIL=${quote(value('server-email'))}`, `ADMINS_CSV=${quote(value('admins-csv'))}`, '');
+        $('output').value = lines.join('\n');
+    }
+
+    $('add-machine').addEventListener('click', () => addMachine());
+    $('generate').addEventListener('click', generate);
+    $('copy').addEventListener('click', async () => { generate(); await navigator.clipboard.writeText($('output').value); $('copy').textContent = '已复制'; setTimeout(() => { $('copy').textContent = '复制内容'; }, 1500); });
+    $('download').addEventListener('click', () => { generate(); const blob = new Blob([$('output').value], { type: 'text/plain;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = '.env'; link.click(); URL.revokeObjectURL(link.href); });
+    addMachine();
+    generate();
+});
+</script>
+{% endblock %}
