@@ -14,6 +14,10 @@ env:
   DB_PASSWORD: postgres
   DB_HOST: 127.0.0.1
   DB_PORT: 5432
+
+  CACHE_REDIS_TLS: 'false'
+  RQ_REDIS_TLS: 'false'
+
   CACHE_REDIS_PASSWORD: ci-rq-password-123!
   RQ_REDIS_PASSWORD: ci-rq-password-123!
 
@@ -38,15 +42,19 @@ jobs:
           sudo sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
           sudo sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis/redis.conf
           echo 'requirepass ci-rq-password-123!' | sudo tee -a /etc/redis/redis.conf > /dev/null
-          sudo service redis-server start
-          sleep 1
+          sudo service redis-server restart   # 改为 restart 确保配置重载
+          sleep 2
           redis-cli --no-auth-warning -a "$RQ_REDIS_PASSWORD" ping && echo "Redis ready"
+          # 关闭 AppArmor（Ubuntu 默认）
+          sudo systemctl stop apparmor || true
 
       - name: Setup Python
         run: |
           sudo apt-get install -y -qq python3-venv > /dev/null 2>&1
           python3 -m venv venv
+          venv/bin/pip install --upgrade pip -q
           venv/bin/pip install -r requirements.txt -q
+          venv/bin/python -c "import simpleui; print('SimpleUI installed')"
 
       - name: Installing package list
         run: apt list --installed
@@ -58,6 +66,22 @@ jobs:
         run: sudo apt-get install xvfb
       - name: Run migrations
         run: venv/bin/python manage.py migrate
+
+      - name: Direct Redis connection test (bypass Django)
+        run: |
+          venv/bin/python -c "
+          import redis
+          import os
+          r = redis.Redis(
+              host='127.0.0.1',
+              port=6379,
+              password=os.environ['RQ_REDIS_PASSWORD'],
+              decode_responses=True,
+              socket_connect_timeout=5
+          )
+          print('Ping response:', r.ping())
+          print('Set/Get test:', r.set('foo', 'bar') and r.get('foo'))
+          "
 
       - name: Run tests
         run: venv/bin/python -Wa manage.py test --verbosity=2
