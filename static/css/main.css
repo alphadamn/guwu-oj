@@ -475,11 +475,15 @@ main.container {
     background: var(--oj-primary);
 }
 
+.problem-sidebar-stack,
+.submission-sidebar-stack {
+    position: sticky;
+    top: 5.5rem;
+}
+
 .problem-sidebar-card,
 .submission-sidebar-card,
 .problem-actions-card {
-    position: sticky;
-    top: 5.5rem;
     background: var(--oj-surface-glass);
     backdrop-filter: blur(18px) saturate(130%);
 }
@@ -491,8 +495,10 @@ main.container {
 }
 
 .problem-actions-card {
-    top: 20rem;
+    margin-top: 1rem;
 }
+
+
 
 .submission-actions {
     display: flex;
@@ -512,14 +518,9 @@ main.container {
 }
 
 @media (max-width: 991.98px) {
-    .problem-sidebar-card,
-    .submission-sidebar-card,
-    .problem-actions-card {
+    .problem-sidebar-stack,
+    .submission-sidebar-stack {
         position: static;
-    }
-
-    .problem-actions-card {
-        margin-top: 1rem;
     }
 }
 
