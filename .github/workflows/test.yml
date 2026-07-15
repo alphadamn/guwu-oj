@@ -66,18 +66,18 @@ jobs:
       - name: Direct Redis connection test (bypass Django)
         run: |
           venv/bin/python -c "
-      import redis
-      import os
-      r = redis.Redis(
-          host='127.0.0.1',
-          port=6379,
-          password=os.environ['RQ_REDIS_PASSWORD'],
-          decode_responses=True,
-          socket_connect_timeout=5
-      )
-      print('Ping response:', r.ping())
-      print('Set/Get test:', r.set('foo', 'bar') and r.get('foo'))
-      "
+          import redis
+          import os
+          r = redis.Redis(
+              host='127.0.0.1',
+              port=6379,
+              password=os.environ['RQ_REDIS_PASSWORD'],
+              decode_responses=True,
+              socket_connect_timeout=5
+          )
+          print('Ping response:', r.ping())
+          print('Set/Get test:', r.set('foo', 'bar') and r.get('foo'))
+          "
 
       - name: Run tests
         run: venv/bin/python -Wa manage.py test --verbosity=2
