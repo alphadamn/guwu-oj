@@ -27,3 +27,4 @@ selenium>=4.0.0
 webdriver-manager>=4.0.0
 django-crontab
 django-simpleui
+redis
