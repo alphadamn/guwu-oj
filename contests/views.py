@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Count, Q
 from django.http import Http404, HttpResponseForbidden
@@ -10,7 +10,6 @@ from django.views.decorators.http import require_POST
 from django_ratelimit.decorators import ratelimit
 
 from submissions.models import Submission
-from .forms import ContestForm, ContestProblemForm, parse_test_cases_from_post, save_test_cases, validate_test_cases
 from .models import Contest, ContestProblem
 
 
@@ -44,63 +43,6 @@ def contest_question(request, contest_id, question_id):
         return render(request, 'contests/unavailable.html', {'contest': contest})
     used = Submission.objects.filter(user=request.user, contest_problem=item).count() if request.user.is_authenticated else 0
     return render(request, 'contests/question.html', {'contest': contest, 'item': item, 'problem': item, 'used': used, 'remaining': max(0, contest.max_submissions_per_problem - used)})
-
-
-@login_required
-@permission_required('contests.add_contest', raise_exception=True)
-def create_contest(request):
-    if request.method == 'POST':
-        contest_form = ContestForm(request.POST)
-        question_form = ContestProblemForm(request.POST)
-        cases = parse_test_cases_from_post(request.POST)
-        error = validate_test_cases(cases)
-        if contest_form.is_valid() and question_form.is_valid() and not error:
-            with transaction.atomic():
-                contest = Contest.objects.create(creator=request.user, **contest_form.cleaned_data)
-                problem = question_form.save(commit=False)
-                problem.contest = contest
-                problem.created_by = request.user
-                problem.order = 0
-                problem.save()
-                save_test_cases(problem, cases)
-            messages.success(request, '竞赛创建成功。')
-            return redirect('contest_detail', contest_id=contest.id)
-        if error:
-            messages.error(request, error)
-    else:
-        contest_form = ContestForm()
-        question_form = ContestProblemForm()
-    return render(request, 'contests/create.html', {'contest_form': contest_form, 'question_form': question_form})
-
-
-@login_required
-@permission_required('contests.change_contest', raise_exception=True)
-def add_contest_question(request, contest_id):
-    contest = get_object_or_404(Contest, pk=contest_id)
-    if contest.is_finished:
-        raise Http404('Contest has already finished')
-    if request.method == 'POST':
-        question_form = ContestProblemForm(request.POST)
-        cases = parse_test_cases_from_post(request.POST)
-        error = validate_test_cases(cases)
-        if question_form.is_valid() and not error:
-            with transaction.atomic():
-                problem = question_form.save(commit=False)
-                problem.contest = contest
-                problem.created_by = request.user
-                problem.order = contest.problems.count()
-                problem.save()
-                save_test_cases(problem, cases)
-            messages.success(request, '竞赛题目已添加。')
-            return redirect('contest_detail', contest_id=contest.id)
-        if error:
-            messages.error(request, error)
-    else:
-        question_form = ContestProblemForm()
-    return render(request, 'contests/add_question.html', {
-        'contest': contest,
-        'question_form': question_form,
-    })
 
 
 @login_required

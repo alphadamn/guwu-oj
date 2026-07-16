@@ -1,3 +1,18 @@
 {% extends 'base.html' %}
-{% block title %}竞赛{% endblock %}
-{% block content %}<div class="card"><div class="card-header"><h4>在线竞赛</h4></div><div class="card-body"><a class="btn btn-primary mb-3" href="{% url 'create_contest' %}">创建竞赛</a><div class="list-group">{% for contest in contests %}<a class="list-group-item list-group-item-action" href="{% url 'contest_detail' contest.id %}"><strong>{{ contest.name }}</strong><span class="float-end">{% if contest.is_live %}进行中{% elif contest.is_upcoming %}未开始{% else %}已结束{% endif %}</span><br><small>{{ contest.start_at }} - {{ contest.end_at }}</small></a>{% empty %}<p class="text-muted">暂无竞赛</p>{% endfor %}</div></div></div>{% endblock %}
+
+{% block title %}在线竞赛 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+    .contest-list-header { background: linear-gradient(135deg, #2563eb, #4f46e5); color: #fff; border-radius: 1rem; padding: 2rem; }
+    .contest-list-card { border: 0; border-radius: 1rem; box-shadow: 0 .5rem 1.5rem rgba(15, 23, 42, .08); overflow: hidden; }
+    .contest-row { border-left: 4px solid #94a3b8; transition: transform .15s ease, box-shadow .15s ease; }
+    .contest-row:hover { transform: translateY(-2px); box-shadow: 0 .4rem 1rem rgba(15, 23, 42, .08); }
+    .contest-row.live { border-left-color: #22c55e; } .contest-row.upcoming { border-left-color: #f59e0b; } .contest-row.finished { border-left-color: #64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="contest-list-header mb-4"><div class="d-flex align-items-center gap-3"><i class="bi bi-trophy-fill fs-1"></i><div><h1 class="h3 mb-1">在线竞赛</h1><p class="mb-0 text-white-50">参加正在进行的竞赛，查看题目与实时成绩。</p></div></div></section>
+<div class="card contest-list-card"><div class="card-body p-0"><div class="list-group list-group-flush">{% for contest in contests %}<a class="list-group-item list-group-item-action contest-row {% if contest.is_live %}live{% elif contest.is_upcoming %}upcoming{% else %}finished{% endif %} p-4" href="{% url 'contest_detail' contest.id %}"><div class="d-flex flex-column flex-md-row justify-content-between gap-3"><div><h2 class="h5 mb-2">{{ contest.name }}</h2><p class="mb-2 text-muted">{{ contest.description|default:'暂无竞赛说明'|truncatechars:120 }}</p><small class="text-secondary"><i class="bi bi-calendar-event me-1"></i>{{ contest.start_at|date:'Y-m-d H:i' }} — {{ contest.end_at|date:'Y-m-d H:i' }}</small></div><div class="text-md-end"><span class="badge {% if contest.is_live %}bg-success{% elif contest.is_upcoming %}bg-warning text-dark{% else %}bg-secondary{% endif %} px-3 py-2">{% if contest.is_live %}进行中{% elif contest.is_upcoming %}未开始{% else %}已结束{% endif %}</span><div class="small text-muted mt-3">每题 {{ contest.max_submissions_per_problem }} 次提交</div></div></div></a>{% empty %}<div class="p-5 text-center text-muted"><i class="bi bi-calendar-x fs-1 d-block mb-3"></i>暂无竞赛</div>{% endfor %}</div></div></div>
+{% endblock %}

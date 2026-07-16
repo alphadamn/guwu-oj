@@ -1,10 +1,11 @@
 from datetime import timedelta
 
-from django.contrib.auth.models import Permission
-from django.test import TestCase
+from django.contrib.admin.sites import AdminSite
+from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from contests.admin import ContestAdmin
 from contests.models import Contest, ContestProblem, ContestTestCase
 from problems.models import Problem
 from submissions.models import Submission, SubmissionTestResult
@@ -88,9 +89,24 @@ class ContestFeatureTests(TestCase):
         self.assertContains(response, self.player.username)
         self.assertContains(response, '>1<')
 
-    def test_creation_requires_native_add_contest_permission(self):
-        self.assertTrue(self.client.login(username='player', password='password'))
-        url = reverse('create_contest')
-        self.assertEqual(self.client.get(url).status_code, 403)
-        self.player.user_permissions.add(Permission.objects.get(codename='add_contest'))
-        self.assertEqual(self.client.get(url).status_code, 200)
+    def test_public_contest_pages_do_not_offer_authoring_routes(self):
+        contest, _item = self.create_contest_problem()
+        response = self.client.get(reverse('contest_list'))
+        self.assertNotContains(response, '创建竞赛')
+        response = self.client.get(reverse('contest_detail', args=[contest.id]))
+        self.assertNotContains(response, '添加题目')
+        self.assertEqual(self.client.get('/contests/create/').status_code, 404)
+        self.assertEqual(self.client.get(f'/contests/{contest.id}/questions/add/').status_code, 404)
+
+    def test_admin_action_ends_and_publishes_selected_contest(self):
+        contest, item = self.create_contest_problem()
+        request = RequestFactory().post('/admin/contests/contest/')
+        request.user = self.creator
+        admin_instance = ContestAdmin(Contest, AdminSite())
+        admin_instance.message_user = lambda *args, **kwargs: None
+        admin_instance.end_selected_contests(request, Contest.objects.filter(pk=contest.pk))
+        contest.refresh_from_db()
+        item.refresh_from_db()
+        self.assertTrue(contest.is_finished)
+        self.assertIsNotNone(contest.published_at)
+        self.assertIsNotNone(item.published_problem)
