@@ -14,7 +14,7 @@ from .models import Contest, ContestProblem
 
 
 def _publish_finished():
-    for contest in Contest.objects.filter(published_at__isnull=True, end_at__lte=timezone.now()):
+    for contest in Contest.objects.filter(end_at__lte=timezone.now()):
         contest.publish_finished_problems()
 
 
@@ -41,8 +41,17 @@ def contest_question(request, contest_id, question_id):
     item = get_object_or_404(ContestProblem.objects.select_related('contest'), pk=question_id, contest=contest)
     if not contest.is_live:
         return render(request, 'contests/unavailable.html', {'contest': contest})
-    used = Submission.objects.filter(user=request.user, contest_problem=item).count() if request.user.is_authenticated else 0
-    return render(request, 'contests/question.html', {'contest': contest, 'item': item, 'problem': item, 'used': used, 'remaining': max(0, contest.max_submissions_per_problem - used)})
+    submissions = Submission.objects.filter(user=request.user, contest_problem=item) if request.user.is_authenticated else Submission.objects.none()
+    used = submissions.count()
+    solved = submissions.filter(status='Accepted').exists()
+    return render(request, 'contests/question.html', {
+        'contest': contest,
+        'item': item,
+        'problem': item,
+        'used': used,
+        'solved': solved,
+        'remaining': max(0, contest.max_submissions_per_problem - used),
+    })
 
 
 @login_required
@@ -67,7 +76,11 @@ def submit_contest_solution(request, contest_id, question_id):
         return redirect('contest_question', contest_id=contest.id, question_id=item.id)
     with transaction.atomic():
         locked = ContestProblem.objects.select_for_update().select_related('contest').get(pk=item.id)
-        used = Submission.objects.filter(user=request.user, contest_problem=locked).count()
+        existing_submissions = Submission.objects.filter(user=request.user, contest_problem=locked)
+        if existing_submissions.filter(status='Accepted').exists():
+            messages.success(request, '本题已全部通过，无需再次提交，请继续下一题。')
+            return redirect('contest_question', contest_id=contest.id, question_id=item.id)
+        used = existing_submissions.count()
         if used >= locked.contest.max_submissions_per_problem:
             messages.error(request, '本题提交次数已用完，请移步下一题。')
             return redirect('contest_question', contest_id=contest.id, question_id=item.id)
@@ -86,18 +99,30 @@ def submit_contest_solution(request, contest_id, question_id):
 
 def contest_standings(request, contest_id):
     contest = _contest_or_404(contest_id)
-    rows = []
-    submissions = Submission.objects.filter(contest_problem__contest=contest).select_related('user').prefetch_related('test_results')
-    grouped = {}
+    submissions = Submission.objects.filter(
+        contest_problem__contest=contest,
+    ).select_related('user').prefetch_related('test_results').order_by(
+        'user_id', 'contest_problem_id', '-created_at', '-id',
+    )
+
+    latest_submissions = {}
     for submission in submissions:
-        row = grouped.setdefault(submission.user_id, {'user': submission.user, 'accepted': 0, 'non_accepted': 0, 'submissions': 0})
+        latest_submissions.setdefault((submission.user_id, submission.contest_problem_id), submission)
+
+    grouped = {}
+    for submission in latest_submissions.values():
+        row = grouped.setdefault(
+            submission.user_id,
+            {'user': submission.user, 'accepted': 0, 'non_accepted': 0, 'submissions': 0},
+        )
         row['submissions'] += 1
         for result in submission.test_results.all():
             if result.status == 'Accepted':
                 row['accepted'] += 1
             else:
                 row['non_accepted'] += 1
+
     for row in grouped.values():
-        row['score'] = row['accepted'] * 2 - row['non_accepted']
+        row['score'] = row['accepted'] * 1.5 - row['non_accepted']
     rows = sorted(grouped.values(), key=lambda value: (-value['score'], -value['accepted'], value['user'].id))
     return render(request, 'contests/standings.html', {'contest': contest, 'standings': rows})

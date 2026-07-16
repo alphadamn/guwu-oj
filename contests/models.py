@@ -40,16 +40,27 @@ class Contest(models.Model):
         return timezone.now() >= self.end_at
 
     def publish_finished_problems(self):
+        """Publish every unfinished contest problem, safely retrying partial runs."""
         if not self.is_finished:
             return False
         with transaction.atomic():
             contest = Contest.objects.select_for_update().get(pk=self.pk)
-            if contest.published_at:
+            pending_problems = list(
+                contest.problems.filter(published_problem__isnull=True).prefetch_related('test_cases')
+            )
+            if not pending_problems:
+                if contest.published_at is None:
+                    contest.published_at = timezone.now()
+                    contest.save(update_fields=['published_at', 'updated_at'])
+                    self.published_at = contest.published_at
                 return False
-            tag = f'contest:{slugify(contest.name)[:190] or contest.pk}'
-            for item in contest.problems.prefetch_related('test_cases'):
-                if item.published_problem_id:
-                    continue
+
+            # Keep the contest's readable name in the public problem tag.
+            # Tags are whitespace-separated elsewhere in the application, so
+            # normalize spaces without falling back to a numeric contest ID.
+            contest_tag_name = (contest.name or '').strip().replace(' ', '-')
+            tag = f'contest:{contest_tag_name[:190]}'
+            for item in pending_problems:
                 tags = [value for value in (item.tags or '').split() if value]
                 if tag not in tags:
                     tags.append(tag)
@@ -80,8 +91,10 @@ class Contest(models.Model):
                 ])
                 item.published_problem = published
                 item.save(update_fields=['published_problem', 'updated_at'])
+
             contest.published_at = timezone.now()
             contest.save(update_fields=['published_at', 'updated_at'])
+            self.published_at = contest.published_at
         return True
 
 

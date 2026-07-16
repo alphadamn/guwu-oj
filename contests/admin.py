@@ -25,25 +25,28 @@ class ContestAdmin(admin.ModelAdmin):
     inlines = [ContestProblemInline]
     actions = ['end_selected_contests']
 
-    @admin.action(description='立即结束并发布选中的竞赛')
+    @admin.action(description='结束并发布/修复选中的竞赛')
     def end_selected_contests(self, request, queryset):
         ended = 0
-        already_finished = 0
+        repaired = 0
+        already_complete = 0
         for contest_id in queryset.values_list('id', flat=True):
             with transaction.atomic():
                 contest = Contest.objects.select_for_update().get(pk=contest_id)
-                if contest.published_at:
-                    already_finished += 1
-                    continue
-                contest.end_at = timezone.now()
-                contest.save(update_fields=['end_at', 'updated_at'])
+                was_finished = contest.is_finished
+                if not was_finished:
+                    contest.end_at = timezone.now()
+                    contest.save(update_fields=['end_at', 'updated_at'])
                 if contest.publish_finished_problems():
-                    ended += 1
+                    if was_finished:
+                        repaired += 1
+                    else:
+                        ended += 1
                 else:
-                    already_finished += 1
+                    already_complete += 1
         self.message_user(
             request,
-            f'已结束并发布 {ended} 个竞赛；{already_finished} 个竞赛此前已结束。',
+            f'已结束并发布 {ended} 个竞赛；修复并发布 {repaired} 个竞赛；{already_complete} 个竞赛此前已完整发布。',
             level=messages.SUCCESS,
         )
 

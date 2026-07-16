@@ -56,7 +56,7 @@ class ContestFeatureTests(TestCase):
         contest.refresh_from_db()
         self.assertIsNotNone(item.published_problem)
         self.assertTrue(item.published_problem.is_public)
-        self.assertIn('contest:contest-0', item.published_problem.tags.split())
+        self.assertIn('contest:Contest-0', item.published_problem.tags.split())
         self.assertEqual(item.published_problem.test_cases.count(), 3)
         first_published_problem = item.published_problem_id
         self.assertFalse(contest.publish_finished_problems())
@@ -79,6 +79,25 @@ class ContestFeatureTests(TestCase):
         self.assertContains(response, '本题提交次数已用完，请移步下一题')
         self.assertEqual(Submission.objects.filter(contest_problem=item, user=self.player).count(), 1)
 
+    def test_accepted_contest_problem_rejects_future_submissions(self):
+        contest, item = self.create_contest_problem(limit=3)
+        Submission.objects.create(
+            user=self.player,
+            contest_problem=item,
+            code='puts 1',
+            language='Ruby',
+            status='Accepted',
+        )
+        self.assertTrue(self.client.login(username='player', password='password'))
+        question_url = reverse('contest_question', args=[contest.id, item.id])
+        response = self.client.get(question_url)
+        self.assertContains(response, '本题已全部通过，无需再次提交')
+        self.assertNotContains(response, 'id="monaco-editor"', html=False)
+        submit_url = reverse('submit_contest_solution', args=[contest.id, item.id])
+        response = self.client.post(submit_url, {'language': 'Ruby', 'code': 'puts 2'}, follow=True)
+        self.assertContains(response, '本题已全部通过，无需再次提交')
+        self.assertEqual(Submission.objects.filter(user=self.player, contest_problem=item).count(), 1)
+
     def test_standings_uses_case_result_formula(self):
         contest, item = self.create_contest_problem()
         submission = Submission.objects.create(user=self.player, contest_problem=item, code='puts 1', language='Ruby')
@@ -89,6 +108,21 @@ class ContestFeatureTests(TestCase):
         self.assertContains(response, self.player.username)
         self.assertContains(response, '>1<')
 
+    def test_standings_only_scores_latest_submission_per_problem(self):
+        contest, item = self.create_contest_problem()
+        first_case, second_case = item.test_cases.all()[:2]
+        older = Submission.objects.create(user=self.player, contest_problem=item, code='puts 1', language='Ruby')
+        SubmissionTestResult.objects.create(submission=older, contest_test_case=first_case, case_index=0, status='Accepted')
+        SubmissionTestResult.objects.create(submission=older, contest_test_case=second_case, case_index=1, status='Accepted')
+        latest = Submission.objects.create(user=self.player, contest_problem=item, code='puts 2', language='Ruby')
+        SubmissionTestResult.objects.create(submission=latest, contest_test_case=first_case, case_index=0, status='Accepted')
+        SubmissionTestResult.objects.create(submission=latest, contest_test_case=second_case, case_index=1, status='Wrong Answer')
+
+        response = self.client.get(reverse('contest_standings', args=[contest.id]))
+        self.assertContains(response, self.player.username)
+        self.assertContains(response, '>1<')
+        self.assertContains(response, '>0.5<')
+
     def test_public_contest_pages_do_not_offer_authoring_routes(self):
         contest, _item = self.create_contest_problem()
         response = self.client.get(reverse('contest_list'))
@@ -98,7 +132,49 @@ class ContestFeatureTests(TestCase):
         self.assertEqual(self.client.get('/contests/create/').status_code, 404)
         self.assertEqual(self.client.get(f'/contests/{contest.id}/questions/add/').status_code, 404)
 
-    def test_admin_action_ends_and_publishes_selected_contest(self):
+    def test_finished_contest_preserves_standings(self):
+        contest, item = self.create_contest_problem()
+        test_case = item.test_cases.first()
+        submission = Submission.objects.create(
+            user=self.player, contest_problem=item, code='puts 1', language='Ruby',
+        )
+        SubmissionTestResult.objects.create(
+            submission=submission, contest_test_case=test_case, case_index=0, status='Accepted',
+        )
+        contest.end_at = timezone.now() - timedelta(seconds=1)
+        contest.save(update_fields=['end_at'])
+        contest.publish_finished_problems()
+
+        response = self.client.get(reverse('contest_standings', args=[contest.id]))
+        self.assertContains(response, self.player.username)
+        self.assertContains(response, '>1.5<')
+
+    def test_partial_publication_is_repaired_without_duplicate_problem(self):
+        contest, first_item = self.create_contest_problem(end_delta=-timedelta(minutes=1))
+        second_item = ContestProblem.objects.create(
+            contest=contest, title='Second question', description='Description',
+            input_format='Input', output_format='Output', created_by=self.creator, order=1,
+        )
+        ContestTestCase.objects.create(contest_problem=second_item, input_data='1', expected_output='1')
+        contest.publish_finished_problems()
+        first_item.refresh_from_db()
+        second_item.refresh_from_db()
+        first_published_id = first_item.published_problem_id
+        self.assertIsNotNone(first_published_id)
+        self.assertIsNotNone(second_item.published_problem_id)
+
+        second_item.published_problem = None
+        second_item.save(update_fields=['published_problem'])
+        contest.published_at = timezone.now()
+        contest.save(update_fields=['published_at'])
+        contest.publish_finished_problems()
+        first_item.refresh_from_db()
+        second_item.refresh_from_db()
+        self.assertEqual(first_item.published_problem_id, first_published_id)
+        self.assertIsNotNone(second_item.published_problem_id)
+        self.assertNotEqual(second_item.published_problem_id, first_published_id)
+
+
         contest, item = self.create_contest_problem()
         request = RequestFactory().post('/admin/contests/contest/')
         request.user = self.creator

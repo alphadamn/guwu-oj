@@ -420,7 +420,13 @@ def password_reset_confirm(request, email):
 @login_required
 def profile(request, username):
     user = get_object_or_404(User, username=username)
-    return render(request, 'users/profile.html', {'user_profile': user})
+    recent_submissions = user.submissions.select_related(
+        'problem', 'contest_problem__contest',
+    ).order_by('-created_at')[:10]
+    return render(request, 'users/profile.html', {
+        'user_profile': user,
+        'recent_submissions': recent_submissions,
+    })
 
 
 @login_required

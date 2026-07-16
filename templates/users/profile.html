@@ -62,10 +62,10 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for submission in user_profile.submissions.all|slice:":10" %}
+                            {% for submission in recent_submissions %}
                             <tr>
                                 <td><a href="{% url 'submission_detail' submission.id %}">#{{ submission.id }}</a></td>
-                                <td><a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a></td>
+                                <td>{% if submission.contest_problem_id %}<a href="{% url 'contest_question' submission.contest_problem.contest_id submission.contest_problem_id %}">{{ submission.contest_problem.title }}</a>{% elif submission.problem_id %}<a href="{% url 'problem_detail' submission.problem_id %}">{{ submission.problem.title }}</a>{% else %}<span class="text-muted">题目已不可用</span>{% endif %}</td>
                                 <td class="status-{{ submission.status }}">{{ submission.status }}</td>
                                 <td>{{ submission.language }}</td>
                                 <td>{{ submission.created_at|date:"Y-m-d H:i" }}</td>
