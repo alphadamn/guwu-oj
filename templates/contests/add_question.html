@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}添加竞赛题目{% endblock %}
+{% block content %}<div class="card"><div class="card-header"><h4>为 {{ contest.name }} 添加题目</h4></div><div class="card-body"><form method="post">{% csrf_token %}{{ question_form.as_p }}<h5>测试用例</h5>{% for i in '012' %}<div class="row mb-2"><div class="col"><textarea class="form-control" name="test_input_{{ forloop.counter0 }}" placeholder="输入" required></textarea></div><div class="col"><textarea class="form-control" name="test_output_{{ forloop.counter0 }}" placeholder="输出" required></textarea></div></div>{% endfor %}<button class="btn btn-success">添加题目</button></form></div></div>{% endblock %}

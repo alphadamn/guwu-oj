@@ -109,6 +109,14 @@
                         <a class="nav-link" href="{% url 'leaderboard' %}">排行榜</a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link" href="{% url 'contest_list' %}">竞赛</a>
+                    </li>
+                    {% if user.is_authenticated and perms.contests.add_contest %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'create_contest' %}">创建竞赛</a>
+                    </li>
+                    {% endif %}
+                    <li class="nav-item">
                         <a class="nav-link" href="{% url 'handbook_index' %}">OIer 手册</a>
                     </li>
                     <li class="nav-item">

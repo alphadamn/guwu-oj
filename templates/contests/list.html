@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}竞赛{% endblock %}
+{% block content %}<div class="card"><div class="card-header"><h4>在线竞赛</h4></div><div class="card-body"><a class="btn btn-primary mb-3" href="{% url 'create_contest' %}">创建竞赛</a><div class="list-group">{% for contest in contests %}<a class="list-group-item list-group-item-action" href="{% url 'contest_detail' contest.id %}"><strong>{{ contest.name }}</strong><span class="float-end">{% if contest.is_live %}进行中{% elif contest.is_upcoming %}未开始{% else %}已结束{% endif %}</span><br><small>{{ contest.start_at }} - {{ contest.end_at }}</small></a>{% empty %}<p class="text-muted">暂无竞赛</p>{% endfor %}</div></div></div>{% endblock %}

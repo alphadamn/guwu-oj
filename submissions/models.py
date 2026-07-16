@@ -33,6 +33,10 @@ class Submission(models.Model):
     
     problem = models.ForeignKey(Problem, on_delete=models.CASCADE, related_name='submissions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='submissions')
+    contest_problem = models.ForeignKey(
+        'contests.ContestProblem', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='submissions', db_index=True,
+    )
     code = models.TextField()
     language = models.CharField(max_length=32, choices=LANGUAGE_CHOICES)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='Pending')

@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'users',
     'problems',
     'submissions',
+    'contests',
     'handbook',
     'mathfilters',
     'search',
@@ -513,6 +514,7 @@ MANAGERS = ADMINS
 CRONJOBS = [
     # 第一个参数是 cron 时间表达式，第二个参数是任务函数的 Python 路径
     ('*/30 * * * *', 'devlog.views._refresh_auto_components', [], {'force_refresh': True}),
+    ('*/5 * * * *', 'contests.jobs.publish_finished_contests_job'),
 ]
 
 

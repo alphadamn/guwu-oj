@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}{{ contest.name }}排行榜{% endblock %}
+{% block content %}<div class="card"><div class="card-header"><h4>{{ contest.name }}排行榜</h4><small>得分 = AC 测试点数 × 2 − 非 AC 测试点数</small></div><div class="card-body"><table class="table"><thead><tr><th>排名</th><th>用户</th><th>AC 测试点</th><th>非 AC 测试点</th><th>提交数</th><th>得分</th></tr></thead><tbody>{% for row in standings %}<tr><td>{{ forloop.counter }}</td><td>{{ row.user.username }}</td><td>{{ row.accepted }}</td><td>{{ row.non_accepted }}</td><td>{{ row.submissions }}</td><td>{{ row.score }}</td></tr>{% empty %}<tr><td colspan="6">暂无成绩</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}
