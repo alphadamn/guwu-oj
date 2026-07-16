@@ -587,6 +587,16 @@ SIMPLEUI_CONFIG = {
             ],
         },
         {
+            'name': '竞赛管理',
+            'icon': 'fas fa-trophy',
+            'models': [
+                {'name': '竞赛', 'icon': 'fas fa-flag-checkered',
+                 'url': '/admin/contests/contest/'},
+                {'name': '竞赛题目', 'icon': 'fas fa-list-ol',
+                 'url': '/admin/contests/contestproblem/'},
+            ],
+        },
+        {
             'name': '开发日志',
             'icon': 'fas fa-th-list',
             'models': [
