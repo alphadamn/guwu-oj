@@ -328,10 +328,9 @@ class UserUpdateForm(forms.ModelForm):
             avatar.seek(0)
             data = avatar.read()
             content_type = getattr(avatar, 'content_type', 'image/jpeg')
-            compressed_data = AvatarBlob.compress(data)
             AvatarBlob.objects.update_or_create(
                 user=user,
-                defaults={'content_type': content_type, 'data': compressed_data},
+                defaults={'content_type': content_type, 'data': data},
             )
 
         if commit:

@@ -16,7 +16,6 @@ Performance / stability changes vs the previous naive approach:
 """
 
 import os
-import shlex
 import shutil
 import subprocess
 import time
@@ -67,8 +66,33 @@ def docker_available(force_check=False):
 def ensure_docker_ready():
     if not docker_available():
         raise DockerNotAvailableError(
-            "Docker 不可用。请安装并启动 Docker，然后执行："
-            "docker build -t oj-judge:latest docker/judge"
+            "Docker is unavailable. Install and start Docker, then build the "
+            "judge images with ./scripts/build-containers.sh."
+        )
+
+
+def ensure_judge_image_available(image):
+    """Require a locally built image instead of allowing an implicit pull.
+
+    A judge worker must never block while Docker tries to pull an untrusted or
+    unavailable image during a submission. Images are built by deployment and
+    are checked explicitly before container startup.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise DockerNotAvailableError(
+            f"Could not inspect judge image {image}: {exc}"
+        )
+    if result.returncode != 0:
+        raise DockerNotAvailableError(
+            f"Judge image {image} is not installed. Run "
+            "./scripts/build-containers.sh on this judge host."
         )
 
 
@@ -133,17 +157,24 @@ class JudgeContainer:
 
     def __enter__(self):
         ensure_docker_ready()
+        ensure_judge_image_available(self.image)
         _prepare_work_dir(self.work_dir)
         args = [
             "docker", "run", "--rm", "-d", "-i",
             "--network", "none",
+            "--ipc", "none",
+            "--hostname", "judge",
             *_memory_flags(self.memory_mb),
             *_runtime_user_flags(),
-            "--pids-limit", str(getattr(settings, "OJ_DOCKER_PIDS_LIMIT", 128)),
-            "--security-opt", "no-new-privileges",
+            "--pids-limit", str(getattr(settings, "OJ_DOCKER_PIDS_LIMIT", 64)),
+            "--ulimit", "nofile={0}:{0}".format(
+                max(16, int(getattr(settings, "OJ_DOCKER_NOFILE_LIMIT", 64)))
+            ),
+            "--security-opt", "no-new-privileges=true",
             "--security-opt", f"seccomp={_seccomp_flag(self.is_compile)}",
             "--cap-drop", "ALL",
             "--read-only",
+            "--security-opt", "apparmor=docker-default",
             "--tmpfs", "/tmp:exec,mode=777",
             "--device", "/dev/null:r",
             "--device", "/dev/zero:r",
@@ -170,8 +201,10 @@ class JudgeContainer:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        _kill_container(self.cid)
-        self.cid = None
+        try:
+            _kill_container(self.cid)
+        finally:
+            self.cid = None
 
     def exec(self, command, timeout_sec, stdin=None):
         """Run *command* inside the running container.
@@ -213,6 +246,9 @@ def run_commands_in_container(
     memory_mb=256, image="oj-judge:latest", is_compile=False,
 ):
     """Run many shell commands inside one container (single startup overhead)."""
+    if not commands:
+        raise ValueError('commands must not be empty')
+    result = None
     with JudgeContainer(
         work_dir, memory_mb=memory_mb, image=image, is_compile=is_compile
     ) as c:
@@ -220,6 +256,7 @@ def run_commands_in_container(
             result = c.exec(cmd, timeout_sec, stdin=stdin)
             if result.returncode != 0:
                 return result
+        assert result is not None
         return result
 
 

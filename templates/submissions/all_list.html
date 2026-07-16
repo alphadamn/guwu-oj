@@ -26,6 +26,7 @@
                         <option value="Memory Limit Exceeded" {% if request.GET.status == 'Memory Limit Exceeded' %}selected{% endif %}>Memory Limit Exceeded</option>
                         <option value="Runtime Error" {% if request.GET.status == 'Runtime Error' %}selected{% endif %}>Runtime Error</option>
                         <option value="Compile Error" {% if request.GET.status == 'Compile Error' %}selected{% endif %}>Compile Error</option>
+                        <option value="System Error" {% if request.GET.status == 'System Error' %}selected{% endif %}>System Error</option>
                     </select>
                 </div>
                 <div class="col-md-3">

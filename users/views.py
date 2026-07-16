@@ -5,13 +5,14 @@ from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
 from django.urls import reverse_lazy, reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib import messages
 
 from django.utils.http import http_date
 from django_ratelimit.decorators import ratelimit
 from django.core.cache import cache
 from django.views.decorators.http import require_POST
-from django.views.decorators.csrf import csrf_protect, csrf_exempt
+from django.views.decorators.csrf import csrf_protect
 import json
 import time
 import logging
@@ -122,12 +123,18 @@ class CustomLoginView(LoginView):
         return super().form_invalid(form)
 
     def _next_url(self) -> str:
-        """Return a sanitized ``next`` URL from POST, GET or form data."""
-        return (
+        """Return a same-origin ``next`` URL, if one was supplied."""
+        candidate = (
             self.request.POST.get(auth.REDIRECT_FIELD_NAME, '').strip()
             or self.request.GET.get(auth.REDIRECT_FIELD_NAME, '').strip()
-            or ''
         )
+        if candidate and url_has_allowed_host_and_scheme(
+            candidate,
+            allowed_hosts={self.request.get_host()},
+            require_https=self.request.is_secure(),
+        ):
+            return candidate
+        return ''
 
     def form_valid(self, form):
         user = form.get_user()
@@ -234,16 +241,10 @@ class CustomLogoutView(LogoutView):
 # ---- Captcha image endpoint -----------------------------------------------
 
 
-@csrf_exempt
+@csrf_protect
 @require_POST
 def clear_punishment_notice(request):
-    """Remove ``punishment_notice`` from the session after display.
-
-    Invoked by the JS snippet at the bottom of ``base.html`` once the
-    "account-status" modal is displayed. CSRF protection is disabled on
-    this endpoint because its sole side-effect is clearing an ephemeral
-    session value.
-    """
+    """Remove the displayed punishment notice from the current session."""
     request.session.pop('punishment_notice', None)
     return JsonResponse({'ok': True})
 

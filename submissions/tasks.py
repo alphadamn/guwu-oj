@@ -42,9 +42,10 @@ def judge_submission_task(submission_id):
         logger.info(f'Submission {submission_id} judged with status: {result_submission.status}')
     except Exception as e:
         logger.exception(f'Error judging submission {submission_id}: {e}')
-        # Update submission status to indicate error
-        submission.status = 'Runtime Error'
-        submission.save()
+        # Unexpected worker/judge failures are infrastructure errors, not
+        # errors in the contestant's program.
+        submission.status = 'System Error'
+        submission.save(update_fields=['status'])
         return None
     finally:
         # Release the judge machine regardless of outcome
@@ -59,7 +60,7 @@ def judge_submission_task(submission_id):
     try:
         cache.delete(f'problem_pass_rate_{submission.problem.id}')
         cache.delete('leaderboard_users')
-        cache.delete_pattern('problem_list_query_*')
+        # Problem list cache keys are versioned and invalidated by Problem.
         cache.delete('home_stats')
     except Exception as e:
         logger.warning(f'Error clearing caches: {e}')

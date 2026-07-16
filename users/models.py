@@ -1,25 +1,24 @@
-import gzip
-import uuid
-from pathlib import Path
-import os
+from django.contrib.auth.models import AbstractUser
+from django.core.cache import cache
+from django.core.files.storage import default_storage
+from django.db import models
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 
 def avatar_upload_to(instance, filename):
+    """Legacy upload path retained for historical migrations."""
     return f'avatars/{instance.username}/{filename}'
-
-from django.contrib.auth.models import AbstractUser
-from django.db import models
-from django.urls import reverse
-from django.utils.translation import gettext_lazy as _
-from django.core.cache import cache
-from django.core.files.storage import default_storage
-from django.utils import timezone
 
 class User(AbstractUser):
     email = models.EmailField(_('email address'), blank=True, unique=True)
     nickname = models.CharField(max_length=50, blank=True)
     bio = models.TextField(max_length=500, blank=True)
     avatar = models.ImageField(blank=True, null=True)
+    # Django's implicit through model has indexed foreign keys and a unique
+    # composite constraint, which supports leaderboard counts and duplicate-safe
+    # `get_or_create` calls without a custom through model.
     solved_problems = models.ManyToManyField(
         'problems.Problem', blank=True, related_name='solved_by'
     )
@@ -169,19 +168,13 @@ class User(AbstractUser):
                 pass
 
         super().save(*args, **kwargs)
-        # Clear relevant caches when user is saved
-        delete_pattern = getattr(cache, 'delete_pattern', None)
-        if callable(delete_pattern):
-            delete_pattern('views.decorators.cache.*')  # Clear all view caches
-        cache.delete('leaderboard_users')  # Clear leaderboard cache
+        # Clear only the bounded caches affected by user metadata.
+        cache.delete('leaderboard_users')
         cache.delete('home_stats')  # Clear home stats cache
 
 
 class AvatarBlob(models.Model):
-    """
-    Stores a user's avatar as raw bytes directly in PostgreSQL.
-    Served via the `avatar` view (users:avatar) – not via static/media files.
-    """
+    """Stores a user's uploaded avatar bytes directly in PostgreSQL."""
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name='avatar_blob'
     )
@@ -189,46 +182,21 @@ class AvatarBlob(models.Model):
     data = models.BinaryField()
     updated_at = models.DateTimeField(auto_now=True)
 
-    @classmethod
-    def compress(cls, data: bytes) -> bytes:
-        """Compress data using gzip."""
-        return gzip.compress(data)
-
     def __str__(self):
         return f'Avatar for {self.user.username}'
 
     def save(self, *args, **kwargs):
-        # Compress data before saving
-        if self.data[:2].hex() != b'\x1f\x8b'.hex():
-            self.data = self.compress(self.data)
-        
-        # Invalidate cache when avatar is updated
+        # Avatar data is stored as uploaded. Image formats are already
+        # compressed; gzip only adds CPU cost and complicates reads.
+        # Invalidate cache when avatar is updated.
         cache_key = f'avatar_data:{self.user.username}'
-        freq_key_pattern = f'avatar_freq:{self.user.username}:*'
         cache.delete(cache_key)
-        delete_pattern = getattr(cache, 'delete_pattern', None)
-        if callable(delete_pattern):
-            delete_pattern(freq_key_pattern)
-        
         super().save(*args, **kwargs)
 
     @property
     def image_data(self) -> bytes:
-        """Decompress data when reading."""
-        # Convert memory object to bytes if needed
-        data = bytes(self.data)
-
-        # Debug logging
-        gzip_magic = b'\x1f\x8b'
-
-        # Check if data is already uncompressed (gzip magic number is 0x1f 0x8b)
-        if len(data) >= 2 and data[:2] != gzip_magic:
-            return data
-
-        try:
-            return gzip.decompress(data)
-        except Exception as e:
-            return data
+        """Return the uploaded image bytes."""
+        return bytes(self.data)
 
 
 # ---------------------------------------------------------------------------

@@ -183,10 +183,11 @@ class EnforcementMiddleware(MiddlewareMixin):
         if user and getattr(user, 'is_authenticated', False):
             banned_user, reason_user = user_is_banned(user)
             if banned_user:
-                # Log them out so subsequent requests are not associated
-                # with a stale authenticated session.
+                # Destroy the authenticated session before creating the
+                # short-lived notice session, preventing session reuse.
                 try:
                     _auth_logout(request)
+                    request.session.flush()
                 except Exception:
                     pass
                 return self._user_ban_redirect(request, user, reason_user)
@@ -197,6 +198,7 @@ class EnforcementMiddleware(MiddlewareMixin):
             if user_feature_disabled(user, 'login'):
                 try:
                     _auth_logout(request)
+                    request.session.flush()
                 except Exception:
                     pass
                 return self._user_ban_redirect(

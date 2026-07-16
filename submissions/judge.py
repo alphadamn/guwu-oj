@@ -452,13 +452,15 @@ def judge_submission(submission_id):
     SubmissionTestResult.objects.filter(submission=submission).delete()
 
     if submission.language not in JUDGED_LANGUAGES:
-        submission.status = "Pending"
+        submission.status = "System Error"
         submission.save(update_fields=["status"])
         return submission
 
     test_cases = list(problem.test_cases.all())
     if not test_cases:
-        submission.status = "Pending"
+        # A terminal status avoids submissions polling forever when a problem
+        # was published before test data was configured.
+        submission.status = "System Error"
         submission.save(update_fields=["status"])
         return submission
 
@@ -591,12 +593,14 @@ def judge_submission(submission_id):
                             max_memory_kb, problem)
 
     except DockerNotAvailableError as exc:
-        submission.status = "Runtime Error"
+        # This is platform infrastructure failure, not a program error.
+        submission.status = "System Error"
         submission.save(update_fields=["status"])
         if test_cases:
             save_case_result(
                 submission, test_cases[0], 1, "Runtime Error", None,
-                "", test_cases[0].expected_output, str(exc),
+                "", test_cases[0].expected_output,
+                f"Judge infrastructure is unavailable: {exc}",
             )
 
     finally:

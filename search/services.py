@@ -12,12 +12,10 @@ common shape:
 }
 """
 
-import re
-import html
-import csv
 import time
 import random
-from urllib.parse import quote
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 import requests
 from django.db.models import Q
@@ -35,6 +33,108 @@ except Exception:  # pragma: no cover
 
 
 REQUEST_TIMEOUT = 4  # seconds, applied to all external HTTP calls
+MAX_EXTERNAL_RESPONSE_BYTES = 1_000_000
+
+
+def _external_get(url, *, allowed_hosts, session=None, **kwargs):
+    """Request a fixed, allow-listed HTTPS search endpoint without redirects."""
+    parsed = urlsplit(url)
+    if parsed.scheme != 'https' or parsed.hostname not in allowed_hosts:
+        raise ValueError('External search endpoint is not allow-listed')
+    client = session or requests
+    response = client.get(
+        url,
+        timeout=REQUEST_TIMEOUT,
+        allow_redirects=False,
+        stream=True,
+        **kwargs,
+    )
+    content_length = response.headers.get('Content-Length')
+    if content_length and int(content_length) > MAX_EXTERNAL_RESPONSE_BYTES:
+        response.close()
+        raise ValueError('External search response is too large')
+    body = bytearray()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        body.extend(chunk)
+        if len(body) > MAX_EXTERNAL_RESPONSE_BYTES:
+            response.close()
+            raise ValueError('External search response is too large')
+    response._content = bytes(body)
+    response._content_consumed = True
+    return response
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+class _BingResultsParser(HTMLParser):
+    """Extract Bing result cards using the HTML parser, not regex."""
+    _VOID_ELEMENTS = {
+        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+        'meta', 'param', 'source', 'track', 'wbr',
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self._depth = 0
+        self._current = None
+        self._capture = None
+        self._capture_depth = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if self._current is None:
+            classes = set((attrs.get('class') or '').split())
+            if tag == 'li' and 'b_algo' in classes:
+                self._current = {'title': [], 'url': '', 'snippet': []}
+                self._depth = 1
+            return
+
+        if tag not in self._VOID_ELEMENTS:
+            self._depth += 1
+        classes = set((attrs.get('class') or '').split())
+        if tag == 'a' and not self._current['url']:
+            self._current['url'] = attrs.get('href', '')
+            self._capture = 'title'
+            self._capture_depth = self._depth
+        elif (
+            self._capture is None
+            and (tag == 'p' or 'b_caption' in classes)
+        ):
+            self._capture = 'snippet'
+            self._capture_depth = self._depth
+
+    def handle_endtag(self, tag):
+        if self._current is None or tag in self._VOID_ELEMENTS:
+            return
+        if self._capture is not None and self._depth == self._capture_depth:
+            self._capture = None
+            self._capture_depth = None
+        self._depth -= 1
+        if self._depth == 0:
+            self.results.append(self._current)
+            self._current = None
+            self._capture = None
+            self._capture_depth = None
+
+    def handle_data(self, data):
+        if self._current is not None and self._capture:
+            self._current[self._capture].append(data)
+
+
+def _html_to_text(text):
+    parser = _TextExtractor()
+    parser.feed(text or '')
+    parser.close()
+    return ' '.join(''.join(parser.parts).split())
+
 
 
 # --------------------------------------------------------------------------- #
@@ -116,7 +216,7 @@ def search_ddg(query):
     url = 'https://api.duckduckgo.com/'
     params = {'q': query, 'format': 'json', 'no_html': '1', 'skip_disambig': '1'}
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _external_get(url, allowed_hosts={'api.duckduckgo.com'}, params=params)
         resp.raise_for_status()
         data = resp.json()
     except Exception:
@@ -156,7 +256,7 @@ def search_wikipedia(query):
         'origin': '*',
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _external_get(url, allowed_hosts={'en.wikipedia.org'}, params=params)
         resp.raise_for_status()
         data = resp.json()
     except Exception:
@@ -182,8 +282,12 @@ def search_github(query):
     url = 'https://api.github.com/search/repositories'
     params = {'q': query, 'per_page': '30', 'sort': 'stars'}
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT,
-                            headers={'Accept': 'application/vnd.github+json'})
+        resp = _external_get(
+            url,
+            allowed_hosts={'api.github.com'},
+            params=params,
+            headers={'Accept': 'application/vnd.github+json'},
+        )
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -203,12 +307,8 @@ def search_github(query):
 
 
 def _strip_tags(text):
-    """Remove HTML tags and collapse whitespace."""
-    if not text:
-        return ''
-    text = re.sub(r'<[^>]+>', '', text)
-    text = html.unescape(text)
-    return re.sub(r'\s+', ' ', text).strip()
+    """Parse HTML into text without regex-based tag stripping."""
+    return _html_to_text(text)
 
 
 def search_bing(query):
@@ -223,44 +323,28 @@ def search_bing(query):
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT, headers=headers)
+        resp = _external_get(
+            url, allowed_hosts={'www.bing.com'}, params=params, headers=headers
+        )
         if resp.status_code != 200:
             return []
         page = resp.text
     except Exception:
         return []
 
-    # Each organic result lives in <li class="b_algo"> ... </li>
-    blocks = re.findall(r'<li[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>(.*?)</li>', page, flags=re.S)
+    parser = _BingResultsParser()
+    parser.feed(page)
+    parser.close()
     results = []
-    for block in blocks:
-        # Prefer the link inside <h2> – this is the canonical title link.
-        h2 = re.search(r'<h2[^>]*>(.*?)</h2>', block, flags=re.S)
-        scope = h2.group(1) if h2 else block
-        link = re.search(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', scope, flags=re.S)
-        if not link:
-            continue
-
-        url_i = html.unescape(link.group(1))
-        # Strip <cite>…</cite> from the anchor's inner HTML before stripping
-        # tags – Bing sometimes embeds the visible URL (e.g. "example.com")
-        # plus the full URL inside <cite>, which would otherwise leak into
-        # the title as "example.comhttps://example.com/...".
-        anchor_html = link.group(2)
-        anchor_html = re.sub(r'<cite\b[^>]*>.*?</cite>', '', anchor_html, flags=re.S | re.I)
-        title = _strip_tags(anchor_html) or _strip_tags(h2.group(1) if h2 else '')
-
-        snippet_match = re.search(
-            r'<p[^>]*>(.*?)</p>', block, flags=re.S
-        ) or re.search(r'<div[^>]*class="[^"]*\bb_caption\b[^"]*"[^>]*>(.*?)</div>', block, flags=re.S)
-        snippet = _strip_tags(snippet_match.group(1)) if snippet_match else ''
-
+    for item in parser.results:
+        title = ' '.join(''.join(item['title']).split())
+        url_i = item['url']
         if not title or not url_i:
             continue
         results.append({
             'title': title,
             'url': url_i,
-            'snippet': snippet[:240],
+            'snippet': ' '.join(''.join(item['snippet']).split())[:240],
             'source': 'Bing',
             'type': 'web',
         })
@@ -282,11 +366,15 @@ class CSDNSearchAPI:
     def fetch_page(self, page):
         params = {'q': self.keyword, 'p': page}
         try:
-            resp = self.session.get(self.api_url, params=params, timeout=10)
+            resp = _external_get(
+                self.api_url,
+                allowed_hosts={'so.csdn.net'},
+                session=self.session,
+                params=params,
+            )
             resp.raise_for_status()
             return resp.json()
-        except Exception as e:
-            # print(f"API请求失败: {e}")
+        except Exception:
             return None
 
     def parse_data(self, json_data, page):

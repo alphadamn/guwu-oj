@@ -101,7 +101,7 @@
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-body text-center">
-                        <h3 id="submission-status-text" class="status-{% if submission.status == 'Accepted' %}Accepted{% elif submission.status == 'Wrong Answer' %}Wrong{% elif submission.status == 'Time Limit Exceeded' %}Time{% elif submission.status == 'Memory Limit Exceeded' %}Runtime{% elif submission.status == 'Runtime Error' %}Runtime{% elif submission.status == 'Pending' %}Pending{% else %}Error{% endif %}">
+                        <h3 id="submission-status-text" class="status-{% if submission.status == 'Accepted' %}Accepted{% elif submission.status == 'Wrong Answer' %}Wrong{% elif submission.status == 'Time Limit Exceeded' %}Time{% elif submission.status == 'Memory Limit Exceeded' %}Runtime{% elif submission.status == 'Runtime Error' %}Runtime{% elif submission.status == 'System Error' %}Error{% elif submission.status == 'Pending' %}Pending{% else %}Error{% endif %}">
                             {% if should_poll %}
                                 <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                             {% endif %}

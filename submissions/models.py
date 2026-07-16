@@ -28,6 +28,7 @@ class Submission(models.Model):
         ('Memory Limit Exceeded', 'Memory Limit Exceeded'),
         ('Runtime Error', 'Runtime Error'),
         ('Compile Error', 'Compile Error'),
+        ('System Error', 'System Error'),
     ]
     
     problem = models.ForeignKey(Problem, on_delete=models.CASCADE, related_name='submissions')
@@ -131,21 +132,27 @@ class JudgeConfig(models.Model):
         return f'Judge Config (timeout: {self.subprocess_timeout_sec}s)'
 
     def save(self, *args, **kwargs):
-        # Thread-safe singleton: use a transaction + get_or_create on a
-        # fixed pk. The naive self.pk = 1 before save is a race condition.
-        from django.db import transaction
+        """Persist the sole configuration row under a database row lock."""
+        from django.db import IntegrityError, transaction
+
+        timeout = self.subprocess_timeout_sec
         with transaction.atomic():
-            if not self.pk:
-                existing, created = JudgeConfig.objects.get_or_create(pk=1)
-                if not created:
-                    existing.subprocess_timeout_sec = self.subprocess_timeout_sec
-                    existing.save()
-                    self.pk = existing.pk
-                    return
+            try:
+                config = JudgeConfig.objects.select_for_update().get(pk=1)
+            except JudgeConfig.DoesNotExist:
+                try:
+                    # A savepoint keeps the surrounding transaction usable if
+                    # another worker inserts the singleton concurrently.
+                    with transaction.atomic():
+                        config = JudgeConfig(pk=1, subprocess_timeout_sec=timeout)
+                        models.Model.save(config, force_insert=True)
+                except IntegrityError:
+                    config = JudgeConfig.objects.select_for_update().get(pk=1)
+                    config.subprocess_timeout_sec = timeout
+                    models.Model.save(config, update_fields=['subprocess_timeout_sec', 'updated_at'])
             else:
-                # Existing record — enforce pk=1 to prevent multiple rows
-                if self.pk != 1:
-                    self.pk = 1
-                super().save(*args, **kwargs)
-        # Clear cache to force reload of settings
+                config.subprocess_timeout_sec = timeout
+                models.Model.save(config, update_fields=['subprocess_timeout_sec', 'updated_at'])
+            self.pk = config.pk
+            self.updated_at = config.updated_at
         cache.delete('judge_config')
