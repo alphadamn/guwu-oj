@@ -49,24 +49,27 @@ class Problem(models.Model):
     def __str__(self):
         return f"P{self.id} - {self.title}"
 
+    def _invalidate_caches(self):
+        """Invalidate bounded cache keys without Redis-wide pattern deletes."""
+        cache.delete_many([
+            f'problem_pass_rate_{self.id}',
+            'leaderboard_users',
+            'home_recent_problems',
+            'home_stats',
+        ])
+        # Version list caches instead of enumerating arbitrary query-string
+        # keys. Increment is atomic on Redis and safely falls back elsewhere.
+        try:
+            cache.incr('problem_list_version')
+        except (ValueError, TypeError):
+            cache.set('problem_list_version', 1, None)
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Clear relevant caches when problem is saved
-        cache.delete_pattern('views.decorators.cache.*')  # Clear all view caches
-        cache.delete(f'problem_pass_rate_{self.id}')  # Clear pass rate cache
-        cache.delete('leaderboard_users')  # Clear leaderboard cache
-        cache.delete_pattern('problem_list_query_*')  # Clear problem list query caches
-        cache.delete('home_recent_problems')  # Clear home recent problems cache
-        cache.delete('home_stats')  # Clear home stats cache
+        self._invalidate_caches()
 
     def delete(self, *args, **kwargs):
-        # Clear relevant caches before deletion
-        cache.delete_pattern('views.decorators.cache.*')
-        cache.delete(f'problem_pass_rate_{self.id}')
-        cache.delete('leaderboard_users')
-        cache.delete_pattern('problem_list_query_*')
-        cache.delete('home_recent_problems')
-        cache.delete('home_stats')
+        self._invalidate_caches()
         super().delete(*args, **kwargs)
 
     @property

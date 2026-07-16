@@ -2,7 +2,7 @@ from django.db.models.functions import Cast, RowNumber
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Q, Count, ExpressionWrapper, When, Case, Value, F, FloatField, Window
+from django.db.models import Q, Count, When, Case, Value, F, FloatField, Window
 from django.views.decorators.http import require_POST
 from django.views.decorators.cache import cache_page
 from django.core.cache import cache
@@ -44,15 +44,16 @@ def home(request):
 
 
 def problem_list(request):
-    # Generate cache key based on query parameters
-    cache_key = f'problem_list_{request.GET.urlencode()}'
+    # Version list caches rather than deleting arbitrary query-derived keys.
+    cache_version = cache.get('problem_list_version', 1)
+    cache_key = f'problem_list:v{cache_version}:{request.GET.urlencode()}'
     cached_response = cache.get(cache_key)
 
     if cached_response:
         return cached_response
 
     # Cache the query result separately
-    query_cache_key = f'problem_list_query_{request.GET.urlencode()}'
+    query_cache_key = f'problem_list_query:v{cache_version}:{request.GET.urlencode()}'
     cached_problems = cache.get(query_cache_key)
 
     if cached_problems is not None:
@@ -65,12 +66,15 @@ def problem_list(request):
         if difficulty:
             problems = problems.filter(difficulty=difficulty)
 
-        # Search by title or ID
-        search = request.GET.get('search')
+        # Search by title or an exact numeric problem ID. Django's ORM
+        # parameterizes both variants, but avoiding an implicit text cast on
+        # the primary key keeps this indexed and rejects malformed IDs.
+        search = (request.GET.get('search') or '').strip()
         if search:
-            problems = problems.filter(
-                Q(title__icontains=search) | Q(id__icontains=search)
-            )
+            filters = Q(title__icontains=search)
+            if search.isdecimal():
+                filters |= Q(id=int(search))
+            problems = problems.filter(filters)
 
         # Filter by tags
         tags = request.GET.get('tags')
@@ -183,9 +187,12 @@ def leaderboard(request):
                 ),
                 output_field=FloatField()
             )
-        ).order_by(F('ratio').desc(nulls_last=True))  # highest first, nulls at bottom
-        # Cache the queryset evaluation for 10 minutes
-        users = list(users)  # Force evaluation
+        ).only('id', 'username', 'nickname', 'created_at').order_by(
+            F('ratio').desc(nulls_last=True), 'id'
+        )[:100]
+        # Cache a bounded, fully evaluated result to avoid repeated aggregate
+        # queries and unbounded rendering of the entire user table.
+        users = list(users)
         cache.set(query_cache_key, users, 60 * 10)
 
     return render(request, 'leaderboard.html', {'users': users})

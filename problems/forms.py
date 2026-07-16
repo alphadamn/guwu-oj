@@ -10,7 +10,7 @@ class ProblemForm(forms.ModelForm):
         fields = [
             'title', 'description', 'input_format', 'output_format',
             'sample_input', 'sample_output', 'hint', 'difficulty',
-            'time_limit', 'memory_limit', 'tags', 'is_public',
+            'time_limit', 'memory_limit', 'tags',
         ]
         widgets = {
             'title': forms.TextInput(attrs={'class': 'form-control'}),
@@ -29,7 +29,6 @@ class ProblemForm(forms.ModelForm):
             }),
             'memory_limit': forms.NumberInput(attrs={'class': 'form-control'}),
             'tags': forms.TextInput(attrs={'class': 'form-control'}),
-            'is_public': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
         help_texts = {
             'time_limit': '单位：毫秒（例如 1000 表示 1 秒）',
