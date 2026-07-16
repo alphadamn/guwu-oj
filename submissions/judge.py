@@ -598,7 +598,7 @@ def judge_submission(submission_id):
         submission.save(update_fields=["status"])
         if test_cases:
             save_case_result(
-                submission, test_cases[0], 1, "Runtime Error", None,
+                submission, test_cases[0], 1, "System Error", None,
                 "", test_cases[0].expected_output,
                 f"Judge infrastructure is unavailable: {exc}",
             )
