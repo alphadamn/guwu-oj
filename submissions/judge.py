@@ -402,10 +402,11 @@ class SandboxRunner:
 
 def save_case_result(submission, tc, case_index, status, runtime,
                      actual, expected, error_message=""):
+    result_kwargs = {'test_case': tc} if submission.contest_problem_id is None else {'contest_test_case': tc}
     SubmissionTestResult.objects.create(
         submission=submission,
-        test_case=tc,
         case_index=case_index,
+        **result_kwargs,
         status=status,
         runtime=runtime,
         actual_output=truncate_text(actual),
@@ -427,7 +428,8 @@ def finalize_submission(submission, case_results, max_runtime,
     with transaction.atomic():
         submission.status = "Accepted"
         submission.save(update_fields=["status", "runtime", "memory"])
-        submission.user.solved_problems.get_or_create(problem)
+        if submission.contest_problem_id is None:
+            submission.user.solved_problems.get_or_create(problem)
 
 
 def _case_status_from_error(error, actual, expected):
@@ -445,11 +447,16 @@ def _case_status_from_error(error, actual, expected):
 # ── main entry point ─────────────────────────────────────────────────────
 
 def judge_submission(submission_id):
-    submission = Submission.objects.select_related("problem", "user").get(
+    submission = Submission.objects.select_related("problem", "contest_problem", "user").get(
         id=submission_id
     )
-    problem = submission.problem
+    problem = submission.effective_problem
     SubmissionTestResult.objects.filter(submission=submission).delete()
+
+    if problem is None:
+        submission.status = "System Error"
+        submission.save(update_fields=["status"])
+        return submission
 
     if submission.language not in JUDGED_LANGUAGES:
         submission.status = "System Error"

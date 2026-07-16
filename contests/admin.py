@@ -1,10 +1,17 @@
 from django.contrib import admin
-from .models import Contest, ContestProblem
+from .models import Contest, ContestProblem, ContestTestCase
+
+
+class ContestTestCaseInline(admin.TabularInline):
+    model = ContestTestCase
+    extra = 3
 
 
 class ContestProblemInline(admin.TabularInline):
     model = ContestProblem
     extra = 0
+    fields = ['order', 'title', 'difficulty', 'time_limit', 'memory_limit', 'published_problem']
+    readonly_fields = ['published_problem']
 
 
 @admin.register(Contest)
@@ -17,5 +24,14 @@ class ContestAdmin(admin.ModelAdmin):
 
 @admin.register(ContestProblem)
 class ContestProblemAdmin(admin.ModelAdmin):
-    list_display = ['contest', 'problem', 'order']
-    list_filter = ['contest']
+    list_display = ['title', 'contest', 'order', 'difficulty', 'created_by', 'published_problem']
+    list_filter = ['contest', 'difficulty']
+    search_fields = ['title', 'description', 'tags']
+    readonly_fields = ['published_problem', 'created_at', 'updated_at']
+    inlines = [ContestTestCaseInline]
+
+
+@admin.register(ContestTestCase)
+class ContestTestCaseAdmin(admin.ModelAdmin):
+    list_display = ['id', 'contest_problem', 'order', 'is_sample']
+    list_filter = ['contest_problem__contest']

@@ -86,7 +86,7 @@
                     </tr>
                     <tr>
                         <td>题目</td>
-                        <td><a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a></td>
+                        <td>{% if submission.contest_problem %}<a href="{% url 'contest_question' submission.contest_problem.contest_id submission.contest_problem_id %}">{{ submission.contest_problem.title }}</a>{% else %}<a href="{% url 'problem_detail' submission.problem.id %}">{{ submission.problem.title }}</a>{% endif %}</td>
                     </tr>
                     <tr>
                         <td>语言</td>
@@ -171,7 +171,7 @@
         </div>
         
         <div>
-            <a href="{% url 'problem_detail' submission.problem.id %}" class="btn btn-primary">
+            <a href="{% if submission.contest_problem %}{% url 'contest_question' submission.contest_problem.contest_id submission.contest_problem_id %}{% else %}{% url 'problem_detail' submission.problem.id %}{% endif %}" class="btn btn-primary">
                 <i class="bi bi-arrow-left"></i> 返回题目
             </a>
             {% if submission.user == user %}

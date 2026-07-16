@@ -102,7 +102,7 @@ def submit_solution(request, problem_id):
 @login_required
 def submission_detail(request, submission_id):
     submission = get_object_or_404(
-        Submission.objects.prefetch_related('test_results'),
+        Submission.objects.select_related('problem', 'contest_problem__contest').prefetch_related('test_results'),
         id=submission_id,
     )
     if submission.user_id != request.user.id and not request.user.is_staff:
@@ -117,7 +117,8 @@ def submission_detail(request, submission_id):
     #     and submission.language in JUDGED_LANGUAGES
     #     and submission.problem.test_cases.exists()
     # )
-    should_poll = (submission.language in JUDGED_LANGUAGES and submission.problem.test_cases.exists())
+    problem = submission.effective_problem
+    should_poll = bool(problem and submission.language in JUDGED_LANGUAGES and problem.test_cases.exists())
     return render(request, 'submissions/detail.html', {
         'submission': submission,
         'test_results': test_results,
@@ -131,7 +132,7 @@ def submission_detail(request, submission_id):
 @require_GET
 def submission_status_api(request, submission_id):
     submission = get_object_or_404(
-        Submission.objects.select_related('problem').prefetch_related('test_results'),
+        Submission.objects.select_related('problem', 'contest_problem').prefetch_related('test_results'),
         id=submission_id,
     )
     if submission.user_id != request.user.id and not request.user.is_staff:
@@ -140,7 +141,8 @@ def submission_status_api(request, submission_id):
     test_results = list(submission.test_results.order_by('case_index'))
     # print(test_results[0].runtime)
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
-    total_cases = submission.problem.test_cases.count()
+    problem = submission.effective_problem
+    total_cases = problem.test_cases.count() if problem else 0
     judging = (
         submission.status == 'Pending'
         and submission.language in JUDGED_LANGUAGES
@@ -167,14 +169,14 @@ def submission_status_api(request, submission_id):
 
 @login_required
 def submission_list(request):
-    submissions = Submission.objects.filter(user=request.user).select_related('problem', 'user')
+    submissions = Submission.objects.filter(user=request.user).select_related('problem', 'contest_problem__contest', 'user')
     return render(request, 'submissions/list.html', {'submissions': submissions})
 
 
 @login_required
 def all_submissions(request):
     submissions = Submission.objects.select_related(
-        'user', 'problem'
+        'user', 'problem', 'contest_problem__contest'
     ).all()
 
     # Filter by problem

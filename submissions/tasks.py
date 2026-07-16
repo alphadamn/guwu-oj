@@ -23,8 +23,14 @@ def judge_submission_task(submission_id):
     job = get_current_job()
     
     try:
-        submission = Submission.objects.get(id=submission_id)
-        logger.info(f'Processing submission {submission_id} for problem {submission.problem.id}')
+        submission = Submission.objects.select_related('problem', 'contest_problem').get(id=submission_id)
+        problem = submission.effective_problem
+        if problem is None:
+            logger.error('Submission %s has no judging target', submission_id)
+            submission.status = 'System Error'
+            submission.save(update_fields=['status'])
+            return None
+        logger.info(f'Processing submission {submission_id} for problem {problem.id}')
     except Submission.DoesNotExist:
         logger.error(f'Submission {submission_id} not found')
         return None
@@ -32,7 +38,7 @@ def judge_submission_task(submission_id):
     # Update job metadata
     if job:
         job.meta['submission_id'] = submission_id
-        job.meta['problem_id'] = submission.problem.id
+        job.meta['problem_id'] = problem.id if problem else None
         job.meta['user_id'] = submission.user.id
         job.save_meta()
 
@@ -58,7 +64,8 @@ def judge_submission_task(submission_id):
 
     # Clear relevant caches
     try:
-        cache.delete(f'problem_pass_rate_{submission.problem.id}')
+        if submission.problem_id:
+            cache.delete(f'problem_pass_rate_{submission.problem_id}')
         cache.delete('leaderboard_users')
         # Problem list cache keys are versioned and invalidated by Problem.
         cache.delete('home_stats')

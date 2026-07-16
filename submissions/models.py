@@ -31,7 +31,7 @@ class Submission(models.Model):
         ('System Error', 'System Error'),
     ]
     
-    problem = models.ForeignKey(Problem, on_delete=models.CASCADE, related_name='submissions')
+    problem = models.ForeignKey(Problem, null=True, blank=True, on_delete=models.CASCADE, related_name='submissions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='submissions')
     contest_problem = models.ForeignKey(
         'contests.ContestProblem', null=True, blank=True,
@@ -49,24 +49,36 @@ class Submission(models.Model):
         verbose_name = '提交记录'
         verbose_name_plural = '提交记录'
 
+    @property
+    def effective_problem(self):
+        """Return the judging target without dereferencing a nullable relation.
+
+        Contest submissions intentionally have no normal ``Problem`` row. The
+        explicit ID checks keep worker/admin code from evaluating
+        ``self.problem`` for those rows.
+        """
+        if self.contest_problem_id:
+            return self.contest_problem
+        if self.problem_id:
+            return self.problem
+        return None
+
     def __str__(self):
-        return f"Submission {self.id} - {self.user.username} - {self.problem.title}"
+        problem = self.effective_problem
+        return f"Submission {self.id} - {self.user.username} - {problem.title if problem else 'unknown'}"
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Clear only caches directly related to this problem.
-        # Avoids Redis KEYS (O(N) blocking) used by delete_pattern;
-        # also avoids invalidating unrelated keys on every submission.
-        problem_id = self.problem_id
-        cache.delete(f'problem_pass_rate_{problem_id}')
-        # Use SCAN-based iteration (non-blocking) for pattern matches.
+        if not self.problem_id:
+            return
+        cache.delete(f'problem_pass_rate_{self.problem_id}')
         try:
             from django_redis import get_redis_connection
             redis_conn = get_redis_connection('default')
-            for key in redis_conn.scan_iter(match=f'problem_list_query_{problem_id}_*', count=200):
+            for key in redis_conn.scan_iter(match=f'problem_list_query_{self.problem_id}_*', count=200):
                 redis_conn.delete(key)
         except Exception:
-            pass  # Non-redis backend or unavailable — fail silently on cache cleanup
+            pass
 
 
 class SubmissionTestResult(models.Model):
@@ -84,6 +96,9 @@ class SubmissionTestResult(models.Model):
     )
     test_case = models.ForeignKey(
         'problems.TestCase', on_delete=models.SET_NULL, null=True, blank=True
+    )
+    contest_test_case = models.ForeignKey(
+        'contests.ContestTestCase', on_delete=models.SET_NULL, null=True, blank=True
     )
     case_index = models.PositiveIntegerField()
     status = models.CharField(max_length=30, choices=CASE_STATUS_CHOICES)
