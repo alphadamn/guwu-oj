@@ -8,6 +8,10 @@
 <link rel="stylesheet" href="{% static 'css/problem-markdown.css' %}">
 {% endblock %}
 
+{% block extra_js %}
+{% include 'problems/_mathjax.html' %}
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-lg-8">
