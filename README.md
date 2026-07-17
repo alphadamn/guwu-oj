@@ -410,11 +410,12 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 ## 开发计划
 
 - [x] 实现自动化代码评测系统
-- [x] 添加更多编程语言支持 (JavaScript/TypeScript/Go/Rust/Ruby/Kotlin)
+- [x] 添加更多编程语言支持 (JavaScript/Go/Rust/Ruby/Kotlin...)
 - [x] 判题 Docker 镜像按语言拆分
 - [x] 多判题机分布式部署 (Multi-Judge)
-- [ ] 添加比赛功能
-- [ ] 植入AI解题功能+文档搜索引擎
+- [x] 添加比赛功能
+- [ ] 植入AI解题功能
+- [x] 文档搜索引擎
 - [x] 添加题解功能
 - [ ] 优化移动端体验
 
