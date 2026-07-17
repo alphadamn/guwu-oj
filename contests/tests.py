@@ -48,6 +48,8 @@ class ContestFeatureTests(TestCase):
         self.assertContains(response, 'problem-mathjax.js')
         self.assertContains(response, 'monaco-editor')
         self.assertContains(response, 'code-editor.js')
+        self.assertContains(response, '返回竞赛')
+        self.assertContains(response, reverse('contest_detail', args=[contest.id]))
 
     def test_finished_contest_copies_normal_problem_and_origin_tag_once(self):
         contest, item = self.create_contest_problem(end_delta=-timedelta(minutes=1))
