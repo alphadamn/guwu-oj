@@ -59,10 +59,10 @@
 | 镜像 | 语言 | 大小 |
 |------|------|------|
 | `oj-python` | Python | ~44MB |
-| `oj-c` | C | ~86MB |
-| `oj-cpp` | C++ | ~110MB |
-| `oj-java` | Java | ~181MB |
-| `oj-other` | Go, Rust, JS, Ruby, Kotlin, ASM | ~636MB |
+| `oj-c` | C | ~98MB |
+| `oj-cpp` | C++ | ~116MB |
+| `oj-java` | Java | ~183MB |
+| `oj-other` | Go, Rust, JS, Ruby, Kotlin, ASM | ~640MB |
 
 判题时系统会根据提交语言自动选择对应镜像，无需手动指定。
 
