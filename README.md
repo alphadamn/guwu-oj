@@ -62,7 +62,7 @@
 | `oj-c` | C | ~86MB |
 | `oj-cpp` | C++ | ~110MB |
 | `oj-java` | Java | ~181MB |
-| `oj-other` | Go, Rust, JS, TS, Ruby, Kotlin, ASM | ~636MB |
+| `oj-other` | Go, Rust, JS, Ruby, Kotlin, ASM | ~636MB |
 
 判题时系统会根据提交语言自动选择对应镜像，无需手动指定。
 
@@ -368,7 +368,7 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 | Rust | `rustc --edition=2021` | 原生执行 |
 | Ruby | — | `ruby` |
 | Kotlin | `kotlinc` | `java -jar` |
-| Assembly | `as` + `ld` | ARM64 Linux 原生 |
+| Assembly | `as` + `ld` | Linux 原生 |
 
 ## 生产部署建议
 
