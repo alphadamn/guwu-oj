@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kotlin \
     time \
     tini \
-    && npm install -g typescript ts-node @types/node \
+    && npm install -g @types/node \
     && rm -rf /var/lib/apt/lists/*
 
 ENV JAVA_TOOL_OPTIONS="-XX:+IgnoreUnrecognizedVMOptions"
