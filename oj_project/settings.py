@@ -157,6 +157,30 @@ def _parse_judge_machines(raw, fallback):
         if not isinstance(enabled, bool):
             raise ValueError(f'JUDGE_MACHINES_JSON item {index} enabled must be boolean')
 
+        tls = machine.get('tls', False)
+        if not isinstance(tls, bool):
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} tls must be boolean')
+        password = machine.get('password', '')
+        ca_cert_path = machine.get('ca_cert_path', '')
+        client_cert_path = machine.get('client_cert_path', '')
+        client_key_path = machine.get('client_key_path', '')
+        for field_name, value in {
+            'password': password,
+            'ca_cert_path': ca_cert_path,
+            'client_cert_path': client_cert_path,
+            'client_key_path': client_key_path,
+        }.items():
+            if not isinstance(value, str):
+                raise ValueError(
+                    f'JUDGE_MACHINES_JSON item {index} {field_name} must be a string'
+                )
+        if tls and not ca_cert_path.strip():
+            raise ValueError(f'JUDGE_MACHINES_JSON item {index} TLS requires ca_cert_path')
+        if bool(client_cert_path.strip()) != bool(client_key_path.strip()):
+            raise ValueError(
+                f'JUDGE_MACHINES_JSON item {index} requires both client_cert_path and client_key_path'
+            )
+
         validated.append({
             'name': name,
             'host': host,
@@ -165,19 +189,53 @@ def _parse_judge_machines(raw, fallback):
             'queue': queue,
             'enabled': enabled,
             'weight': weight,
+            'tls': tls,
+            'password': password,
+            'ca_cert_path': ca_cert_path.strip(),
+            'client_cert_path': client_cert_path.strip(),
+            'client_key_path': client_key_path.strip(),
         })
     return validated
 
 
-def _redis_tls_kwargs(enabled, ca_cert_path, direct=False):
+def _redis_tls_kwargs(enabled, ca_cert_path, client_cert_path='', client_key_path='', direct=False):
     if not enabled:
         return {}
     kwargs = {
         'ssl_cert_reqs': 'required',
         'ssl_ca_certs': ca_cert_path,
     }
+    if client_cert_path:
+        kwargs['ssl_certfile'] = client_cert_path
+        kwargs['ssl_keyfile'] = client_key_path
     if direct:
         kwargs['ssl'] = True
+    return kwargs
+
+
+def _rq_machine_connection(machine):
+    """Return Redis client settings for one queue without exposing credentials in URLs."""
+    tls_enabled = machine.get('tls', _env_enabled('RQ_REDIS_TLS'))
+    ca_cert_path = machine.get(
+        'ca_cert_path', os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt')
+    )
+    client_cert_path = machine.get(
+        'client_cert_path', os.environ.get('RQ_REDIS_CLIENT_CERT', '')
+    )
+    client_key_path = machine.get(
+        'client_key_path', os.environ.get('RQ_REDIS_CLIENT_KEY', '')
+    )
+    password = machine.get('password') or _rq_redis_password()
+    kwargs = {
+        'socket_connect_timeout': 5,
+        'socket_timeout': 5,
+        'retry_on_timeout': True,
+    }
+    if password:
+        kwargs['password'] = password
+    kwargs.update(_redis_tls_kwargs(
+        tls_enabled, ca_cert_path, client_cert_path, client_key_path, direct=True,
+    ))
     return kwargs
 
 
@@ -208,34 +266,26 @@ def _redis_url(host, port, db, password='', tls=False, ca_cert_path=''):
 
 
 def _rq_redis_kwargs():
-    password = _rq_redis_password()
-    tls_enabled = _env_enabled('RQ_REDIS_TLS')
-    ca_cert_path = os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt')
-    kwargs = {
-        'socket_connect_timeout': 5,
-        'socket_timeout': 5,
-        'retry_on_timeout': True,
+    return _rq_machine_connection({})
+
+
+def _rq_queue_entry(machine):
+    connection = _rq_machine_connection(machine)
+    client_kwargs = {
+        key: value for key, value in connection.items()
+        if key not in {'password', 'ssl', 'ssl_cert_reqs'}
     }
-    if password:
-        kwargs['password'] = password
-    kwargs.update(_redis_tls_kwargs(tls_enabled, ca_cert_path, direct=True))
-    return kwargs
-
-
-def _rq_queue_entry(host, port, db):
-    password = _rq_redis_password()
-    tls_enabled = _env_enabled('RQ_REDIS_TLS')
-    ca_cert_path = os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt')
-    entry = {
-        'HOST': host,
-        'PORT': port,
-        'DB': db,
+    return {
+        'HOST': machine['host'],
+        'PORT': machine['port'],
+        'DB': machine['db'],
+        'PASSWORD': connection.get('password'),
+        'SSL': connection.get('ssl', False),
+        'SSL_CERT_REQS': connection.get('ssl_cert_reqs', 'required'),
+        'REDIS_CLIENT_KWARGS': client_kwargs,
         'DEFAULT_TIMEOUT': 3600,
         'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-        'REDIS_CONNECTION_KWARGS': _rq_redis_kwargs(),
     }
-    entry['URL'] = _redis_url(host, port, db, password, tls_enabled, ca_cert_path)
-    return entry
 
 
 if not DEMO_MODE:
@@ -282,10 +332,15 @@ if not DEMO_MODE:
     judge_1_port = int(os.environ.get('JUDGE_1_PORT', str(rq_port)))
     judge_1_db = int(os.environ.get('JUDGE_1_REDIS_DB', str(rq_db)))
 
+    default_rq_machine = {
+        'host': rq_host,
+        'port': rq_port,
+        'db': rq_db,
+    }
     RQ_QUEUES = {
-        'default': _rq_queue_entry(rq_host, rq_port, rq_db),
-        'high': _rq_queue_entry(rq_host, rq_port, rq_db),
-        'low': _rq_queue_entry(rq_host, rq_port, rq_db),
+        'default': _rq_queue_entry(default_rq_machine),
+        'high': _rq_queue_entry(default_rq_machine),
+        'low': _rq_queue_entry(default_rq_machine),
     }
 
     default_judge_machines = [
@@ -297,6 +352,11 @@ if not DEMO_MODE:
             'queue': 'judge-1',
             'enabled': True,
             'weight': 1,
+            'tls': _env_enabled('RQ_REDIS_TLS'),
+            'password': _rq_redis_password(),
+            'ca_cert_path': os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt'),
+            'client_cert_path': os.environ.get('RQ_REDIS_CLIENT_CERT', ''),
+            'client_key_path': os.environ.get('RQ_REDIS_CLIENT_KEY', ''),
         },
     ]
     JUDGE_MACHINES = _parse_judge_machines(
@@ -306,12 +366,18 @@ if not DEMO_MODE:
 
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
     OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
+    OJ_JUDGE_QUEUE = os.environ.get('OJ_JUDGE_QUEUE', '')
 
-    for machine in JUDGE_MACHINES:
-        if machine.get('enabled', True):
-            RQ_QUEUES[machine['queue']] = _rq_queue_entry(
-                machine['host'], machine['port'], machine['db'],
-            )
+    # A judge host normally has credentials only for its own local Redis endpoint.
+    # Register that queue even when its web-side JUDGE_MACHINES_JSON lives solely
+    # on the web host.
+    if OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE:
+        RQ_QUEUES[OJ_JUDGE_QUEUE] = _rq_queue_entry(default_rq_machine)
+
+    if not (OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE):
+        for machine in JUDGE_MACHINES:
+            if machine.get('enabled', True):
+                RQ_QUEUES[machine['queue']] = _rq_queue_entry(machine)
 
     RQ = {
         'exception_handler': 'django_rq.handlers.sentry',
@@ -329,6 +395,7 @@ else:
     RQ_QUEUES = {}
     JUDGE_MACHINES = []
     OJ_MULTI_JUDGE_ENABLED = False
+    OJ_JUDGE_QUEUE = ''
 
 if DEMO_MODE:
     DATABASES = {

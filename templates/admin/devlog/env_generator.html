@@ -112,6 +112,11 @@
             <div><label>Redis DB</label><input class="machine-db" value="0"></div>
             <div><label>队列</label><input class="machine-queue" value="judge-1"></div>
             <div><label>权重</label><input class="machine-weight" value="1"></div>
+            <div><label>启用 TLS</label><select class="machine-tls"><option value="false">false</option><option value="true">true</option></select></div>
+            <div><label>CA 证书路径</label><input class="machine-ca" placeholder="/etc/guwu-oj/tls/redis-ca.crt"></div>
+            <div><label>客户端证书路径（mTLS）</label><input class="machine-client-cert" placeholder="/etc/guwu-oj/tls/judge-1.crt"></div>
+            <div><label>客户端私钥路径（mTLS）</label><input class="machine-client-key" placeholder="/etc/guwu-oj/tls/judge-1.key"></div>
+            <div><label>Redis 密码</label><input class="machine-password" type="password" placeholder="每台评测机的 Redis 密码"></div>
         </div>
     </div>
 </template>
@@ -140,6 +145,11 @@ document.addEventListener('DOMContentLoaded', () => {
         node.querySelector('.machine-db').value = machine.db || '0';
         node.querySelector('.machine-queue').value = machine.queue || `judge-${index}`;
         node.querySelector('.machine-weight').value = machine.weight || '1';
+        node.querySelector('.machine-tls').value = machine.tls ? 'true' : 'false';
+        node.querySelector('.machine-ca').value = machine.ca_cert_path || '';
+        node.querySelector('.machine-client-cert').value = machine.client_cert_path || '';
+        node.querySelector('.machine-client-key').value = machine.client_key_path || '';
+        node.querySelector('.machine-password').value = machine.password || '';
         node.querySelector('.remove-machine').addEventListener('click', () => { node.remove(); renumberMachines(); });
         machines.appendChild(node);
     }
@@ -194,6 +204,11 @@ document.addEventListener('DOMContentLoaded', () => {
             queue: machine.querySelector('.machine-queue').value.trim() || `judge-${index + 1}`,
             enabled: true,
             weight: Number(machine.querySelector('.machine-weight').value.trim() || 1),
+            tls: machine.querySelector('.machine-tls').value === 'true',
+            ca_cert_path: machine.querySelector('.machine-ca').value.trim(),
+            client_cert_path: machine.querySelector('.machine-client-cert').value.trim(),
+            client_key_path: machine.querySelector('.machine-client-key').value.trim(),
+            password: machine.querySelector('.machine-password').value,
         }));
         lines.push('', '# Judge machines', `JUDGE_MACHINES_JSON=${quote(JSON.stringify(machineConfig))}`);
         lines.push('', '# SMTP', `EMAIL_BACKEND=${quote(value('email-backend'))}`, `EMAIL_HOST=${quote(value('email-host'))}`, `EMAIL_PORT=${quote(value('email-port'))}`, `EMAIL_HOST_USER=${quote(value('email-user'))}`, `EMAIL_HOST_PASSWORD=${quote(value('email-password'))}`, `EMAIL_USE_TLS=${value('email-tls')}`, `EMAIL_USE_SSL=${value('email-ssl')}`, `DEFAULT_FROM_EMAIL=${quote(value('from-email'))}`, `SERVER_EMAIL=${quote(value('server-email'))}`, `ADMINS_CSV=${quote(value('admins-csv'))}`, '');

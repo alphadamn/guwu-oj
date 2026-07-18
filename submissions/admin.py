@@ -1,5 +1,42 @@
+from django import forms
 from django.contrib import admin
 from .models import Submission, SubmissionTestResult, JudgeMachine, JudgeConfig
+
+
+class JudgeMachineAdminForm(forms.ModelForm):
+    redis_password = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=False),
+        help_text='Leave blank to keep the current password. It is encrypted at rest.',
+    )
+
+    class Meta:
+        model = JudgeMachine
+        fields = '__all__'
+        exclude = ['redis_password_encrypted']
+
+    def clean(self):
+        cleaned = super().clean()
+        cert = cleaned.get('client_cert_path', '').strip()
+        key = cleaned.get('client_key_path', '').strip()
+        if bool(cert) != bool(key):
+            raise forms.ValidationError(
+                'Client certificate and client key must be configured together.'
+            )
+        if cleaned.get('transport_configured') and cleaned.get('tls_enabled'):
+            if not cleaned.get('ca_cert_path', '').strip():
+                self.add_error('ca_cert_path', 'A CA certificate path is required for TLS.')
+        return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        password = self.cleaned_data.get('redis_password')
+        if password:
+            instance.set_redis_password(password)
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 
 class SubmissionTestResultInline(admin.TabularInline):
@@ -19,10 +56,28 @@ class SubmissionAdmin(admin.ModelAdmin):
 
 @admin.register(JudgeMachine)
 class JudgeMachineAdmin(admin.ModelAdmin):
-    list_display = ['name', 'host', 'port', 'db', 'queue', 'enabled', 'weight']
+    form = JudgeMachineAdminForm
+    list_display = [
+        'name', 'host', 'port', 'db', 'queue', 'enabled', 'weight',
+        'transport_configured', 'tls_enabled',
+    ]
     list_editable = ['host', 'port', 'db', 'queue', 'enabled', 'weight']
-    list_filter = ['enabled']
+    list_filter = ['enabled', 'transport_configured', 'tls_enabled']
     search_fields = ['name', 'host']
+    readonly_fields = ['redis_password_encrypted']
+    fieldsets = (
+        (None, {'fields': ('name', 'host', 'port', 'db', 'queue', 'enabled', 'weight')}),
+        ('Redis transport security', {
+            'fields': (
+                'transport_configured', 'tls_enabled', 'ca_cert_path',
+                'client_cert_path', 'client_key_path', 'redis_password',
+            ),
+            'description': (
+                'Paths refer to files on the judge host. Do not paste PEM content. '
+                'Enable transport configuration to override environment defaults.'
+            ),
+        }),
+    )
     actions = ['check_health', 'check_judging_system']
 
     @admin.action(description='Check health of selected machines')
@@ -30,7 +85,7 @@ class JudgeMachineAdmin(admin.ModelAdmin):
         from .judge_load_balancer import load_balancer
         results = []
         for m in queryset:
-            machine_dict = {
+            machine_dict = load_balancer.effective_machine(m.name) or {
                 'name': m.name, 'host': m.host, 'port': m.port,
                 'db': m.db, 'queue': m.queue,
             }

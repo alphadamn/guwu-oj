@@ -1,6 +1,7 @@
 import logging
 
-from django_rq import enqueue, get_queue
+from django_rq import enqueue
+from rq import Queue
 from django.conf import settings
 from django.core.cache import cache
 
@@ -18,7 +19,9 @@ def enqueue_judge(submission_id):
 
             if machine:
                 try:
-                    queue = get_queue(machine['queue'])
+                    queue = Queue(
+                        machine['queue'], connection=load_balancer._machine_redis(machine)
+                    )
                     job = queue.enqueue(judge_submission_task, submission_id)
                     load_balancer._incr_busy(machine)
                     load_balancer._set_submission_machine(submission_id, machine['name'])

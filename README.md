@@ -163,6 +163,8 @@ python manage.py rqworker default high low
 
 #### 多判题机部署 (Multi-Judge)
 
+For production TLS/password and mTLS deployment, follow [Add a TLS + Password Judge Machine](docs/judge-machine-tls.md). It is the authoritative guide for per-machine credential paths, Django admin configuration, worker setup, verification, and credential rotation.
+
 支持将评测任务分发到多个判题机并行处理，提升系统吞吐量。
 
 **1. 配置判题机**

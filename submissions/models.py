@@ -1,5 +1,10 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from base64 import urlsafe_b64encode
+from hashlib import sha256
+
+from cryptography.fernet import Fernet, InvalidToken
+from django.conf import settings
 from django.core.cache import cache
 from problems.models import Problem
 
@@ -124,6 +129,34 @@ class JudgeMachine(models.Model):
     queue = models.CharField(max_length=64)
     enabled = models.BooleanField(default=True)
     weight = models.IntegerField(default=1, help_text='Higher weight = more tasks')
+    transport_configured = models.BooleanField(
+        default=False,
+        help_text='Use the TLS/password settings below instead of JUDGE_MACHINES_JSON defaults.',
+    )
+    tls_enabled = models.BooleanField(default=False)
+    ca_cert_path = models.CharField(max_length=500, blank=True)
+    client_cert_path = models.CharField(max_length=500, blank=True)
+    client_key_path = models.CharField(max_length=500, blank=True)
+    redis_password_encrypted = models.TextField(blank=True, editable=False)
+
+    def _password_cipher(self):
+        key = urlsafe_b64encode(sha256(settings.SECRET_KEY.encode()).digest())
+        return Fernet(key)
+
+    def set_redis_password(self, password):
+        self.redis_password_encrypted = (
+            self._password_cipher().encrypt(password.encode()).decode() if password else ''
+        )
+
+    def get_redis_password(self):
+        if not self.redis_password_encrypted:
+            return ''
+        try:
+            return self._password_cipher().decrypt(
+                self.redis_password_encrypted.encode()
+            ).decode()
+        except (InvalidToken, UnicodeDecodeError):
+            return ''
 
     class Meta:
         ordering = ['name']

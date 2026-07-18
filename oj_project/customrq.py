@@ -21,7 +21,7 @@ class AutoReconnectWorker(Worker):
         self.max_retries = 5
         self.retry_delay = 5
         self._stop_heartbeat = threading.Event()
-        self.redis_url = None
+        self._connection_kwargs = None
         start_container_cleanup()
 
     def _queue_names(self):
@@ -57,27 +57,19 @@ class AutoReconnectWorker(Worker):
         if hasattr(self, '_heartbeat_thread') and self._heartbeat_thread and self._heartbeat_thread.is_alive():
             self._heartbeat_thread.join(timeout=2)
 
-    def _ensure_redis_url(self):
-        if getattr(self, 'redis_url', None):
-            return
-        pool = self.connection.connection_pool
-        kw = pool.connection_kwargs
-        password = kw.get('password')
-        host = kw.get('host', 'localhost')
-        port = kw.get('port', 6379)
-        db = kw.get('db', 0)
-        if password:
-            self.redis_url = f'redis://:{password}@{host}:{port}/{db}'
-        else:
-            self.redis_url = f'redis://{host}:{port}/{db}'
+    def _connection_options(self):
+        if self._connection_kwargs is None:
+            self._connection_kwargs = dict(self.connection.connection_pool.connection_kwargs)
+        return dict(self._connection_kwargs)
 
     def _reconnect(self):
-        self._ensure_redis_url()
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info('Attempting to reconnect to Redis (attempt %s)...', attempt)
-                self.connection = redis.Redis.from_url(self.redis_url)
-                self.pubsub = self.connection.pubsub()
+                connection = redis.Redis(**self._connection_options())
+                connection.ping()
+                self.connection = connection
+                self.pubsub = connection.pubsub()
                 logger.info('Successfully reconnected to Redis.')
                 return
             except (redis.ConnectionError, redis.TimeoutError) as exc:
@@ -86,7 +78,7 @@ class AutoReconnectWorker(Worker):
         raise redis.ConnectionError('Failed to reconnect to Redis after multiple attempts.')
 
     def work(self, *args, **kwargs):
-        self._ensure_redis_url()
+        self._connection_options()
         self._start_heartbeat()
         try:
             while True:

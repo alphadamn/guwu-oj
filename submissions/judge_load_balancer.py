@@ -18,30 +18,53 @@ class JudgeLoadBalancer:
 
     @property
     def machines(self):
-        """Get machines from DB, fallback to settings.py."""
+        """Combine environment transport settings with admin operational overrides."""
+        configured = {
+            machine['name']: dict(machine)
+            for machine in getattr(settings, 'JUDGE_MACHINES', [])
+        }
         from submissions.models import JudgeMachine
         try:
-            db_machines = list(JudgeMachine.objects.values(
-                'name', 'host', 'port', 'db', 'queue', 'enabled', 'weight'
-            ))
-            if db_machines:
-                return db_machines
+            for db_machine in JudgeMachine.objects.all():
+                machine = configured.get(db_machine.name, {})
+                machine.update({
+                    'name': db_machine.name,
+                    'host': db_machine.host,
+                    'port': db_machine.port,
+                    'db': db_machine.db,
+                    'queue': db_machine.queue,
+                    'enabled': db_machine.enabled,
+                    'weight': db_machine.weight,
+                })
+                if db_machine.transport_configured:
+                    machine.update({
+                        'tls': db_machine.tls_enabled,
+                        'ca_cert_path': db_machine.ca_cert_path,
+                        'client_cert_path': db_machine.client_cert_path,
+                        'client_key_path': db_machine.client_key_path,
+                        'password': db_machine.get_redis_password(),
+                    })
+                configured[db_machine.name] = machine
         except Exception:
             pass
-        return getattr(settings, 'JUDGE_MACHINES', [])
+        return list(configured.values())
+
+    def effective_machine(self, name):
+        return self._find_machine(name=name)
 
     def _machine_redis(self, machine, decode_responses=False):
         import redis
-        from django.conf import settings
-        kwargs = {
+        from oj_project.settings import _rq_machine_connection
+
+        kwargs = _rq_machine_connection(machine)
+        kwargs.update({
             'host': machine['host'],
             'port': machine['port'],
             'db': machine['db'],
             'socket_connect_timeout': 3,
             'socket_timeout': 3,
             'decode_responses': decode_responses,
-        }
-        kwargs.update(getattr(settings, 'RQ_REDIS_CONNECTION_KWARGS', {}))
+        })
         return redis.Redis(**kwargs)
 
     def _find_machine(self, name=None, queue=None):
