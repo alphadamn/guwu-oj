@@ -15,7 +15,7 @@
   - 难度分级（入门、普及-、普及、普及+、提高-、提高、提高+、省选、NOI）
 
 - 提交系统
-  - 代码提交（支持 C、C++、Python、Java、JavaScript、TypeScript、Go、Rust、Ruby、Kotlin、Assembly）
+  - 代码提交（支持 C、C++、Python、Java、JavaScript、Go、Rust、Ruby、Kotlin、Assembly）
   - 提交记录查看
   - 提交详情（代码、评测结果、运行时间、内存使用）
 
