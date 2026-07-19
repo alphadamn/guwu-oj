@@ -53,10 +53,82 @@ class JudgeMachineSettingsTests(TestCase):
             'queue': 'judge-2',
             'enabled': True,
             'weight': 3,
+            'tls': False,
+            'password': '',
+            'ca_cert_path': '',
+            'client_cert_path': '',
+            'client_key_path': '',
         }])
+
+    def test_json_tls_configuration_is_loaded_and_normalized(self):
+        from oj_project.settings import _parse_judge_machines
+
+        payload = json.dumps([{
+            'name': 'judge-tls',
+            'host': 'judge.example.internal',
+            'queue': 'judge-tls',
+            'tls': True,
+            'password': 'machine-password',
+            'ca_cert_path': '/etc/guwu-oj/tls/ca.crt',
+            'client_cert_path': '/etc/guwu-oj/tls/judge.crt',
+            'client_key_path': '/etc/guwu-oj/tls/judge.key',
+        }])
+
+        result = _parse_judge_machines(payload, [])
+
+        self.assertTrue(result[0]['tls'])
+        self.assertEqual(result[0]['password'], 'machine-password')
+        self.assertEqual(result[0]['ca_cert_path'], '/etc/guwu-oj/tls/ca.crt')
+        self.assertEqual(result[0]['client_cert_path'], '/etc/guwu-oj/tls/judge.crt')
+        self.assertEqual(result[0]['client_key_path'], '/etc/guwu-oj/tls/judge.key')
+
+    def test_tls_configuration_requires_ca_and_complete_client_credentials(self):
+        from oj_project.settings import _parse_judge_machines
+
+        incomplete_tls = json.dumps([{
+            'name': 'judge-tls', 'host': 'judge.internal', 'queue': 'judge-tls',
+            'tls': True,
+        }])
+        incomplete_client_cert = json.dumps([{
+            'name': 'judge-tls', 'host': 'judge.internal', 'queue': 'judge-tls',
+            'ca_cert_path': '/tls/ca.crt', 'client_cert_path': '/tls/client.crt',
+        }])
+
+        with self.assertRaisesMessage(ValueError, 'TLS requires ca_cert_path'):
+            _parse_judge_machines(incomplete_tls, [])
+        with self.assertRaisesMessage(ValueError, 'requires both client_cert_path'):
+            _parse_judge_machines(incomplete_client_cert, [])
+
+    def test_queue_configuration_keeps_machine_tls_credentials_separate(self):
+        from oj_project.settings import _rq_queue_entry
+
+        queue = _rq_queue_entry({
+            'host': 'judge.internal', 'port': 6380, 'db': 2,
+            'tls': True, 'password': 'per-machine-password',
+            'ca_cert_path': '/tls/ca.crt',
+            'client_cert_path': '/tls/judge.crt',
+            'client_key_path': '/tls/judge.key',
+        })
+
+        self.assertEqual(queue['PASSWORD'], 'per-machine-password')
+        self.assertTrue(queue['SSL'])
+        self.assertEqual(queue['REDIS_CLIENT_KWARGS']['ssl_ca_certs'], '/tls/ca.crt')
+        self.assertEqual(queue['REDIS_CLIENT_KWARGS']['ssl_certfile'], '/tls/judge.crt')
+        self.assertEqual(queue['REDIS_CLIENT_KWARGS']['ssl_keyfile'], '/tls/judge.key')
 
     def test_empty_json_configuration_uses_legacy_fallback(self):
         from oj_project.settings import _parse_judge_machines
 
         fallback = [{'name': 'judge-1'}]
         self.assertIs(_parse_judge_machines('', fallback), fallback)
+
+
+class JudgeMachineCredentialTests(TestCase):
+    def test_admin_stored_password_is_encrypted_and_recoverable(self):
+        from submissions.models import JudgeMachine
+
+        machine = JudgeMachine(name='judge-secure', queue='judge-secure')
+        machine.set_redis_password('unique-machine-password')
+
+        self.assertNotEqual(machine.redis_password_encrypted, 'unique-machine-password')
+        self.assertEqual(machine.get_redis_password(), 'unique-machine-password')

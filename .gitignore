@@ -12,6 +12,6 @@ staticfiles
 .idea
 dump.rdb
 config.yaml
-
+tls
 # Three-Layer Memory (keep memory, ignore state)
 .claude/data/session_state.json

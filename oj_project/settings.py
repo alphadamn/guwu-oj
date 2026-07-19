@@ -195,10 +195,12 @@ def _parse_judge_machines(raw, fallback):
             'client_cert_path': client_cert_path.strip(),
             'client_key_path': client_key_path.strip(),
         })
+    #print(validated)
     return validated
 
 
 def _redis_tls_kwargs(enabled, ca_cert_path, client_cert_path='', client_key_path='', direct=False):
+    #print(ca_cert_path)
     if not enabled:
         return {}
     kwargs = {
@@ -354,15 +356,16 @@ if not DEMO_MODE:
             'weight': 1,
             'tls': _env_enabled('RQ_REDIS_TLS'),
             'password': _rq_redis_password(),
-            'ca_cert_path': os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt'),
-            'client_cert_path': os.environ.get('RQ_REDIS_CLIENT_CERT', ''),
-            'client_key_path': os.environ.get('RQ_REDIS_CLIENT_KEY', ''),
+            'ca_cert_path': os.environ.get('RQ_REDIS_CA_CERT', '/www/wwwroot/tls-judge/ca.crt'),
+            'client_cert_path': os.environ.get('RQ_REDIS_CLIENT_CERT', '/www/wwwroot/tls-judge/redis.crt'),
+            'client_key_path': os.environ.get('RQ_REDIS_CLIENT_KEY', '/www/wwwroot/tls-judge/redis.key'),
         },
     ]
     JUDGE_MACHINES = _parse_judge_machines(
         os.environ.get('JUDGE_MACHINES_JSON', ''),
         default_judge_machines,
     )
+    #print(JUDGE_MACHINES)
 
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
     OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
