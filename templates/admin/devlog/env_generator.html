@@ -39,6 +39,8 @@
             <div><label for="db-password">DB_PASSWORD</label><input id="db-password" type="password" placeholder="数据库密码"></div>
             <div><label for="db-host">DB_HOST</label><input id="db-host" value="127.0.0.1"></div>
             <div><label for="db-port">DB_PORT</label><input id="db-port" value="5432"></div>
+            <div><label for="db-sslmode">DB_SSLMODE</label><select id="db-sslmode"><option value="require">require（加密，不验证服务器证书）</option><option value="verify-ca">verify-ca（验证 CA）</option><option value="verify-full">verify-full（验证 CA 和主机名）</option><option value="disable">disable（不推荐）</option></select></div>
+            <div><label for="db-sslrootcert">DB_SSLROOTCERT</label><input id="db-sslrootcert" placeholder="/etc/guwu-oj/postgres-tls/ca.crt"><p class="hint">使用 verify-ca 或 verify-full 时，填写本机 PostgreSQL CA 证书路径。</p></div>
         </div>
     </div>
 
@@ -180,6 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
             `DB_PASSWORD=${quote(value('db-password'))}`,
             `DB_HOST=${quote(value('db-host'))}`,
             `DB_PORT=${quote(value('db-port'))}`,
+            `DB_SSLMODE=${value('db-sslmode')}`,
+            ...(value('db-sslrootcert') ? [`DB_SSLROOTCERT=${quote(value('db-sslrootcert'))}`] : []),
             '', '# Cache Redis',
             `CACHE_REDIS_HOST=${quote(value('cache-host'))}`,
             `CACHE_REDIS_PORT=${quote(value('cache-port'))}`,
