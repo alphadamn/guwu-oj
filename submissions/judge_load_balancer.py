@@ -3,6 +3,8 @@
 import logging
 import os
 import random
+import time
+from contextlib import contextmanager
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -15,14 +17,20 @@ class JudgeLoadBalancer:
         self.multi_judge_enabled = getattr(settings, 'OJ_MULTI_JUDGE_ENABLED', False)
         self.health_check_cache_prefix = 'judge_health_'
         self.health_check_ttl = 30
+        self.selection_lock_key = 'judge:selection:lock'
+        self.selection_lock_ttl = 10
+        self.selection_lock_wait_sec = 3
 
     @property
     def machines(self):
-        """Combine environment transport settings with admin operational overrides."""
+        """Return worker-local settings or web-side admin overrides."""
         configured = {
             machine['name']: dict(machine)
             for machine in getattr(settings, 'JUDGE_MACHINES', [])
         }
+        if getattr(settings, 'OJ_ROLE', 'web') == 'worker':
+            return list(configured.values())
+
         from submissions.models import JudgeMachine
         try:
             for db_machine in JudgeMachine.objects.all():
@@ -113,6 +121,32 @@ class JudgeLoadBalancer:
         enabled_machines = self.get_enabled_machines()
         return [m for m in enabled_machines if self.check_machine_health(m)]
 
+    @contextmanager
+    def _selection_lock(self):
+        """Serialize select-and-reserve across web requests."""
+        from django.core.cache import cache
+
+        deadline = time.monotonic() + self.selection_lock_wait_sec
+        acquired = False
+        while time.monotonic() < deadline:
+            acquired = cache.add(
+                self.selection_lock_key, 'locked', self.selection_lock_ttl,
+            )
+            if acquired:
+                break
+            time.sleep(0.05)
+
+        if not acquired:
+            raise TimeoutError('Timed out waiting to reserve judge capacity')
+
+        try:
+            yield
+        finally:
+            cache.delete(self.selection_lock_key)
+
+    def _busy_key(self, machine):
+        return f"judge:busy:{machine['name']}"
+
     def _get_queue_length(self, machine):
         try:
             return self._machine_redis(machine).llen(f"rq:queue:{machine['queue']}")
@@ -121,23 +155,26 @@ class JudgeLoadBalancer:
 
     def _get_busy_count(self, machine):
         try:
-            return int(self._machine_redis(machine).get(f"judge:busy:{machine['name']}") or 0)
+            return int(self._machine_redis(machine).get(self._busy_key(machine)) or 0)
         except Exception:
             return 9999
 
     def _incr_busy(self, machine):
         try:
             r = self._machine_redis(machine)
-            key = f"judge:busy:{machine['name']}"
-            r.incr(key)
+            key = self._busy_key(machine)
+            val = r.incr(key)
             r.expire(key, 3600)
+            logger.debug('Reserved busy slot for %s: %s', machine['name'], val)
+            return val
         except Exception:
             logger.exception('Failed to increment busy count for %s', machine.get('name'))
+            raise
 
     def _decr_busy(self, machine):
         try:
             r = self._machine_redis(machine)
-            key = f"judge:busy:{machine['name']}"
+            key = self._busy_key(machine)
             val = r.decr(key)
             if val <= 0:
                 r.delete(key)
@@ -191,7 +228,69 @@ class JudgeLoadBalancer:
 
         self._decr_busy(machine)
 
+    def reserve_machine(self, submission_id):
+        """Select and reserve one judge capacity slot before queueing a job."""
+        if not self.multi_judge_enabled:
+            return None
+
+        with self._selection_lock():
+            healthy_machines = self.get_healthy_machines()
+            if not healthy_machines:
+                logger.warning('No healthy judge machines available, falling back to default queue')
+                return None
+
+            machine_loads = []
+            for machine in healthy_machines:
+                queue_length = self._get_queue_length(machine)
+                busy = self._get_busy_count(machine)
+                total_load = queue_length + busy
+                machine_loads.append((total_load, machine, queue_length, busy))
+                logger.debug(
+                    'Judge %s load: queue=%s, busy=%s, total=%s',
+                    machine['name'], queue_length, busy, total_load,
+                )
+
+            machine_loads.sort(key=lambda item: item[0])
+            min_load = machine_loads[0][0]
+            candidates = [item for item in machine_loads if item[0] == min_load]
+
+            if len(candidates) == 1:
+                _, selected, queue_length, busy = candidates[0]
+                reason = 'only lowest-load candidate'
+            else:
+                total_weight = sum(machine.get('weight', 1) for _, machine, _, _ in candidates)
+                threshold = random.uniform(0, total_weight)
+                running_weight = 0
+                selected, queue_length, busy = candidates[-1][1:]
+                for _, machine, candidate_queue_length, candidate_busy in candidates:
+                    running_weight += machine.get('weight', 1)
+                    if threshold <= running_weight:
+                        selected = machine
+                        queue_length = candidate_queue_length
+                        busy = candidate_busy
+                        break
+                reason = f'weighted among {len(candidates)} lowest-load candidates'
+
+            reserved_busy = self._incr_busy(selected)
+            try:
+                self._set_submission_machine(submission_id, selected['name'])
+            except Exception:
+                self._decr_busy(selected)
+                raise
+
+            logger.info(
+                'Reserved judge machine %s for submission %s '
+                '(queue=%s, busy=%s, load=%s, reserved_busy=%s, %s)',
+                selected['name'], submission_id, queue_length, busy, min_load,
+                reserved_busy, reason,
+            )
+            return selected
+
     def select_machine(self):
+        """Return the least-loaded machine without reserving capacity.
+
+        Use reserve_machine() for actual submission dispatch.
+        """
         if not self.multi_judge_enabled:
             return None
 
@@ -201,37 +300,26 @@ class JudgeLoadBalancer:
             return None
 
         machine_loads = []
-        for m in healthy_machines:
-            qlen = self._get_queue_length(m)
-            busy = self._get_busy_count(m)
-            total_load = qlen + busy
-            machine_loads.append((total_load, m))
-            logger.debug(f'  {m["name"]}: queue={qlen}, busy={busy}, total={total_load}')
+        for machine in healthy_machines:
+            queue_length = self._get_queue_length(machine)
+            busy = self._get_busy_count(machine)
+            total_load = queue_length + busy
+            machine_loads.append((total_load, machine))
+            logger.debug('Judge %s load: queue=%s, busy=%s, total=%s', machine['name'], queue_length, busy, total_load)
 
-        machine_loads.sort(key=lambda x: x[0])
+        machine_loads.sort(key=lambda item: item[0])
         min_load = machine_loads[0][0]
-        candidates = [m for load, m in machine_loads if load == min_load]
-
+        candidates = [machine for load, machine in machine_loads if load == min_load]
         if len(candidates) == 1:
-            selected = candidates[0]
-            logger.info(
-                f'Selected judge machine: {selected["name"]} '
-                f'(load: {min_load}, only idle candidate)'
-            )
-            return selected
+            return candidates[0]
 
-        total_weight = sum(m.get('weight', 1) for m in candidates)
-        rand = random.uniform(0, total_weight)
-        current = 0
-        for m in candidates:
-            current += m.get('weight', 1)
-            if rand <= current:
-                logger.info(
-                    f'Selected judge machine: {m["name"]} '
-                    f'(load: {min_load}, weighted among {len(candidates)} candidates)'
-                )
-                return m
-
+        total_weight = sum(machine.get('weight', 1) for machine in candidates)
+        threshold = random.uniform(0, total_weight)
+        running_weight = 0
+        for machine in candidates:
+            running_weight += machine.get('weight', 1)
+            if threshold <= running_weight:
+                return machine
         return candidates[-1]
 
     def get_queue_for_machine(self, machine):

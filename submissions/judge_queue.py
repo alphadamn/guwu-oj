@@ -15,25 +15,28 @@ def enqueue_judge(submission_id):
     """Enqueue judge task to RQ queue for async execution with load balancing."""
     try:
         if getattr(settings, 'OJ_MULTI_JUDGE_ENABLED', False):
-            machine = load_balancer.select_machine()
+            machine = load_balancer.reserve_machine(submission_id)
 
             if machine:
                 try:
                     queue = Queue(
                         machine['queue'], connection=load_balancer._machine_redis(machine)
                     )
-                    job = queue.enqueue(judge_submission_task, submission_id)
-                    load_balancer._incr_busy(machine)
-                    load_balancer._set_submission_machine(submission_id, machine['name'])
-                    job.meta['judge_machine'] = machine['name']
-                    job.meta['submission_id'] = submission_id
-                    job.save_meta()
+                    job = queue.enqueue(
+                        judge_submission_task,
+                        submission_id,
+                        meta={
+                            'judge_machine': machine['name'],
+                            'submission_id': submission_id,
+                        },
+                    )
                     logger.info(
                         'Enqueued judge task for submission %s to machine %s, job ID: %s',
                         submission_id, machine['name'], job.id,
                     )
                     return job
                 except Exception as e:
+                    load_balancer.release_machine(submission_id)
                     logger.error(f'Failed to enqueue to machine {machine["name"]}: {e}')
                     cache_key = f'judge_health_{machine["name"]}'
                     cache.set(cache_key, False, 60)
