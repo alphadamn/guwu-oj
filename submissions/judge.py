@@ -578,8 +578,15 @@ def judge_submission(submission_id):
                 if runner.last_memory_kb:
                     max_memory_kb = max(max_memory_kb, runner.last_memory_kb)
 
-                # Hard TLE by in-container timer.
-                if elapsed_ms and elapsed_ms > problem.time_limit:
+                # A watchdog-terminated process can report exactly the limit
+                # after /usr/bin/time rounds to milliseconds. Its nonzero exit
+                # must remain TLE rather than being recorded as RE.
+                if (
+                    elapsed_ms
+                    and elapsed_ms >= problem.time_limit
+                    and isinstance(error, tuple)
+                    and error[0] == "Runtime Error"
+                ):
                     error = "Time Limit Exceeded"
 
                 parsed = _case_status_from_error(error, actual, expected)
