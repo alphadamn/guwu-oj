@@ -230,7 +230,10 @@ def _rq_machine_connection(machine):
     password = machine.get('password') or _rq_redis_password()
     kwargs = {
         'socket_connect_timeout': 5,
-        'socket_timeout': 5,
+        # RQ's blocking pub/sub listener must not inherit a short read timeout.
+        # Health and load-balancer clients explicitly set their own 3-second
+        # timeout in JudgeLoadBalancer._machine_redis.
+        'socket_timeout': None,
         'retry_on_timeout': True,
     }
     if password:
@@ -365,7 +368,8 @@ if not DEMO_MODE:
         os.environ.get('JUDGE_MACHINES_JSON', ''),
         default_judge_machines,
     )
-    #print(JUDGE_MACHINES)
+    # Local worker settings own the transport for the queue it consumes. The
+    # web process alone reads JudgeMachine database overrides for remote queues.
 
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
     OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
@@ -416,6 +420,14 @@ else:
             'PASSWORD': os.environ.get('DB_PASSWORD', ''),
             'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
             'PORT': os.environ.get('DB_PORT', '5432'),
+            'OPTIONS': {
+                'sslmode': os.environ.get('DB_SSLMODE', 'require'),
+                **(
+                    {'sslrootcert': os.environ['DB_SSLROOTCERT']}
+                    if os.environ.get('DB_SSLROOTCERT')
+                    else {}
+                ),
+            },
         }
     }
 
