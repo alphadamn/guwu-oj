@@ -76,8 +76,7 @@
                             </button>
                         </div>
                         <img id="captcha-img"
-                             src="{{ captcha_url }}"
-                             alt="图形验证码"
+                             alt="正在加载图形验证码"
                              class="mt-2 rounded border"
                              style="width:180px; height:50px; cursor:pointer;"
                              title="点击刷新">
@@ -114,22 +113,28 @@
 
     function refreshCaptcha() {
         if (!captchaImg) return;
+        captchaImg.alt = '正在加载图形验证码';
         fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
             .then(function (resp) {
-                // Set the image to the new PNG; extract the new challenge_id.
                 const newId = resp.headers.get('X-Captcha-Id') || '';
-                if (newId && captchaId) captchaId.value = newId;
+                if (!newId) throw new Error('captcha challenge unavailable');
+                if (captchaId) captchaId.value = newId;
                 return resp.blob();
             })
             .then(function (blob) {
                 captchaImg.src = URL.createObjectURL(blob);
+                captchaImg.alt = '图形验证码';
             })
             .catch(function () {
-                // Fallback: reload the image using a cache-busting query string.
-                captchaImg.src = captchaUrl + '?_=' + Date.now();
+                if (captchaId) captchaId.value = '';
+                captchaImg.removeAttribute('src');
+                captchaImg.alt = '图形验证码加载失败，请点击刷新后重试';
             });
     }
-    if (captchaImg) captchaImg.addEventListener('click', refreshCaptcha);
+    if (captchaImg) {
+        captchaImg.addEventListener('click', refreshCaptcha);
+        refreshCaptcha();
+    }
     document.querySelectorAll('.captcha-refresh').forEach(function (el) {
         el.addEventListener('click', refreshCaptcha);
     });

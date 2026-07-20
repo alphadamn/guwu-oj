@@ -5,7 +5,7 @@ from PIL import Image
 
 from .models import User, AvatarBlob
 from .email_utils import (
-    check_verification_code,
+    verification_code_matches,
     check_password_reset_code,
 )
 from .captcha import (
@@ -170,7 +170,7 @@ class UserRegisterForm(UserCreationForm, CaptchaMixin):
         code = self.cleaned_data['verification_code'].strip()
         if not email:
             raise ValidationError('请先填写邮箱。')
-        if not check_verification_code(email, code):
+        if not verification_code_matches(email, code):
             raise ValidationError('验证码无效或已过期。')
         return code
 

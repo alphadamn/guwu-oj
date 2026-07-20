@@ -281,16 +281,25 @@ def issue_password_reset_code(email: str) -> str:
     return code
 
 
-def check_verification_code(email: str, code: str) -> bool:
+def verification_code_matches(email: str, code: str) -> bool:
+    """Return whether a registration verification code is valid without using it."""
+    stored = cache.get(_make_cache_key(VERIFY_PREFIX, email))
+    return stored is not None and secrets.compare_digest(str(stored), str(code).strip())
+
+
+def consume_verification_code(email: str, code: str) -> bool:
+    """Consume a matching registration verification code."""
     key = _make_cache_key(VERIFY_PREFIX, email)
     stored = cache.get(key)
-    if stored is None:
+    if stored is None or not secrets.compare_digest(str(stored), str(code).strip()):
         return False
-    if secrets.compare_digest(str(stored), str(code).strip()):
-        # Consume the code on successful verification.
-        cache.delete(key)
-        return True
-    return False
+    cache.delete(key)
+    return True
+
+
+def check_verification_code(email: str, code: str) -> bool:
+    """Backward-compatible check that consumes a matching code."""
+    return consume_verification_code(email, code)
 
 
 def check_password_reset_code(email: str, code: str) -> bool:

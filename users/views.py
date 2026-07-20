@@ -34,6 +34,7 @@ from .email_utils import (
     send_password_reset_code_email,
     send_password_reset_done_email,
     send_welcome_email,
+    consume_verification_code,
 )
 from .captcha import (
     generate_challenge,
@@ -342,27 +343,33 @@ def register(request):
         form = UserRegisterForm(request.POST, request=request)
         if form.is_valid():
             user = form.save()
+            verification_code = form.cleaned_data.get('verification_code')
+            if verification_code:
+                consume_verification_code(user.email, verification_code)
             if user.referrer_id:
                 from points.models import PointConfig
                 from points.services import apply_points
 
-                config = PointConfig.get_solo()
-                if config.inviter_registration_points:
-                    apply_points(
-                        user_id=user.referrer_id,
-                        amount=config.inviter_registration_points,
-                        event_type='referral_inviter',
-                        event_key=str(user.id),
-                        description=f'邀请用户 {user.username} 注册',
-                    )
-                if config.invitee_registration_points:
-                    apply_points(
-                        user_id=user.id,
-                        amount=config.invitee_registration_points,
-                        event_type='referral_invitee',
-                        event_key=str(user.referrer_id),
-                        description=f'通过 {user.referrer.username} 的邀请注册',
-                    )
+                try:
+                    config = PointConfig.get_solo()
+                    if config.inviter_registration_points:
+                        apply_points(
+                            user_id=user.referrer_id,
+                            amount=config.inviter_registration_points,
+                            event_type='referral_inviter',
+                            event_key=str(user.id),
+                            description=f'邀请用户 {user.username} 注册',
+                        )
+                    if config.invitee_registration_points:
+                        apply_points(
+                            user_id=user.id,
+                            amount=config.invitee_registration_points,
+                            event_type='referral_invitee',
+                            event_key=str(user.referrer_id),
+                            description=f'通过 {user.referrer.username} 的邀请注册',
+                        )
+                except Exception:
+                    logger.exception('Referral point award failed for registered user %s', user.id)
             login(request, user)
             try:
                 send_welcome_email(user.email, username=user.username)
