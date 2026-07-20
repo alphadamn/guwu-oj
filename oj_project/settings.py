@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'django_crontab',
     'crispy_bootstrap5',
     'users',
+    'points',
     'problems',
     'submissions',
     'contests',
@@ -667,6 +668,16 @@ SIMPLEUI_CONFIG = {
                  'url': '/admin/submissions/judgemachine/'},
                 {'name': '评测配置', 'icon': 'fas fa-sliders-h',
                  'url': '/admin/submissions/judgeconfig/'},
+            ],
+        },
+        {
+            'name': '积分管理',
+            'icon': 'fas fa-coins',
+            'models': [
+                {'name': '积分配置', 'icon': 'fas fa-sliders-h',
+                 'url': '/admin/points/pointconfig/'},
+                {'name': '积分流水', 'icon': 'fas fa-receipt',
+                 'url': '/admin/points/pointledgerentry/'},
             ],
         },
         {
