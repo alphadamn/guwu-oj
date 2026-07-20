@@ -1,82 +1,159 @@
 #include <tunables/global>
 
-profile oj-judge flags=(attach_disconnected,mediate_deleted) {
+
+
+profile oj-judge flags=(attach_disconnected) {
+
   #include <abstractions/base>
+
   #include <abstractions/nameservice>
 
+
+
   # Deny all capabilities
-  capability,
+
   deny capability,
 
+
+
   # Allow basic file operations in /sandbox
+
   /sandbox/** rwix,
+
   /sandbox/ r,
 
+
+
   # Allow read access to system libraries
+
   /usr/lib/** r,
+
   /usr/lib/x86_64-linux-gnu/** r,
+
   /lib/** r,
+
   /lib/x86_64-linux-gnu/** r,
 
-  # Allow compiler and runtime binaries. The seccomp policies control phase-
-  # specific syscall access; this policy confines their filesystem access.
+
+
+  # Allow compiler and runtime binaries
+
   /bin/** rix,
+
   /usr/bin/** rix,
+
   /usr/lib/jvm/** rix,
 
+
+
   # Allow read access to locale and timezone data
+
   /usr/share/locale/** r,
+
   /usr/share/zoneinfo/** r,
 
-  # Allow access to /proc/self for basic process info
+
+
+  # Allow basic process info
+
   /proc/self/maps r,
+
   /proc/self/stat r,
+
   /proc/self/status r,
 
+
+
   # Deny access to other processes
+
   deny /proc/[0-9]*/** rw,
 
-  # Deny access to sensitive system files
+
+
+  # Deny sensitive system files
+
   deny /etc/passwd rw,
+
   deny /etc/shadow rw,
+
   deny /etc/group rw,
+
   deny /etc/gshadow rw,
+
   deny /etc/hosts rw,
+
   deny /etc/hostname rw,
+
   deny /etc/resolv.conf rw,
 
-  # Deny network access
+
+
+  # Deny network
+
   deny network,
 
-  # Deny device access
+
+
+  # Deny devices
+
   deny /dev/** rw,
 
-  # Deny sysctl access
+
+
+  # Deny sysctl
+
   deny /proc/sys/** rw,
 
-  # Deny access to other users' files
+
+
+  # Deny home/root
+
   deny /home/** rw,
+
   deny /root/** rw,
 
-  # Deny access to system directories
+
+
+  # Deny system dirs
+
   deny /var/** rw,
-  deny /tmp/** rw,
+
+  deny /tmp/** rw,   # 注意后面你允许了 /tmp/** rw，这里冲突了，建议删除该行
+
   deny /run/** rw,
 
+
+
   # Allow temporary directory access (will be mounted as tmpfs)
+
   /tmp/** rw,
 
-  # Deny ptrace and process manipulation
-  deny ptrace (read, write),
+
+
+  # Deny ptrace and signal (简化)
+
+  deny ptrace,
+
   deny signal,
 
-  # Deny mount operations
+
+
+  # Deny mount/umount
+
   deny mount,
+
   deny umount,
 
-  # Deny module operations
+
+
+  # Deny module access
+
   deny /sys/module/** rw,
 
-  # Allow standard library access
+
+
+  # Allow standard library data
+
   /usr/share/** r,
+
 }
