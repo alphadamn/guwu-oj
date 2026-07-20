@@ -45,6 +45,8 @@ profile oj-judge flags=(attach_disconnected) {
 
   /usr/lib/gcc/** rix,
 
+   /usr/lib/go-1.19/** rix,
+
   /usr/include/** r,
 
   # Java loads JNI libraries such as libnio.so on demand, requiring map access.
