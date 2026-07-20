@@ -3,6 +3,43 @@ from django.db import models
 from django.utils import timezone
 
 
+class TrafficDailyMetric(models.Model):
+    """Anonymous daily public-page view counter used by the admin dashboard."""
+
+    day = models.DateField(unique=True, db_index=True, verbose_name='日期')
+    page_views = models.PositiveBigIntegerField(default=0, verbose_name='页面访问量')
+
+    class Meta:
+        ordering = ['-day']
+        verbose_name = '每日流量'
+        verbose_name_plural = '每日流量'
+
+    def __str__(self):
+        return f'{self.day}: {self.page_views}'
+
+
+class TrafficPageMetric(models.Model):
+    """Anonymous daily aggregate for a normalized public route."""
+
+    day = models.DateField(db_index=True, verbose_name='日期')
+    path = models.CharField(max_length=200, verbose_name='页面路径')
+    page_views = models.PositiveBigIntegerField(default=0, verbose_name='页面访问量')
+
+    class Meta:
+        ordering = ['-day', 'path']
+        verbose_name = '每日页面流量'
+        verbose_name_plural = '每日页面流量'
+        constraints = [
+            models.UniqueConstraint(fields=['day', 'path'], name='unique_traffic_page_day'),
+        ]
+        indexes = [
+            models.Index(fields=['day', 'path']),
+        ]
+
+    def __str__(self):
+        return f'{self.day} {self.path}: {self.page_views}'
+
+
 class ServiceComponent(models.Model):
     """A single service component shown on the status page (left column)."""
 

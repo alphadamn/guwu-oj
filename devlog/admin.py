@@ -1,4 +1,12 @@
+from collections import OrderedDict
+from datetime import timedelta
+import os
+
 from django.contrib import admin
+from django.db import connection
+from django.db.models import Count, Sum
+from django.db.models.functions import TruncDate
+from django.http import JsonResponse
 from django.shortcuts import render
 from django.urls import path
 from django.utils import timezone
@@ -15,6 +23,8 @@ from .models import (
     RegistrationConfig,
     ServiceComponent,
     SiteConfig,
+    TrafficDailyMetric,
+    TrafficPageMetric,
 )
 
 # --- SimpleUI / Django Admin 全局标题与首页品牌 ---
@@ -31,11 +41,112 @@ def env_generator_view(request):
     })
 
 
+def _last_days(days=14):
+    today = timezone.localdate()
+    return [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+
+
+def _series_for_days(rows, field, days=14):
+    values = {row['day']: row[field] for row in rows}
+    return [values.get(day, 0) for day in _last_days(days)]
+
+
+def _database_size_bytes():
+    if connection.vendor == 'postgresql':
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT pg_database_size(current_database())')
+            return int(cursor.fetchone()[0] or 0)
+    name = str(connection.settings_dict.get('NAME') or '')
+    try:
+        return os.path.getsize(name) if name and os.path.isfile(name) else None
+    except OSError:
+        return None
+
+
+def _format_bytes(value):
+    if value is None:
+        return '不可用'
+    units = ('B', 'KB', 'MB', 'GB', 'TB')
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f'{size:.1f} {unit}'
+        size /= 1024
+
+
+def dashboard_metrics_view(request):
+    from problems.models import Problem
+    from submissions.models import Submission
+    from users.models import User
+
+    days = _last_days()
+    start = days[0]
+    traffic_queryset = TrafficDailyMetric.objects.filter(day__gte=start)
+    traffic_rows = list(traffic_queryset.values('day', 'page_views'))
+    traffic = _series_for_days(traffic_rows, 'page_views')
+    traffic_started_at = TrafficDailyMetric.objects.order_by('day').values_list('day', flat=True).first()
+    submissions = _series_for_days(
+        Submission.objects.filter(created_at__date__gte=start)
+        .annotate(day=TruncDate('created_at'))
+        .values('day').annotate(total=Count('id')),
+        'total',
+    )
+    verdict_rows = Submission.objects.values('status').annotate(total=Count('id'))
+    verdicts = OrderedDict((row['status'], row['total']) for row in verdict_rows)
+    total_submissions = sum(verdicts.values())
+    accepted = verdicts.get('Accepted', 0)
+    components = list(ServiceComponent.objects.values('name', 'status'))
+    operational = sum(
+        component['status'] == ServiceComponent.STATUS_OPERATIONAL
+        for component in components
+    )
+
+    page_rows = list(
+        TrafficPageMetric.objects.filter(day__gte=start)
+        .values('path').annotate(page_views=Sum('page_views'))
+        .order_by('-page_views', 'path')[:5]
+    )
+    top_problems = list(
+        Submission.objects.filter(problem__is_public=True)
+        .values('problem_id', 'problem__title')
+        .annotate(submissions=Count('id'))
+        .order_by('-submissions', 'problem_id')[:5]
+    )
+    for problem in top_problems:
+        problem['id'] = problem.pop('problem_id')
+        problem['title'] = problem.pop('problem__title')
+
+    return JsonResponse({
+        'labels': [day.strftime('%m-%d') for day in days],
+        'traffic': traffic,
+        'traffic_has_data': bool(traffic_started_at),
+        'traffic_started_at': traffic_started_at.isoformat() if traffic_started_at else None,
+        'submissions': submissions,
+        'page_ranking_has_data': bool(page_rows),
+        'top_pages': page_rows,
+        'top_problems': top_problems,
+        'verdicts': verdicts,
+        'summary': {
+            'users': User.objects.count(),
+            'problems': Problem.objects.filter(is_public=True).count(),
+            'submissions': total_submissions,
+            'acceptance_rate': round(accepted * 100 / total_submissions, 1) if total_submissions else 0,
+            'database_size': _format_bytes(_database_size_bytes()),
+            'health': f'{operational}/{len(components)} 正常' if components else '未配置',
+        },
+    })
+
+
 _original_admin_get_urls = admin.site.get_urls
 
 
 def _admin_get_urls():
     custom_urls = [
+        path(
+            'dashboard-metrics/',
+            admin.site.admin_view(dashboard_metrics_view),
+            name='dashboard_metrics',
+        ),
         path(
             'env-generator/',
             admin.site.admin_view(env_generator_view),

@@ -1,0 +1,15 @@
+{% load i18n log simpletags %}
+
+<div id="home" class="oj-dashboard">
+    <section id="oj-dashboard-content" class="oj-dashboard__loading" aria-live="polite">
+        <i class="el-icon-loading"></i> 正在加载运营数据…
+    </section>
+
+    {% if "SIMPLEUI_HOME_ACTION"|get_config != False %}
+    <el-card class="timeline">
+        <div slot="header" class="clearfix"><span>{% trans 'Recent actions' %}</span><el-button v-waves style="float:right;padding:3px 0" type="text" :icon="timeline?'el-icon-arrow-up':'el-icon-arrow-down'" @click="displayTimeline()"></el-button></div>
+        {% get_admin_log 10 as admin_log for_user user %}
+        {% if admin_log %}<transition name="el-zoom-in-top"><div class="block" v-if="timeline"><el-timeline>{% for entry in admin_log %}<el-timeline-item timestamp="{{ entry.action_time }}" placement="top"><el-card><p>{{ entry.user }} {{ entry.action_time }}</p><h4 v-pre="true">{{ entry.content_type }}: {{ entry }}</h4></el-card></el-timeline-item>{% endfor %}</el-timeline></div></transition>{% endif %}
+    </el-card>
+    {% endif %}
+</div>

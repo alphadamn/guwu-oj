@@ -42,6 +42,83 @@ def _read_ttl() -> int:
 _MANIFEST_HASH_RE = re.compile(r'\.[0-9a-f]{12,}\.')
 
 
+class TrafficMetricsMiddleware:
+    """Count successful public HTML page views without storing visitor data."""
+
+    EXCLUDED_PREFIXES = (
+        '/admin/', '/static/', '/media/', '/health/', '/metrics', '/devlog/', '/rq/',
+    )
+    RETENTION_DAYS = 90
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if self._should_record(request, response):
+            self._record_page_view(request)
+        return response
+
+    def _should_record(self, request, response):
+        path = getattr(request, 'path', '') or ''
+        return (
+            request.method in ('GET', 'HEAD')
+            and 200 <= response.status_code < 400
+            and not any(path.startswith(prefix) for prefix in self.EXCLUDED_PREFIXES)
+        )
+
+    def _normalized_path(self, request):
+        path = (getattr(request, 'path', '') or '/').rstrip('/') or '/'
+        segments = path.strip('/').split('/')
+        normalized = []
+        for segment in segments:
+            normalized.append(':id' if segment.isdigit() else segment)
+        return '/' + '/'.join(normalized) + ('/' if path != '/' else '')
+
+    def _record_page_view(self, request):
+        from datetime import timedelta
+
+        from django.db import IntegrityError, transaction
+        from django.db.models import F
+        from django.utils import timezone
+
+        from devlog.models import TrafficDailyMetric, TrafficPageMetric
+
+        today = timezone.localdate()
+        updated = TrafficDailyMetric.objects.filter(day=today).update(
+            page_views=F('page_views') + 1
+        )
+        created = False
+        if not updated:
+            try:
+                with transaction.atomic():
+                    TrafficDailyMetric.objects.create(day=today, page_views=1)
+                    created = True
+            except IntegrityError:
+                TrafficDailyMetric.objects.filter(day=today).update(
+                    page_views=F('page_views') + 1
+                )
+        normalized_path = self._normalized_path(request)
+        page_updated = TrafficPageMetric.objects.filter(
+            day=today, path=normalized_path
+        ).update(page_views=F('page_views') + 1)
+        if not page_updated:
+            try:
+                with transaction.atomic():
+                    TrafficPageMetric.objects.create(
+                        day=today, path=normalized_path, page_views=1
+                    )
+            except IntegrityError:
+                TrafficPageMetric.objects.filter(
+                    day=today, path=normalized_path
+                ).update(page_views=F('page_views') + 1)
+
+        if created:
+            cutoff = today - timedelta(days=self.RETENTION_DAYS)
+            TrafficDailyMetric.objects.filter(day__lt=cutoff).delete()
+            TrafficPageMetric.objects.filter(day__lt=cutoff).delete()
+
+
 class StaticCacheHeaders:
     def __init__(self, get_response):
         self.get_response = get_response
