@@ -76,6 +76,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'users.middleware.EnforcementMiddleware',
+    'devlog.middleware.TrafficMetricsMiddleware',
     'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
@@ -717,8 +718,8 @@ SIMPLEUI_CONFIG = {
     ],
 }
 
-# 首页：保留快捷入口与最近操作，不嵌入外部页面
-SIMPLEUI_HOME_QUICK = True
+# 首页：本地仪表盘替换 SimpleUI 的快捷入口，保留最近操作时间线。
+SIMPLEUI_HOME_QUICK = False
 SIMPLEUI_HOME_ACTION = True
 
 # 首页默认模块（首页右侧信息 / 历史 / 快捷操作等
