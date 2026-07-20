@@ -42,7 +42,10 @@ class JudgeMachineAdminForm(forms.ModelForm):
 class SubmissionTestResultInline(admin.TabularInline):
     model = SubmissionTestResult
     extra = 0
-    readonly_fields = ['case_index', 'status', 'runtime', 'actual_output', 'expected_output']
+    readonly_fields = [
+        'case_index', 'status', 'runtime', 'actual_output', 'expected_output',
+        'error_message',
+    ]
 
 
 @admin.register(Submission)
