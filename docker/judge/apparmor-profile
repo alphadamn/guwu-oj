@@ -167,4 +167,8 @@ profile oj-judge flags=(attach_disconnected) {
 
   /usr/share/** r,
 
+  /usr/lib/ssl/openssl.cnf r,
+  /etc/ssl/openssl.cnf r,
+  /etc/profile r,
+
 }
