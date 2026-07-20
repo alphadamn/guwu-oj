@@ -425,14 +425,18 @@ def password_reset_request(request):
     return render(request, 'users/password_reset_request.html', {'form': form})
 
 
+@ratelimit(key='ip', rate='5/m', method='POST', block=False)
 def password_reset_confirm(request, email):
     """Step 2: enter code + new password."""
     email = email.strip().lower()
 
-    if request.method == 'POST':
+    if request.method == 'POST' and getattr(request, 'limited', False):
+        messages.error(request, '密码重置尝试过于频繁，请稍后再试。')
+        form = PasswordResetForm(initial={'email': email}, request=request)
+    elif request.method == 'POST':
         post = request.POST.copy()
         post['email'] = email
-        form = PasswordResetForm(data=post)
+        form = PasswordResetForm(data=post, request=request)
         if form.is_valid():
             user = form.save()
             try:
@@ -442,7 +446,7 @@ def password_reset_confirm(request, email):
             messages.success(request, '密码已成功重置，请使用新密码登录。')
             return redirect('login')
     else:
-        form = PasswordResetForm(initial={'email': email})
+        form = PasswordResetForm(initial={'email': email}, request=request)
 
     return render(
         request,

@@ -30,6 +30,12 @@ if [[ ! -d venv ]]; then
   python3 -m venv venv
 fi
 venv/bin/pip install -r requirements.txt -q
+install -D -m 644 docker/judge/apparmor-profile /etc/apparmor.d/oj-judge
+apparmor_parser -r /etc/apparmor.d/oj-judge
+if ! aa-status --profiled | grep -Fxq 'oj-judge'; then
+  echo 'AppArmor profile oj-judge is not loaded' >&2
+  exit 1
+fi
 systemctl daemon-reload
 systemctl enable guwu-oj-judge-worker
 systemctl restart guwu-oj-judge-worker

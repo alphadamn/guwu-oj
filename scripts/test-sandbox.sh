@@ -4,12 +4,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IMAGE="${OJ_DOCKER_IMAGE:-oj-judge:latest}"
+APPARMOR_PROFILE="${OJ_DOCKER_APPARMOR_PROFILE:-oj-judge}"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 chmod 777 "$WORKDIR"
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "Missing image $IMAGE — run: ./scripts/build-judge-image.sh"
+  exit 1
+fi
+if ! aa-status --profiled | grep -Fxq "$APPARMOR_PROFILE"; then
+  echo "Missing AppArmor profile $APPARMOR_PROFILE — load docker/judge/apparmor-profile first"
   exit 1
 fi
 
@@ -21,6 +26,7 @@ run_sandbox() {
     --user 65534:65534 \
     --pids-limit 64 \
     --security-opt no-new-privileges \
+    --security-opt "apparmor=$APPARMOR_PROFILE" \
     --cap-drop ALL \
     -v "$WORKDIR:/sandbox:rw" \
     -w /sandbox \
@@ -54,7 +60,8 @@ import subprocess, tempfile, os
 from pathlib import Path
 wd = '$WORKDIR'
 cmd = ['docker','run','--rm','-i','--network','none','--memory','64m','--memory-swap','64m',
-       '--user','65534:65534','--pids-limit','64','--security-opt','no-new-privileges','--cap-drop','ALL',
+       '--user','65534:65534','--pids-limit','64','--security-opt','no-new-privileges',
+       '--security-opt','apparmor=$APPARMOR_PROFILE','--cap-drop','ALL',
        '-v', wd+':/sandbox:rw','-w','/sandbox','$IMAGE','python3','-c','import time; time.sleep(30)']
 try:
     subprocess.run(cmd, timeout=2, capture_output=True)

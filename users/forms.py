@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, SetPasswordForm, AuthenticationForm
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from PIL import Image
 
@@ -238,6 +239,9 @@ class PasswordResetRequestForm(forms.Form):
 class PasswordResetForm(SetPasswordForm):
     """Second step of password reset: verify code and set a new password."""
 
+    MAX_INVALID_CODE_ATTEMPTS = 5
+    INVALID_CODE_ATTEMPT_TTL = 5 * 60
+
     email = forms.EmailField(
         required=True,
         widget=forms.HiddenInput(),
@@ -253,9 +257,10 @@ class PasswordResetForm(SetPasswordForm):
         }),
     )
 
-    def __init__(self, user=None, *args, **kwargs):
+    def __init__(self, user=None, *args, request=None, **kwargs):
         # We override to make the user argument optional from the form side;
         # the view will provide a user when the form is ready to save.
+        self.request = request
         if user is None:
             # Build a throwaway user so SetPasswordForm.__init__ works;
             # we override clean to look up the real user by email.
@@ -265,6 +270,10 @@ class PasswordResetForm(SetPasswordForm):
                     pass
             user = _DummyUser()
         super().__init__(user, *args, **kwargs)
+
+    @classmethod
+    def _invalid_code_attempt_key(cls, email):
+        return f'password_reset_invalid_code_attempts:{email.strip().lower()}'
 
     def clean_email(self):
         email = self.cleaned_data['email'].strip().lower()
@@ -276,10 +285,23 @@ class PasswordResetForm(SetPasswordForm):
         return email
 
     def clean_verification_code(self):
-        email = self.cleaned_data.get('email') or self.data.get('email', '')
+        email = (self.cleaned_data.get('email') or self.data.get('email', '')).strip().lower()
         code = self.cleaned_data['verification_code'].strip()
+        attempt_key = self._invalid_code_attempt_key(email)
+        try:
+            attempts = int(cache.get(attempt_key) or 0)
+        except (TypeError, ValueError):
+            attempts = 0
+        if attempts >= self.MAX_INVALID_CODE_ATTEMPTS:
+            raise ValidationError('验证码尝试次数过多，请 5 分钟后再试。')
         if not check_password_reset_code(email, code):
+            try:
+                if not cache.add(attempt_key, 1, timeout=self.INVALID_CODE_ATTEMPT_TTL):
+                    cache.incr(attempt_key)
+            except Exception:
+                pass
             raise ValidationError('验证码无效或已过期。')
+        cache.delete(attempt_key)
         return code
 
     def save(self, commit=True):

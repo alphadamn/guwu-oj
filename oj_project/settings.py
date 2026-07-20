@@ -536,6 +536,8 @@ OJ_DOCKER_ENABLED = os.environ.get('OJ_DOCKER_ENABLED', 'true').lower() in ('1',
 OJ_DOCKER_IMAGE = os.environ.get('OJ_DOCKER_IMAGE', 'oj-judge:latest')
 OJ_DOCKER_PIDS_LIMIT = int(os.environ.get('OJ_DOCKER_PIDS_LIMIT', '64'))
 OJ_DOCKER_NOFILE_LIMIT = int(os.environ.get('OJ_DOCKER_NOFILE_LIMIT', '64'))
+# The profile must be loaded on every judge host before containers are started.
+OJ_DOCKER_APPARMOR_PROFILE = os.environ.get('OJ_DOCKER_APPARMOR_PROFILE', 'oj-judge').strip()
 # Default subprocess timeout (can be overridden via JudgeConfig model in admin)
 OJ_SUBPROCESS_TIMEOUT_SEC = int(os.environ.get('OJ_SUBPROCESS_TIMEOUT_SEC', '5'))
 

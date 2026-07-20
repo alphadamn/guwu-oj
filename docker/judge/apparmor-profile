@@ -18,10 +18,10 @@ profile oj-judge flags=(attach_disconnected,mediate_deleted) {
   /lib/** r,
   /lib/x86_64-linux-gnu/** r,
 
-  # Allow read access to compiler and runtime binaries
-  /usr/bin/g++ rix,
-  /usr/bin/python3 rix,
-  /usr/bin/java rix,
+  # Allow compiler and runtime binaries. The seccomp policies control phase-
+  # specific syscall access; this policy confines their filesystem access.
+  /bin/** rix,
+  /usr/bin/** rix,
   /usr/lib/jvm/** rix,
 
   # Allow read access to locale and timezone data

@@ -115,6 +115,13 @@ def _seccomp_flag(is_compile):
     return str(base_dir / "docker" / "judge" / profile)
 
 
+def _apparmor_flag():
+    profile = str(getattr(settings, "OJ_DOCKER_APPARMOR_PROFILE", "oj-judge")).strip()
+    if not profile:
+        raise DockerNotAvailableError("OJ_DOCKER_APPARMOR_PROFILE must not be empty")
+    return profile
+
+
 def _prepare_work_dir(work_dir):
     try:
         os.chmod(work_dir, 0o777)
@@ -174,7 +181,7 @@ class JudgeContainer:
             "--security-opt", f"seccomp={_seccomp_flag(self.is_compile)}",
             "--cap-drop", "ALL",
             "--read-only",
-            "--security-opt", "apparmor=docker-default",
+            "--security-opt", f"apparmor={_apparmor_flag()}",
             "--tmpfs", "/tmp:exec,mode=777",
             "--device", "/dev/null:r",
             "--device", "/dev/zero:r",
