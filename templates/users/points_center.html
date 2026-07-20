@@ -54,7 +54,7 @@
             <div class="card-body p-4">
                 <h2 class="h4"><i class="bi bi-check2-circle text-success me-2"></i>获取积分</h2>
                 <p class="text-muted mb-2">普通题的每个非样例测试点首次通过时可获得奖励；重复提交不会重复奖励。</p>
-                <div class="alert alert-light border mb-0"><i class="bi bi-gift me-1 text-warning"></i>当前每个首次通过的测试点奖励 <strong>+{{ points_config.accepted_testcase_points }}</strong> 积分。</div>
+                <div class="alert alert-light border mb-0"><i class="bi bi-gift me-1 text-warning"></i>当前每个首次通过的测试点奖励 <strong>+{{ points_config.accepted_testcase_points }}</strong> 积分（最多四位小数）。</div>
             </div>
         </section>
     </div>
@@ -90,15 +90,25 @@
     const input = document.getElementById('referral-link');
     const button = document.getElementById('copy-referral-link');
     if (!input || !button) return;
+    function fallbackCopy() {
+        input.focus();
+        input.select();
+        const copied = document.execCommand('copy');
+        if (copied) {
+            button.innerHTML = '<i class="bi bi-check2 me-1"></i>已复制';
+            setTimeout(function () { button.innerHTML = '<i class="bi bi-copy me-1"></i>复制'; }, 1800);
+        }
+    }
+
     button.addEventListener('click', function () {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+            fallbackCopy();
+            return;
+        }
         navigator.clipboard.writeText(input.value).then(function () {
             button.innerHTML = '<i class="bi bi-check2 me-1"></i>已复制';
             setTimeout(function () { button.innerHTML = '<i class="bi bi-copy me-1"></i>复制'; }, 1800);
-        }).catch(function () {
-            input.focus();
-            input.select();
-            document.execCommand('copy');
-        });
+        }).catch(fallbackCopy);
     });
 })();
 </script>

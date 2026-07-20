@@ -28,7 +28,7 @@ class User(AbstractUser):
     last_login_ip = models.GenericIPAddressField(
         '最后登录 IP', blank=True, null=True,
     )
-    points_balance = models.DecimalField('积分余额', max_digits=12, decimal_places=2, default=0)
+    points_balance = models.DecimalField('积分余额', max_digits=14, decimal_places=4, default=0)
     referral_code = models.CharField('邀请码', max_length=16, unique=True, blank=True)
     referrer = models.ForeignKey(
         'self', verbose_name='邀请人', null=True, blank=True,

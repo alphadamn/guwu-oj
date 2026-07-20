@@ -18,7 +18,7 @@ def apply_points(*, user_id, amount, event_type, event_key, description=''):
     """
     from users.models import User
 
-    amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+    amount = Decimal(str(amount)).quantize(Decimal('0.0001'))
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user_id)
         try:

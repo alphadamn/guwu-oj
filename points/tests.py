@@ -47,7 +47,7 @@ class PointFeatureTests(TestCase):
         self.assertEqual(PointLedgerEntry.objects.filter(event_type__startswith='referral_').count(), 2)
 
     def test_first_accepted_normal_testcase_rewards_fractional_points_once(self):
-        self.config.accepted_testcase_points = Decimal('0.25')
+        self.config.accepted_testcase_points = Decimal('0.1234')
         self.config.save()
         problem = Problem.objects.create(
             title='Points problem', description='d', input_format='i', output_format='o',
@@ -65,9 +65,9 @@ class PointFeatureTests(TestCase):
             )
             finalize_submission(submission, ['Accepted'], 1, 1, problem)
         self.player.refresh_from_db()
-        self.assertEqual(self.player.points_balance, Decimal('0.25'))
+        self.assertEqual(self.player.points_balance, Decimal('0.1234'))
         entry = PointLedgerEntry.objects.get(event_type='accepted_testcase')
-        self.assertEqual(entry.amount, Decimal('0.25'))
+        self.assertEqual(entry.amount, Decimal('0.1234'))
         self.assertEqual(PointLedgerEntry.objects.filter(event_type='accepted_testcase').count(), 1)
 
     def test_contest_join_debits_once_and_gates_problem_access(self):
