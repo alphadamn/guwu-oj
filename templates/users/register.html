@@ -14,11 +14,11 @@
                 <form method="post" id="register-form">
                     {% csrf_token %}
                     <div class="mb-3">
-                        <label for="id_username" class="form-label">用户名</label>
+                        <!--<label for="id_username" class="form-label">用户名</label>-->
                         {{ form.username|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <label for="id_email" class="form-label">邮箱</label>
+                        <!--<label for="id_email" class="form-label">邮箱</label>-->
                         {{ form.email|as_crispy_field }}
                     </div>
 
@@ -43,19 +43,19 @@
                     {% endif %}
 
                     <div class="mb-3">
-                        <label for="id_nickname" class="form-label">昵称（可选）</label>
+                        <!--<label for="id_nickname" class="form-label">昵称（可选）</label>-->
                         {{ form.nickname|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <label for="id_referral_code" class="form-label">邀请码（可选）</label>
+                        <!--<label for="id_referral_code" class="form-label">邀请码（可选）</label>-->
                         {{ form.referral_code|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <label for="id_password1" class="form-label">密码</label>
+                        <!--<label for="id_password1" class="form-label">密码</label>-->
                         {{ form.password1|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <label for="id_password2" class="form-label">确认密码</label>
+                        <!--<label for="id_password2" class="form-label">确认密码</label>-->
                         {{ form.password2|as_crispy_field }}
                     </div>
 

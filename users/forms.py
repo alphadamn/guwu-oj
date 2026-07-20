@@ -72,7 +72,7 @@ class CaptchaMixin(forms.Form):
 
 class UserRegisterForm(UserCreationForm, CaptchaMixin):
     email = forms.EmailField(required=True)
-    nickname = forms.CharField(max_length=50, required=False)
+    nickname = forms.CharField(label='昵称（可选）', max_length=50, required=False)
     referral_code = forms.CharField(
         label='邀请码（可选）', max_length=16, required=False,
         help_text='通过邀请链接访问时会自动填写。',
