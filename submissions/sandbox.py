@@ -183,7 +183,7 @@ class JudgeContainer:
             "--read-only",
             "--security-opt", f"apparmor={_apparmor_flag()}",
             "--tmpfs", "/tmp:exec,mode=777",
-            "--device", "/dev/null:r",
+            "--device", "/dev/null:rw",
             "--device", "/dev/zero:r",
             "--device", "/dev/random:r",
             "--device", "/dev/urandom:r",

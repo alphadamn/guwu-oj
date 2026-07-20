@@ -18,7 +18,7 @@ profile oj-judge flags=(attach_disconnected) {
 
   # Allow basic file operations in /sandbox
 
-  /sandbox/** rwix,
+  /sandbox/** rwmkix,
 
   /sandbox/ r,
 
@@ -26,13 +26,14 @@ profile oj-judge flags=(attach_disconnected) {
 
   # Allow read access to system libraries
 
-  /usr/lib/** r,
+  # Native runtimes dynamically map shared libraries at startup.
+  /usr/lib/** rm,
 
-  /usr/lib/x86_64-linux-gnu/** r,
+  /usr/lib/x86_64-linux-gnu/** rm,
 
-  /lib/** r,
+  /lib/** rm,
 
-  /lib/x86_64-linux-gnu/** r,
+  /lib/x86_64-linux-gnu/** rm,
 
 
 
@@ -46,7 +47,12 @@ profile oj-judge flags=(attach_disconnected) {
 
   /usr/include/** r,
 
-  /usr/lib/jvm/** rix,
+  # Java loads JNI libraries such as libnio.so on demand, requiring map access.
+  /usr/lib/jvm/** rmix,
+
+  # The Debian OpenJDK configuration is symlinked from the JDK into /etc.
+  # Java must read java.security before either javac or java can start.
+  /etc/java-17-openjdk/** r,
 
 
 
@@ -66,11 +72,20 @@ profile oj-judge flags=(attach_disconnected) {
 
   /proc/self/status r,
 
+  # 允许 Java 读取系统硬件/CPU/内存信息（用于性能调优）
+  /sys/devices/system/cpu/possible r,
+  /sys/fs/cgroup/cpu.max r,
+  /sys/fs/cgroup/memory.max r,
+  /sys/kernel/mm/hugepages/ r,
+  /sys/kernel/mm/transparent_hugepage/enabled r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
 
+  # 允许 Java 写入 coredump_filter（用于异常处理）
+  /proc/*/coredump_filter rw,
 
-  # Deny access to other processes
-
-  deny /proc/[0-9]*/** rw,
+  # Docker's PID namespace hides host processes; allow procfs reads needed by
+  # managed runtimes while ptrace and signal remain prohibited below.
+  /proc/** r,
 
 
 
@@ -92,15 +107,16 @@ profile oj-judge flags=(attach_disconnected) {
 
 
 
-  # Deny network
+  # No namespace network interfaces are present (`--network none`); deny socket
+  # creation while allowing Java's Unix-domain socketpair used during startup.
+  deny network inet,
+  deny network inet6,
 
-  deny network,
 
 
-
-  # Deny devices
-
-  deny /dev/** rw,
+  # Docker exposes only the allowlisted device nodes passed by sandbox.py.
+  # The JVM opens /dev/null read/write during NIO initialization.
+  /dev/** rwm,
 
 
 
@@ -121,7 +137,7 @@ profile oj-judge flags=(attach_disconnected) {
   # The container mounts /tmp as tmpfs. Compilers and runtimes need it for
   # temporary files, but it remains isolated from the host and non-executable
   # under this AppArmor policy.
-  /tmp/** rw,
+  /tmp/** rwmk,
 
 
 
