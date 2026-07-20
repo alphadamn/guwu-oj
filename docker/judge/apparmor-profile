@@ -42,6 +42,10 @@ profile oj-judge flags=(attach_disconnected) {
 
   /usr/bin/** rix,
 
+  /usr/lib/gcc/** rix,
+
+  /usr/include/** r,
+
   /usr/lib/jvm/** rix,
 
 
@@ -114,18 +118,9 @@ profile oj-judge flags=(attach_disconnected) {
 
 
 
-  # Deny system dirs
-
-  deny /var/** rw,
-
-  deny /tmp/** rw,   # 注意后面你允许了 /tmp/** rw，这里冲突了，建议删除该行
-
-  deny /run/** rw,
-
-
-
-  # Allow temporary directory access (will be mounted as tmpfs)
-
+  # The container mounts /tmp as tmpfs. Compilers and runtimes need it for
+  # temporary files, but it remains isolated from the host and non-executable
+  # under this AppArmor policy.
   /tmp/** rw,
 
 

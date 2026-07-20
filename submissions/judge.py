@@ -446,6 +446,17 @@ def finalize_submission(submission, case_results, max_runtime,
                         )
 
 
+def save_compile_error(submission, test_case, error_message):
+    """Persist compiler output as the first-case diagnostic for a submission."""
+    submission.status = "Compile Error"
+    submission.save(update_fields=["status"])
+    save_case_result(
+        submission, test_case, 1, "Skipped", None,
+        error_message, test_case.expected_output, error_message,
+    )
+    return submission
+
+
 def _case_status_from_error(error, actual, expected):
     if error == "Time Limit Exceeded":
         return "Time Limit Exceeded"
@@ -504,57 +515,43 @@ def judge_submission(submission_id):
             if submission.language == "C++":
                 exe, err = runner.compile_cpp(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "C":
                 exe, err = runner.compile_c(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Rust":
                 exe, err = runner.compile_rust(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Golang":
                 exe, err = runner.compile_golang(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Assembly":
                 exe, err = runner.compile_assembly(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Java":
                 class_name, err = runner.compile_java(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable(["java", class_name], stdin)
 
             elif submission.language == "Kotlin":
                 _, err = runner.compile_kotlin(submission.code)
                 if err:
-                    submission.status = "Compile Error"
-                    submission.save(update_fields=["status"])
-                    return submission
+                    return save_compile_error(submission, test_cases[0], err)
                 run_fn = lambda stdin: runner.run_executable(
                     ["java", "-jar", "main.jar"], stdin
                 )
