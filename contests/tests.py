@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from contests.admin import ContestAdmin
-from contests.models import Contest, ContestProblem, ContestTestCase
+from contests.models import Contest, ContestEnrollment, ContestProblem, ContestTestCase
 from problems.models import Problem
 from submissions.models import Submission, SubmissionTestResult
 from users.models import User
@@ -36,6 +36,9 @@ class ContestFeatureTests(TestCase):
 
     def test_question_is_hidden_before_start_and_available_when_live(self):
         contest, item = self.create_contest_problem(start_delta=timedelta(minutes=5))
+        self.player.points_balance = 1_000
+        self.player.save(update_fields=['points_balance'])
+        ContestEnrollment.objects.create(contest=contest, user=self.player, points_cost=contest.entry_points_cost)
         self.assertTrue(self.client.login(username='player', password='password'))
         response = self.client.get(reverse('contest_question', args=[contest.id, item.id]))
         self.assertContains(response, '题目暂不可访问')
@@ -67,6 +70,9 @@ class ContestFeatureTests(TestCase):
 
     def test_attempt_cap_rejects_extra_contest_submission(self):
         contest, item = self.create_contest_problem(limit=1)
+        self.player.points_balance = 1_000
+        self.player.save(update_fields=['points_balance'])
+        ContestEnrollment.objects.create(contest=contest, user=self.player, points_cost=contest.entry_points_cost)
         self.assertTrue(self.client.login(username='player', password='password'))
         url = reverse('submit_contest_solution', args=[contest.id, item.id])
         response = self.client.post(url, {'language': 'Ruby', 'code': 'puts 1'})
@@ -90,6 +96,9 @@ class ContestFeatureTests(TestCase):
             language='Ruby',
             status='Accepted',
         )
+        self.player.points_balance = 1_000
+        self.player.save(update_fields=['points_balance'])
+        ContestEnrollment.objects.create(contest=contest, user=self.player, points_cost=contest.entry_points_cost)
         self.assertTrue(self.client.login(username='player', password='password'))
         question_url = reverse('contest_question', args=[contest.id, item.id])
         response = self.client.get(question_url)

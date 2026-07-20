@@ -49,6 +49,8 @@ class UserAdmin(BaseUserAdmin):
         'ban_status',
         'solved_count',
         'submission_count',
+        'points_balance',
+        'last_login_ip',
         'date_joined',
         'created_at',
     )
@@ -67,6 +69,7 @@ class UserAdmin(BaseUserAdmin):
     readonly_fields = (
         'created_at',
         'last_login',
+        'last_login_ip',
         'date_joined',
         'solved_count_display',
         'submission_count_display',
@@ -99,9 +102,12 @@ class UserAdmin(BaseUserAdmin):
         (_('统计'), {
             'fields': (
                 'solved_count_display',
-                'submission_count_display',
+                'points_balance',
+                'referral_code',
+                'referrer',
                 'created_at',
                 'last_login',
+                'last_login_ip',
                 'date_joined',
             ),
         }),

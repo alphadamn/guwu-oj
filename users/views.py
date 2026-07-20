@@ -44,6 +44,7 @@ from .captcha import (
     record_avatar_request,
     avatar_requires_captcha,
     verify_avatar_captcha,
+    _client_ip,
 )
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,8 @@ class CustomLoginView(LoginView):
             self.request.session.pop('punishment_notice', None)
 
         record_login_attempt(self.request, success=True)
+        user.last_login_ip = _client_ip(self.request)
+        user.save(update_fields=['last_login_ip'])
         return super().form_valid(form)
 
     def get_context_data(self, **kwargs):
@@ -339,6 +342,27 @@ def register(request):
         form = UserRegisterForm(request.POST, request=request)
         if form.is_valid():
             user = form.save()
+            if user.referrer_id:
+                from points.models import PointConfig
+                from points.services import apply_points
+
+                config = PointConfig.get_solo()
+                if config.inviter_registration_points:
+                    apply_points(
+                        user_id=user.referrer_id,
+                        amount=config.inviter_registration_points,
+                        event_type='referral_inviter',
+                        event_key=str(user.id),
+                        description=f'邀请用户 {user.username} 注册',
+                    )
+                if config.invitee_registration_points:
+                    apply_points(
+                        user_id=user.id,
+                        amount=config.invitee_registration_points,
+                        event_type='referral_invitee',
+                        event_key=str(user.referrer_id),
+                        description=f'通过 {user.referrer.username} 的邀请注册',
+                    )
             login(request, user)
             try:
                 send_welcome_email(user.email, username=user.username)
@@ -347,7 +371,10 @@ def register(request):
             messages.success(request, '注册成功！欢迎加入。')
             return redirect('home')
     else:
-        form = UserRegisterForm(request=request)
+        form = UserRegisterForm(
+            request=request,
+            initial={'referral_code': request.GET.get('ref', '').strip()},
+        )
     # Pass ``email_verification_required`` to the template so it can
     # conditionally show / hide the "send verification code" UI, plus
     # the current captcha challenge info so the image can be rendered.
@@ -426,6 +453,20 @@ def profile(request, username):
     return render(request, 'users/profile.html', {
         'user_profile': user,
         'recent_submissions': recent_submissions,
+    })
+
+
+@login_required
+def points_center(request):
+    from points.models import PointConfig, PointLedgerEntry
+
+    referral_url = request.build_absolute_uri(
+        f"{reverse('register')}?ref={request.user.referral_code}"
+    )
+    return render(request, 'users/points_center.html', {
+        'points_config': PointConfig.get_solo(),
+        'recent_entries': PointLedgerEntry.objects.filter(user=request.user)[:30],
+        'referral_url': referral_url,
     })
 
 

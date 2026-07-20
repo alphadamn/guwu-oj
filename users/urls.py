@@ -4,6 +4,7 @@ from .views import (
     CustomLogoutView,
     register,
     profile,
+    points_center,
     edit_profile,
     avatar,
     send_verification_code,
@@ -25,6 +26,7 @@ urlpatterns = [
     path('password-reset/', password_reset_request, name='password_reset'),
     path('password-reset/<str:email>/', password_reset_confirm, name='password_reset_confirm'),
     path('profile/<str:username>/', profile, name='profile'),
+    path('points/', points_center, name='points_center'),
     path('edit/', edit_profile, name='edit_profile'),
     path('avatar/<str:username>/', avatar, name='avatar'),
 ]

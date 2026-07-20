@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Contest, ContestProblem, ContestTestCase
+from .models import Contest, ContestEnrollment, ContestProblem, ContestTestCase
 
 
 class ContestTestCaseInline(admin.TabularInline):
@@ -19,7 +19,7 @@ class ContestProblemInline(admin.TabularInline):
 
 @admin.register(Contest)
 class ContestAdmin(admin.ModelAdmin):
-    list_display = ['name', 'creator', 'start_at', 'end_at', 'max_submissions_per_problem', 'published_at']
+    list_display = ['name', 'creator', 'start_at', 'end_at', 'max_submissions_per_problem', 'entry_points_cost', 'published_at']
     list_filter = ['start_at', 'end_at', 'published_at']
     search_fields = ['name', 'description', 'creator__username']
     inlines = [ContestProblemInline]
@@ -51,7 +51,19 @@ class ContestAdmin(admin.ModelAdmin):
         )
 
 
-@admin.register(ContestProblem)
+@admin.register(ContestEnrollment)
+class ContestEnrollmentAdmin(admin.ModelAdmin):
+    list_display = ['contest', 'user', 'points_cost', 'enrolled_at']
+    list_filter = ['contest']
+    search_fields = ['contest__name', 'user__username']
+    readonly_fields = ['contest', 'user', 'points_cost', 'enrolled_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 class ContestProblemAdmin(admin.ModelAdmin):
     list_display = ['title', 'contest', 'order', 'difficulty', 'created_by', 'published_problem']
     list_filter = ['contest', 'difficulty']

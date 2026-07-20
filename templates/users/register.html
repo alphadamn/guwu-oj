@@ -47,6 +47,10 @@
                         {{ form.nickname|as_crispy_field }}
                     </div>
                     <div class="mb-3">
+                        <label for="id_referral_code" class="form-label">邀请码（可选）</label>
+                        {{ form.referral_code|as_crispy_field }}
+                    </div>
+                    <div class="mb-3">
                         <label for="id_password1" class="form-label">密码</label>
                         {{ form.password1|as_crispy_field }}
                     </div>

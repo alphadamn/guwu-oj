@@ -14,6 +14,7 @@ class Contest(models.Model):
     start_at = models.DateTimeField()
     end_at = models.DateTimeField()
     max_submissions_per_problem = models.PositiveIntegerField(default=3)
+    entry_points_cost = models.PositiveIntegerField('参加消耗积分', default=50)
     creator = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_contests')
     published_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -132,6 +133,23 @@ class ContestProblem(models.Model):
     @property
     def difficulty_slug(self):
         return Problem.difficulty_slug.fget(self)
+
+
+class ContestEnrollment(models.Model):
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name='enrollments')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contest_enrollments')
+    points_cost = models.PositiveIntegerField('实际消耗积分')
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = '竞赛报名'
+        verbose_name_plural = '竞赛报名'
+        constraints = [
+            models.UniqueConstraint(fields=['contest', 'user'], name='unique_contest_enrollment'),
+        ]
+
+    def __str__(self):
+        return f'{self.user} → {self.contest}'
 
 
 class ContestTestCase(models.Model):

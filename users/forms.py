@@ -73,6 +73,10 @@ class CaptchaMixin(forms.Form):
 class UserRegisterForm(UserCreationForm, CaptchaMixin):
     email = forms.EmailField(required=True)
     nickname = forms.CharField(max_length=50, required=False)
+    referral_code = forms.CharField(
+        label='邀请码（可选）', max_length=16, required=False,
+        help_text='通过邀请链接访问时会自动填写。',
+    )
     # verification_code is OPTIONAL at class declaration time — we add/remove
     # it dynamically in ``__init__`` based on
     # ``RegistrationConfig.email_verification_required`` so the admin panel
@@ -152,8 +156,13 @@ class UserRegisterForm(UserCreationForm, CaptchaMixin):
             raise ValidationError('该邮箱已被注册。')
         return email
 
+    def clean_referral_code(self):
+        referral_code = self.cleaned_data['referral_code'].strip()
+        if referral_code and not User.objects.filter(referral_code=referral_code).exists():
+            raise ValidationError('邀请码无效。')
+        return referral_code
+
     def clean_verification_code(self):
-        # If the admin disabled verification, we never add the field — this
         # method won't even be called. But we still short-circuit defensively.
         if not self._email_verification_required():
             return ''
@@ -174,6 +183,9 @@ class UserRegisterForm(UserCreationForm, CaptchaMixin):
         user = super().save(commit=False)
         user.email = self.cleaned_data['email']
         user.nickname = self.cleaned_data.get('nickname', '')
+        referral_code = self.cleaned_data.get('referral_code', '').strip()
+        if referral_code:
+            user.referrer = User.objects.filter(referral_code=referral_code).first()
         if commit:
             user.save()
         return user

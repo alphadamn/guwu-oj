@@ -10,7 +10,7 @@ from django.views.decorators.http import require_POST
 from django_ratelimit.decorators import ratelimit
 
 from submissions.models import Submission
-from .models import Contest, ContestProblem
+from .models import Contest, ContestEnrollment, ContestProblem
 
 
 def _publish_finished():
@@ -30,9 +30,54 @@ def _contest_or_404(contest_id):
 
 def contest_detail(request, contest_id):
     contest = _contest_or_404(contest_id)
+    enrolled = (
+        request.user.is_authenticated
+        and ContestEnrollment.objects.filter(contest=contest, user=request.user).exists()
+    )
+    return render(request, 'contests/detail.html', {
+        'contest': contest,
+        'finished': contest.is_finished,
+        'enrolled': enrolled,
+    })
+
+
+@login_required
+@require_POST
+def join_contest(request, contest_id):
+    contest = _contest_or_404(contest_id)
     if contest.is_finished:
-        return render(request, 'contests/detail.html', {'contest': contest, 'finished': True})
-    return render(request, 'contests/detail.html', {'contest': contest, 'finished': False})
+        messages.error(request, '竞赛已结束，无法参加。')
+        return redirect('contest_detail', contest_id=contest.id)
+
+    with transaction.atomic():
+        contest = Contest.objects.select_for_update().get(pk=contest.id)
+        if ContestEnrollment.objects.filter(contest=contest, user=request.user).exists():
+            messages.info(request, '你已经参加了本场竞赛。')
+            return redirect('contest_detail', contest_id=contest.id)
+        from points.services import InsufficientPoints, apply_points
+        try:
+            apply_points(
+                user_id=request.user.id,
+                amount=-contest.entry_points_cost,
+                event_type='contest_entry',
+                event_key=str(contest.id),
+                description=f'参加竞赛：{contest.name}',
+            )
+        except InsufficientPoints:
+            messages.error(request, f'积分不足，参加本场竞赛需要 {contest.entry_points_cost} 积分。')
+            return redirect('contest_detail', contest_id=contest.id)
+        ContestEnrollment.objects.create(
+            contest=contest, user=request.user, points_cost=contest.entry_points_cost,
+        )
+    messages.success(request, f'已参加竞赛，消耗 {contest.entry_points_cost} 积分。')
+    return redirect('contest_detail', contest_id=contest.id)
+
+
+def _require_enrollment(request, contest):
+    if not ContestEnrollment.objects.filter(contest=contest, user=request.user).exists():
+        messages.error(request, '请先参加竞赛后再查看题目和提交代码。')
+        return False
+    return True
 
 
 @login_required
@@ -41,6 +86,8 @@ def contest_question(request, contest_id, question_id):
     item = get_object_or_404(ContestProblem.objects.select_related('contest'), pk=question_id, contest=contest)
     if not contest.is_live:
         return render(request, 'contests/unavailable.html', {'contest': contest})
+    if not _require_enrollment(request, contest):
+        return redirect('contest_detail', contest_id=contest.id)
     submissions = Submission.objects.filter(user=request.user, contest_problem=item) if request.user.is_authenticated else Submission.objects.none()
     used = submissions.count()
     solved = submissions.filter(status='Accepted').exists()
@@ -62,6 +109,8 @@ def submit_contest_solution(request, contest_id, question_id):
     item = get_object_or_404(ContestProblem.objects.select_related('contest'), pk=question_id, contest=contest)
     if not contest.is_live:
         messages.error(request, '当前不在竞赛进行时间内。')
+        return redirect('contest_detail', contest_id=contest.id)
+    if not _require_enrollment(request, contest):
         return redirect('contest_detail', contest_id=contest.id)
     if request.user.feature_disabled('submit'):
         messages.error(request, '当前账号的提交功能已被管理员禁用。')

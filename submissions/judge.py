@@ -430,6 +430,20 @@ def finalize_submission(submission, case_results, max_runtime,
         submission.save(update_fields=["status", "runtime", "memory"])
         if submission.contest_problem_id is None:
             submission.user.solved_problems.add(problem)
+            from points.models import PointConfig
+            from points.services import apply_points
+
+            reward_points = PointConfig.get_solo().accepted_testcase_points
+            if reward_points:
+                for result in submission.test_results.filter(status='Accepted').select_related('test_case'):
+                    if result.test_case_id and not result.test_case.is_sample:
+                        apply_points(
+                            user_id=submission.user_id,
+                            amount=reward_points,
+                            event_type='accepted_testcase',
+                            event_key=f'{problem.id}:{result.test_case_id}',
+                            description=f'首次通过 {problem.title} 的测试点 #{result.case_index}',
+                        )
 
 
 def _case_status_from_error(error, actual, expected):

@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+
+{% block title %}积分中心 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+    .points-hero {
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        color: #fff;
+        border-radius: 1rem;
+        box-shadow: 0 .75rem 2rem rgba(234, 88, 12, .2);
+    }
+    .points-balance { font-size: clamp(2.5rem, 7vw, 4.5rem); font-weight: 800; line-height: 1; }
+    .points-copy-input { background: #f8fafc; }
+    .points-amount-positive { color: #198754; font-weight: 700; }
+    .points-amount-negative { color: #dc3545; font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="points-hero p-4 p-md-5 mb-4">
+    <div class="row align-items-center g-4">
+        <div class="col-md-7">
+            <div class="d-flex align-items-center gap-2 mb-2 text-white-50"><i class="bi bi-coin fs-4"></i><span>我的积分</span></div>
+            <div class="points-balance">{{ user.points_balance }}</div>
+            <p class="mb-0 mt-2 text-white-50">可用于参加需要积分报名的竞赛。</p>
+        </div>
+        <div class="col-md-5 text-md-end">
+            <a class="btn btn-light" href="{% url 'contest_list' %}"><i class="bi bi-trophy me-1"></i>查看竞赛</a>
+        </div>
+    </div>
+</section>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <section class="card border-0 shadow-sm h-100">
+            <div class="card-body p-4">
+                <h1 class="h4"><i class="bi bi-person-plus text-primary me-2"></i>邀请好友</h1>
+                <p class="text-muted">好友通过你的链接完成注册后，双方都会按当前站点规则获得积分。</p>
+                <label for="referral-link" class="form-label fw-semibold">我的邀请链接</label>
+                <div class="input-group mb-3">
+                    <input id="referral-link" class="form-control points-copy-input" value="{{ referral_url }}" readonly>
+                    <button class="btn btn-outline-primary" type="button" id="copy-referral-link"><i class="bi bi-copy me-1"></i>复制</button>
+                </div>
+                <div class="small text-muted">我的邀请码：<code>{{ user.referral_code }}</code></div>
+                <hr>
+                <div class="d-flex justify-content-between small mb-2"><span class="text-muted">邀请人奖励</span><strong>+{{ points_config.inviter_registration_points }} 积分</strong></div>
+                <div class="d-flex justify-content-between small"><span class="text-muted">受邀人奖励</span><strong>+{{ points_config.invitee_registration_points }} 积分</strong></div>
+            </div>
+        </section>
+    </div>
+    <div class="col-lg-7">
+        <section class="card border-0 shadow-sm h-100">
+            <div class="card-body p-4">
+                <h2 class="h4"><i class="bi bi-check2-circle text-success me-2"></i>获取积分</h2>
+                <p class="text-muted mb-2">普通题的每个非样例测试点首次通过时可获得奖励；重复提交不会重复奖励。</p>
+                <div class="alert alert-light border mb-0"><i class="bi bi-gift me-1 text-warning"></i>当前每个首次通过的测试点奖励 <strong>+{{ points_config.accepted_testcase_points }}</strong> 积分。</div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<section class="card border-0 shadow-sm mt-4">
+    <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h4 mb-0"><i class="bi bi-receipt text-secondary me-2"></i>最近积分明细</h2><span class="small text-muted">最近 30 条</span></div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead><tr><th>时间</th><th>说明</th><th class="text-end">变动</th><th class="text-end">余额</th></tr></thead>
+                <tbody>
+                {% for entry in recent_entries %}
+                    <tr>
+                        <td class="text-muted text-nowrap">{{ entry.created_at|date:'Y-m-d H:i' }}</td>
+                        <td>{{ entry.description|default:entry.event_type }}</td>
+                        <td class="text-end {% if entry.amount >= 0 %}points-amount-positive{% else %}points-amount-negative{% endif %}">{% if entry.amount > 0 %}+{% endif %}{{ entry.amount }}</td>
+                        <td class="text-end fw-semibold">{{ entry.balance_after }}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="4" class="text-center text-muted py-4">暂时没有积分变动记录。</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const input = document.getElementById('referral-link');
+    const button = document.getElementById('copy-referral-link');
+    if (!input || !button) return;
+    button.addEventListener('click', function () {
+        navigator.clipboard.writeText(input.value).then(function () {
+            button.innerHTML = '<i class="bi bi-check2 me-1"></i>已复制';
+            setTimeout(function () { button.innerHTML = '<i class="bi bi-copy me-1"></i>复制'; }, 1800);
+        }).catch(function () {
+            input.focus();
+            input.select();
+            document.execCommand('copy');
+        });
+    });
+})();
+</script>
+{% endblock %}

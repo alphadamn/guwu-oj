@@ -1,3 +1,5 @@
+import secrets
+
 from django.contrib.auth.models import AbstractUser
 from django.core.cache import cache
 from django.core.files.storage import default_storage
@@ -23,6 +25,15 @@ class User(AbstractUser):
         'problems.Problem', blank=True, related_name='solved_by'
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    last_login_ip = models.GenericIPAddressField(
+        '最后登录 IP', blank=True, null=True,
+    )
+    points_balance = models.DecimalField('积分余额', max_digits=12, decimal_places=2, default=0)
+    referral_code = models.CharField('邀请码', max_length=16, unique=True, blank=True)
+    referrer = models.ForeignKey(
+        'self', verbose_name='邀请人', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='referrals',
+    )
 
     # --------- Punishment state (kept on User for fast, zero-lookups) -------
     is_permanently_banned = models.BooleanField('永久封号', default=False)
@@ -147,6 +158,12 @@ class User(AbstractUser):
         return None
 
     def save(self, *args, **kwargs):
+        if not self.referral_code:
+            while True:
+                candidate = secrets.token_urlsafe(8)[:12]
+                if not User.objects.filter(referral_code=candidate).exists():
+                    self.referral_code = candidate
+                    break
         # Delete old avatar file if it's being changed
         if self.pk:
             try:
