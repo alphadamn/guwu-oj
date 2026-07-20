@@ -13,7 +13,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "Missing image $IMAGE — run: ./scripts/build-judge-image.sh"
   exit 1
 fi
-if ! aa-status --profiled | grep -Fxq "$APPARMOR_PROFILE"; then
+if ! grep -Fxq "$APPARMOR_PROFILE (enforce)" /sys/kernel/security/apparmor/profiles; then
   echo "Missing AppArmor profile $APPARMOR_PROFILE — load docker/judge/apparmor-profile first"
   exit 1
 fi
@@ -37,9 +37,9 @@ run_sandbox() {
 echo "=== 1. Network isolation (--network none) ==="
 if run_sandbox python3 -c "
 import socket
-s = socket.socket()
-s.settimeout(3)
 try:
+    s = socket.socket()
+    s.settimeout(3)
     s.connect(('1.1.1.1', 53))
     print('FAIL: outbound TCP connected')
     raise SystemExit(1)

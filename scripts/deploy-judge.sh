@@ -32,7 +32,7 @@ fi
 venv/bin/pip install -r requirements.txt -q
 install -D -m 644 docker/judge/apparmor-profile /etc/apparmor.d/oj-judge
 apparmor_parser -r /etc/apparmor.d/oj-judge
-if ! aa-status --profiled | grep -Fxq 'oj-judge'; then
+if ! grep -Fxq 'oj-judge (enforce)' /sys/kernel/security/apparmor/profiles; then
   echo 'AppArmor profile oj-judge is not loaded' >&2
   exit 1
 fi
