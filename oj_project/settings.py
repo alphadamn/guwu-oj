@@ -77,6 +77,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'users.middleware.EnforcementMiddleware',
+    'points.middleware.DailyCheckInMiddleware',
     'devlog.middleware.TrafficMetricsMiddleware',
     'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
@@ -680,6 +681,8 @@ SIMPLEUI_CONFIG = {
                  'url': '/admin/points/pointconfig/'},
                 {'name': '积分流水', 'icon': 'fas fa-receipt',
                  'url': '/admin/points/pointledgerentry/'},
+                {'name': '每日签到', 'icon': 'fas fa-calendar-check',
+                 'url': '/admin/points/dailycheckin/'},
             ],
         },
         {

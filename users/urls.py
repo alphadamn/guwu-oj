@@ -5,6 +5,7 @@ from .views import (
     register,
     profile,
     points_center,
+    daily_check_in,
     edit_profile,
     avatar,
     send_verification_code,
@@ -27,7 +28,7 @@ urlpatterns = [
     path('password-reset/<str:email>/', password_reset_confirm, name='password_reset_confirm'),
     path('profile/<str:username>/', profile, name='profile'),
     path('points/', points_center, name='points_center'),
+    path('daily-check-in/', daily_check_in, name='daily_check_in'),
     path('edit/', edit_profile, name='edit_profile'),
     path('avatar/<str:username>/', avatar, name='avatar'),
 ]
-

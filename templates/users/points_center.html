@@ -54,6 +54,12 @@
             <div class="card-body p-4">
                 <h2 class="h4"><i class="bi bi-check2-circle text-success me-2"></i>获取积分</h2>
                 <p class="text-muted mb-2">普通题的每个非样例测试点首次通过时可获得奖励；重复提交不会重复奖励。</p>
+                <div class="border rounded-3 p-3 mb-3">
+                    <div class="fw-semibold mb-2"><i class="bi bi-calendar-check text-warning me-1"></i>每日签到奖励</div>
+                    <div class="row row-cols-2 row-cols-md-5 g-2 text-center small">
+                        {% for label, value in checkin_rewards %}<div class="col"><div class="border rounded p-2"><div class="text-muted">{{ label }}</div><strong>+{{ value }}</strong></div></div>{% endfor %}
+                    </div>
+                </div>
                 <div class="alert alert-light border mb-0"><i class="bi bi-gift me-1 text-warning"></i>当前每个首次通过的测试点奖励 <strong>+{{ points_config.accepted_testcase_points }}</strong> 积分（最多四位小数）。</div>
             </div>
         </section>

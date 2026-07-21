@@ -19,6 +19,11 @@ class PointConfig(models.Model):
         validators=[MinValueValidator(0)],
         help_text='普通题目中，用户首次通过某个非样例测试点时获得的积分，最多保留四位小数。',
     )
+    daily_checkin_day_1_points = models.PositiveIntegerField('连续签到第 1 天积分', default=10)
+    daily_checkin_day_2_points = models.PositiveIntegerField('连续签到第 2 天积分', default=15)
+    daily_checkin_day_3_points = models.PositiveIntegerField('连续签到第 3 天积分', default=30)
+    daily_checkin_day_4_points = models.PositiveIntegerField('连续签到第 4 天积分', default=50)
+    daily_checkin_day_5_plus_points = models.PositiveIntegerField('连续签到第 5 天及以上积分', default=75)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -34,6 +39,38 @@ class PointConfig(models.Model):
     def get_solo(cls):
         config, _ = cls.objects.get_or_create(pk=1)
         return config
+    def reward_for_streak(self, streak):
+        rewards = (
+            self.daily_checkin_day_1_points,
+            self.daily_checkin_day_2_points,
+            self.daily_checkin_day_3_points,
+            self.daily_checkin_day_4_points,
+            self.daily_checkin_day_5_plus_points,
+        )
+        return rewards[min(max(int(streak), 1), len(rewards)) - 1]
+
+
+class DailyCheckIn(models.Model):
+    """One automatic daily check-in per user and local calendar day."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='daily_checkins',
+    )
+    day = models.DateField('签到日期')
+    streak = models.PositiveIntegerField('连续签到天数')
+    points_awarded = models.DecimalField('获得积分', max_digits=14, decimal_places=4)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-day', '-id']
+        verbose_name = '每日签到'
+        verbose_name_plural = '每日签到'
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'day'], name='unique_user_daily_checkin'),
+        ]
+
+    def __str__(self):
+        return f'{self.user} {self.day}（连续 {self.streak} 天）'
 
 
 class PointLedgerEntry(models.Model):

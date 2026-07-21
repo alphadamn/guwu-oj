@@ -478,7 +478,30 @@ def points_center(request):
         'points_config': PointConfig.get_solo(),
         'recent_entries': PointLedgerEntry.objects.filter(user=request.user)[:30],
         'referral_url': referral_url,
+        'checkin_rewards': [
+            ('第 1 天', PointConfig.get_solo().daily_checkin_day_1_points),
+            ('第 2 天', PointConfig.get_solo().daily_checkin_day_2_points),
+            ('第 3 天', PointConfig.get_solo().daily_checkin_day_3_points),
+            ('第 4 天', PointConfig.get_solo().daily_checkin_day_4_points),
+            ('第 5 天+', PointConfig.get_solo().daily_checkin_day_5_plus_points),
+        ],
     })
+
+
+@login_required
+@require_POST
+def daily_check_in(request):
+    """Claim today's check-in explicitly from the frontend modal."""
+    from points.services import check_in_notice, check_in_user
+
+    try:
+        checkin, created = check_in_user(user_id=request.user.id)
+        payload = check_in_notice(checkin)
+        payload['created'] = created
+        return JsonResponse({'ok': True, **payload})
+    except Exception:
+        logger.exception('Daily check-in claim failed for user %s', request.user.id)
+        return JsonResponse({'ok': False, 'message': '签到失败，请稍后重试。'}, status=500)
 
 
 @login_required

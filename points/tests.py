@@ -13,6 +13,52 @@ from submissions.models import Submission, SubmissionTestResult
 from users.models import User
 
 
+from datetime import timedelta
+
+from points.models import DailyCheckIn
+from points.services import check_in_user
+
+
+class DailyCheckInTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user('checkin', password='password')
+
+    def test_streak_rewards_reset_and_same_day_is_idempotent(self):
+        first_day = timezone.localdate() - timedelta(days=3)
+        first, created = check_in_user(user_id=self.user.id, day=first_day)
+        self.assertTrue(created)
+        second, created = check_in_user(user_id=self.user.id, day=first_day + timedelta(days=1))
+        self.assertTrue(created)
+        reset, created = check_in_user(user_id=self.user.id, day=timezone.localdate())
+        self.assertTrue(created)
+        duplicate, created = check_in_user(user_id=self.user.id, day=timezone.localdate())
+        self.assertFalse(created)
+        self.assertEqual((first.streak, second.streak, reset.streak, duplicate.id), (1, 2, 1, reset.id))
+        self.assertEqual(PointLedgerEntry.objects.filter(event_type='daily_check_in').count(), 3)
+
+    def test_frontend_first_visit_shows_manual_check_in_without_reward(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse('home'), HTTP_ACCEPT='text/html')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '立即签到')
+        self.assertEqual(DailyCheckIn.objects.filter(user=self.user).count(), 0)
+
+        response = self.client.post(reverse('daily_check_in'), HTTP_ACCEPT='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(response.content, {
+            'ok': True, 'created': True, 'streak': 1,
+            'points': '10.0000', 'day': timezone.localdate().isoformat(),
+        })
+        self.assertEqual(DailyCheckIn.objects.filter(user=self.user).count(), 1)
+
+        response = self.client.post(reverse('daily_check_in'), HTTP_ACCEPT='application/json')
+        self.assertJSONEqual(response.content, {
+            'ok': True, 'created': False, 'streak': 1,
+            'points': '10.0000', 'day': timezone.localdate().isoformat(),
+        })
+        self.assertEqual(PointLedgerEntry.objects.filter(event_type='daily_check_in').count(), 1)
+
+
 class PointFeatureTests(TestCase):
     def setUp(self):
         self.creator = User.objects.create_user('creator', 'creator@example.com', 'password')

@@ -365,6 +365,36 @@
     } catch (e) {}
 })();
 </script>
+    <div class="modal fade" id="daily-checkin-modal" tabindex="-1" aria-labelledby="daily-checkin-title" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+            <div class="modal-header text-white border-0" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><h5 class="modal-title" id="daily-checkin-title"><i class="bi bi-calendar-check me-2"></i>每日签到</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body text-center py-4"><div class="display-3 fw-bold text-warning"><span id="daily-checkin-streak">—</span> 天</div><p class="fs-5 mb-2">连续签到</p><p class="text-muted mb-3">签到后可获得对应连续天数奖励</p><div class="row row-cols-2 row-cols-md-5 g-2 text-center small mb-3">{% for label, value in request.daily_checkin_rewards %}<div class="col"><div class="border rounded p-2 h-100"><div class="text-muted">{{ label }}</div><strong>+{{ value }}</strong></div></div>{% endfor %}</div><p id="daily-checkin-reward-text" class="text-muted mb-0">本次奖励将在签到后显示</p><p id="daily-checkin-error" class="text-danger small mt-3 mb-0 d-none"></p></div>
+            <div class="modal-footer border-0 justify-content-center"><button type="button" id="daily-checkin-submit" class="btn btn-warning text-white px-4"><i class="bi bi-check2-circle me-1"></i>立即签到</button><button type="button" id="daily-checkin-done" class="btn btn-success px-4 d-none" data-bs-dismiss="modal">已签到</button></div>
+        </div></div>
+    </div>
+    <script>
+    (function () {
+        var available = {% if request.daily_checkin_available %}true{% else %}false{% endif %};
+        var modal = document.getElementById('daily-checkin-modal');
+        var submit = document.getElementById('daily-checkin-submit');
+        var done = document.getElementById('daily-checkin-done');
+        var error = document.getElementById('daily-checkin-error');
+        if (!available || !modal || !submit || !window.bootstrap) return;
+        var csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [, ''])[1];
+        submit.addEventListener('click', function () {
+            submit.disabled = true;
+            fetch('{% url "daily_check_in" %}', {method: 'POST', credentials: 'same-origin', headers: {'X-CSRFToken': csrf, 'Accept': 'application/json'}})
+                .then(function (response) { return response.json().then(function (data) { if (!response.ok) throw new Error(data.message || '签到失败'); return data; }); })
+                .then(function (data) {
+                    document.getElementById('daily-checkin-streak').textContent = data.streak;
+                    document.getElementById('daily-checkin-reward-text').textContent = '本次获得 +' + data.points + ' 积分';
+                    submit.classList.add('d-none'); done.classList.remove('d-none');
+                })
+                .catch(function (err) { error.textContent = err.message; error.classList.remove('d-none'); submit.disabled = false; });
+        });
+        new window.bootstrap.Modal(modal).show();
+    })();
+    </script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>
