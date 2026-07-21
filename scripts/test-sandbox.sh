@@ -6,7 +6,15 @@ cd "$(dirname "$0")/.."
 IMAGE="${OJ_DOCKER_IMAGE:-oj-judge:latest}"
 APPARMOR_PROFILE="${OJ_DOCKER_APPARMOR_PROFILE:-oj-judge}"
 WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+LIFECYCLE_CID=""
+cleanup() {
+  if [[ -n "$LIFECYCLE_CID" ]]; then
+    docker kill "$LIFECYCLE_CID" >/dev/null 2>&1 || true
+    docker rm -f "$LIFECYCLE_CID" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
 chmod 777 "$WORKDIR"
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -110,6 +118,31 @@ print('OK: no host project dir unless mounted')
 "; then
   :
 fi
+
+echo ""
+echo "=== 5. Docker lifecycle signals ==="
+LIFECYCLE_CID="$(docker run --rm -d -i \
+  --network none \
+  --memory 64m \
+  --memory-swap 64m \
+  --user 65534:65534 \
+  --pids-limit 64 \
+  --security-opt no-new-privileges \
+  --security-opt "apparmor=$APPARMOR_PROFILE" \
+  --cap-drop ALL \
+  -v "$WORKDIR:/sandbox:rw" \
+  -w /sandbox \
+  "$IMAGE" sleep infinity)"
+if ! docker stop -t 1 "$LIFECYCLE_CID" >/dev/null; then
+  echo "FAIL: Docker could not stop the AppArmor-confined container"
+  exit 1
+fi
+if docker inspect "$LIFECYCLE_CID" >/dev/null 2>&1; then
+  echo "FAIL: stopped lifecycle container still exists"
+  exit 1
+fi
+LIFECYCLE_CID=""
+echo "OK: Docker can stop the AppArmor-confined container"
 
 echo ""
 echo "All automated sandbox checks finished."

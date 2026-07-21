@@ -143,11 +143,10 @@ profile oj-judge flags=(attach_disconnected) {
 
 
 
-  # Deny ptrace and signal (简化)
-
-  deny ptrace,
-
-  deny signal,
+  # Docker/runc runs unconfined and must be able to terminate a judge process.
+  # Keep submissions from signalling another confined judge container.
+  signal (receive) peer=unconfined,
+  deny signal peer=oj-judge,
 
 
 
