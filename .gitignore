@@ -6,7 +6,8 @@ venv/
 db.sqlite3
 *.log
 .DS_Store
-*/migrationsserver.crt
+*/migrations
+server.crt
 server.key
 staticfiles
 .idea
