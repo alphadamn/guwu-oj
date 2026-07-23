@@ -141,32 +141,44 @@
         if (!map || !scene || map.dataset.zoomBound) return;
         map.dataset.zoomBound = 'true';
         var zoom = 1, tx = 0, ty = 0, dragging = false, lastX = 0, lastY = 0;
-        var worldWidth = 650, worldHeight = 300;
+        var worldWidth = 650, worldHeight = 300, tileCache = {};
         var sceneCopies = [scene];
+        scene.dataset.xOffset = '0'; scene.dataset.yOffset = '0';
         function rebuildTiles() {
-            Array.prototype.forEach.call(scene.parentNode.querySelectorAll('.oj-dashboard__map-scene-copy'), function (copy) { copy.remove(); });
-            sceneCopies = [scene];
             var tileWidth = worldWidth * zoom, tileHeight = worldHeight * zoom;
-            var firstX = Math.floor(-tx / tileWidth) - 2;
-            var lastX = Math.ceil((650 - tx) / tileWidth) + 2;
-            var firstY = Math.floor(-ty / tileHeight) - 2;
-            var lastY = Math.ceil((300 - ty) / tileHeight) + 2;
-            for (var xOffset = firstX; xOffset <= lastX; xOffset += 1) {
-                for (var yOffset = firstY; yOffset <= lastY; yOffset += 1) {
-                    if (xOffset === 0 && yOffset === 0) continue;
-                    var copy = scene.cloneNode(true);
-                    copy.classList.add('oj-dashboard__map-scene-copy');
-                    copy.dataset.xOffset = String(xOffset);
-                    copy.dataset.yOffset = String(yOffset);
-                    scene.parentNode.appendChild(copy);
-                    sceneCopies.push(copy);
+            var firstX = Math.floor(-tx / tileWidth) - 1;
+            var lastX = Math.ceil((650 - tx) / tileWidth) + 1;
+            var firstY = Math.floor(-ty / tileHeight) - 1;
+            var lastY = Math.ceil((300 - ty) / tileHeight) + 1;
+            var wanted = {};
+            for (var x = firstX; x <= lastX; x += 1) {
+                for (var y = firstY; y <= lastY; y += 1) {
+                    var key = x + ':' + y;
+                    wanted[key] = true;
+                    if (!tileCache[key]) {
+                        var copy = x === 0 && y === 0 ? scene : scene.cloneNode(true);
+                        if (copy !== scene) {
+                            copy.classList.add('oj-dashboard__map-scene-copy');
+                            scene.parentNode.appendChild(copy);
+                        }
+                        copy.dataset.xOffset = String(x); copy.dataset.yOffset = String(y);
+                        tileCache[key] = copy;
+                    }
                 }
             }
+            Object.keys(tileCache).forEach(function (key) {
+                if (!wanted[key] && tileCache[key] !== scene) {
+                    tileCache[key].remove(); delete tileCache[key];
+                }
+            });
+            sceneCopies = Object.keys(wanted).map(function (key) { return tileCache[key]; });
         }
         function updateMarkerScale() {
-            Array.prototype.forEach.call(scene.parentNode.querySelectorAll('.oj-dashboard__geo-point circle:first-child'), function (marker) { marker.setAttribute('r', (5 / zoom).toFixed(2)); });
-            Array.prototype.forEach.call(scene.parentNode.querySelectorAll('.oj-dashboard__server-point circle'), function (marker) { marker.setAttribute('r', (8 / zoom).toFixed(2)); });
-            Array.prototype.forEach.call(scene.parentNode.querySelectorAll('.oj-dashboard__request-packet'), function (packet) { packet.setAttribute('r', (3.5 / zoom).toFixed(2)); });
+            sceneCopies.forEach(function (copy) {
+                Array.prototype.forEach.call(copy.querySelectorAll('.oj-dashboard__geo-point circle:first-child'), function (marker) { marker.setAttribute('r', (5 / zoom).toFixed(2)); });
+                Array.prototype.forEach.call(copy.querySelectorAll('.oj-dashboard__server-point circle'), function (marker) { marker.setAttribute('r', (8 / zoom).toFixed(2)); });
+                Array.prototype.forEach.call(copy.querySelectorAll('.oj-dashboard__request-packet'), function (packet) { packet.setAttribute('r', (3.5 / zoom).toFixed(2)); });
+            });
         }
         function apply() {
             rebuildTiles();
