@@ -7,6 +7,7 @@ psycopg2-binary>=2.9.0
 markdown>=3.10.2
 bleach>=6.0.0
 requests>=2.31.0
+geoip2>=5.0.0
 dotenv
 django-redis
 django-mathfilters

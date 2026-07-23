@@ -82,7 +82,7 @@ class TrafficMetricsMiddleware:
         from django.db.models import F
         from django.utils import timezone
 
-        from devlog.models import TrafficDailyMetric, TrafficPageMetric
+        from devlog.models import TrafficCountryMetric, TrafficDailyMetric, TrafficPageMetric
 
         today = timezone.localdate()
         updated = TrafficDailyMetric.objects.filter(day=today).update(
@@ -113,10 +113,30 @@ class TrafficMetricsMiddleware:
                     day=today, path=normalized_path
                 ).update(page_views=F('page_views') + 1)
 
+        country = None
+        try:
+            from devlog.geoip import country_for_request
+            country = country_for_request(request)
+        except Exception:
+            country = None
+        if country:
+            country_updated = TrafficCountryMetric.objects.filter(
+                day=today, country_code=country['country_code']
+            ).update(requests=F('requests') + 1)
+            if not country_updated:
+                try:
+                    with transaction.atomic():
+                        TrafficCountryMetric.objects.create(day=today, requests=1, **country)
+                except IntegrityError:
+                    TrafficCountryMetric.objects.filter(
+                        day=today, country_code=country['country_code']
+                    ).update(requests=F('requests') + 1)
+
         if created:
             cutoff = today - timedelta(days=self.RETENTION_DAYS)
             TrafficDailyMetric.objects.filter(day__lt=cutoff).delete()
             TrafficPageMetric.objects.filter(day__lt=cutoff).delete()
+            TrafficCountryMetric.objects.filter(day__lt=cutoff).delete()
 
 
 class StaticCacheHeaders:

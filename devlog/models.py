@@ -40,6 +40,27 @@ class TrafficPageMetric(models.Model):
         return f'{self.day} {self.path}: {self.page_views}'
 
 
+class TrafficCountryMetric(models.Model):
+    """Anonymous daily request aggregate for a GeoIP-resolved country."""
+
+    day = models.DateField(db_index=True, verbose_name='日期')
+    country_code = models.CharField(max_length=2, verbose_name='国家代码')
+    country_name = models.CharField(max_length=100, verbose_name='国家')
+    latitude = models.FloatField(verbose_name='纬度')
+    longitude = models.FloatField(verbose_name='经度')
+    requests = models.PositiveBigIntegerField(default=0, verbose_name='请求数')
+
+    class Meta:
+        ordering = ['-day', '-requests', 'country_code']
+        verbose_name = '每日国家流量'
+        verbose_name_plural = '每日国家流量'
+        constraints = [
+            models.UniqueConstraint(fields=['day', 'country_code'], name='unique_traffic_country_day'),
+        ]
+        indexes = [models.Index(fields=['day', 'country_code'])]
+
+    def __str__(self):
+        return f'{self.day} {self.country_name}: {self.requests}'
 class ServiceComponent(models.Model):
     """A single service component shown on the status page (left column)."""
 

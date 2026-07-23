@@ -23,6 +23,7 @@ from .models import (
     RegistrationConfig,
     ServiceComponent,
     SiteConfig,
+    TrafficCountryMetric,
     TrafficDailyMetric,
     TrafficPageMetric,
 )
@@ -116,9 +117,23 @@ def dashboard_metrics_view(request):
         problem['id'] = problem.pop('problem_id')
         problem['title'] = problem.pop('problem__title')
 
+    country_rows = list(
+        TrafficCountryMetric.objects.filter(day__gte=start)
+        .values('country_code', 'country_name', 'latitude', 'longitude')
+        .annotate(requests=Sum('requests'))
+        .order_by('-requests', 'country_code')[:100]
+    )
+
+    from devlog.geoip import server_location
+    destination = server_location()
+
     return JsonResponse({
         'labels': [day.strftime('%m-%d') for day in days],
         'traffic': traffic,
+        'location_has_data': bool(country_rows),
+        'locations': country_rows,
+        'server_location': destination,
+        'server_location_has_data': bool(destination),
         'traffic_has_data': bool(traffic_started_at),
         'traffic_started_at': traffic_started_at.isoformat() if traffic_started_at else None,
         'submissions': submissions,

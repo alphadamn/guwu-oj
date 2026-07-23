@@ -513,7 +513,11 @@ if _spsh:
 # "noise" IPs (e.g. SimpleUI iframe requests) when computing rate limits.
 TRUSTED_PROXY_IPS = [h.strip() for h in os.environ.get('TRUSTED_PROXY_IPS', '127.0.0.1,::1').split(',') if h.strip()]
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+# Optional local MaxMind GeoLite2 country database for anonymous dashboard aggregation.
+GEOIP2_COUNTRY_DB = os.environ.get('GEOIP2_COUNTRY_DB', str(BASE_DIR / 'data' / 'GeoLite2-Country.mmdb'))
+
+# Optional server endpoint used as the destination of dashboard request arcs.
+OJ_SERVER_IP = os.environ.get('OJ_SERVER_IP', '')
 
 AUTH_USER_MODEL = 'users.User'
 
