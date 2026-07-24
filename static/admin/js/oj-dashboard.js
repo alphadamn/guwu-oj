@@ -98,6 +98,10 @@
         var pageHtml = topPages.map(function (page, index) { return '<li class="oj-dashboard__rank-row"><span class="oj-dashboard__rank-number">' + (index + 1) + '</span><span class="oj-dashboard__rank-name">' + escapeHtml(page.path) + '</span><span class="oj-dashboard__rank-bar"><i style="width:' + (page.page_views / pageMaximum * 100) + '%"></i></span><b>' + page.page_views + '</b></li>'; }).join('') || '<div class="oj-dashboard__empty">尚未积累页面访问排名数据</div>';
         var topProblems = data.top_problems || [], problemMaximum = Math.max.apply(null, topProblems.map(function (problem) { return problem.submissions; }).concat([1]));
         var problemHtml = topProblems.map(function (problem, index) { return '<li class="oj-dashboard__rank-row"><span class="oj-dashboard__rank-number">' + (index + 1) + '</span><a class="oj-dashboard__rank-name" href="/admin/problems/problem/' + problem.id + '/change/">P' + problem.id + ' · ' + escapeHtml(problem.title) + '</a><span class="oj-dashboard__rank-bar oj-dashboard__rank-bar--green"><i style="width:' + (problem.submissions / problemMaximum * 100) + '%"></i></span><b>' + problem.submissions + '</b></li>'; }).join('') || '<div class="oj-dashboard__empty">暂无题目提交数据</div>';
+        root._ojCountryCounts = {};
+        (data.locations || []).forEach(function (item) {
+            root._ojCountryCounts[item.country_code] = item.requests;
+        });
         root.innerHTML = '<div class="oj-dashboard__summary">' + metricHtml + '</div>' + renderLocationMap(data) + '<div class="oj-dashboard__charts">' + renderChart('traffic', '公开页面访问量', 'fas fa-chart-line', data.labels || [], data.traffic || [], '#3b82f6', !data.traffic_has_data) + renderChart('submissions', '提交量', 'fas fa-code', data.labels || [], data.submissions || [], '#10b981', false) + '</div><section class="oj-dashboard__card"><header class="oj-dashboard__verdict-header"><h3 class="oj-dashboard__card-title"><i class="fas fa-chart-pie"></i> 提交结果分布</h3><p class="oj-dashboard__card-subtitle">所有历史提交</p></header>' + verdictHtml + '</section><div class="oj-dashboard__rankings"><section class="oj-dashboard__card"><header class="oj-dashboard__verdict-header"><h3 class="oj-dashboard__card-title"><i class="fas fa-eye"></i> 最常访问页面</h3><p class="oj-dashboard__card-subtitle">近 14 天公开页面访问</p></header><ol class="oj-dashboard__rank-list">' + pageHtml + '</ol></section><section class="oj-dashboard__card"><header class="oj-dashboard__verdict-header"><h3 class="oj-dashboard__card-title"><i class="fas fa-fire"></i> 提交最多的题目</h3><p class="oj-dashboard__card-subtitle">所有历史普通题目提交</p></header><ol class="oj-dashboard__rank-list">' + problemHtml + '</ol></section></div>';
         renderWorldCountries();
         bindMapZoom();
@@ -123,10 +127,13 @@
                     }).join(' ') + 'Z';
                 }
                 var paths = features.map(function (feature) {
+                    var props = feature.properties || {};
+                    var code = props.ISO_A2_EH || props.ISO_A2;
+                    var active = (root._ojCountryCounts || {})[code] || 0;
                     var geometry = feature.geometry || {};
                     var polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates || [];
                     return polygons.map(function (polygon) {
-                        return '<path class="oj-dashboard__country" d="' + polygon.map(ringPath).join(' ') + '"></path>';
+                        return '<path class="oj-dashboard__country' + (active ? ' oj-dashboard__country--active' : '') + '" d="' + polygon.map(ringPath).join(' ') + '"><title>' + escapeHtml(props.NAME || props.NAME_EN || code) + (active ? '：' + active + ' 次请求' : '') + '</title></path>';
                     }).join('');
                 }).join('');
                 Array.prototype.forEach.call(root.querySelectorAll('.oj-dashboard__countries'), function (countryLayer) {

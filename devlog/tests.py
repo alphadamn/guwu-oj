@@ -1,11 +1,20 @@
 from datetime import timedelta
+from unittest.mock import patch
+
+import json
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from devlog.models import ServiceComponent, TrafficDailyMetric, TrafficPageMetric
+from devlog.models import (
+    ServiceComponent,
+    TrafficCountryMetric,
+    TrafficDailyMetric,
+    TrafficPageMetric,
+)
 from problems.models import Problem
 from submissions.models import Submission
 
@@ -66,6 +75,22 @@ class DashboardMetricsTests(TestCase):
         self.assertIsNone(data['traffic_started_at'])
         self.assertEqual(data['traffic'], [0] * 14)
 
+    def test_dashboard_metrics_includes_country_aggregates(self):
+        today = timezone.localdate()
+        TrafficCountryMetric.objects.create(
+            day=today, country_code='SG', country_name='Singapore',
+            latitude=1.35, longitude=103.82, requests=4,
+        )
+        self.client.force_login(self.staff)
+
+        data = self.client.get(reverse('admin:dashboard_metrics')).json()
+
+        self.assertEqual(data['locations'], [{
+            'country_code': 'SG', 'country_name': 'Singapore',
+            'latitude': 1.35, 'longitude': 103.82, 'requests': 4,
+        }])
+        self.assertTrue(data['location_has_data'])
+
 
 class TrafficMetricsMiddlewareTests(TestCase):
     def setUp(self):
@@ -93,4 +118,57 @@ class TrafficMetricsMiddlewareTests(TestCase):
         self.client.get('/admin/login/')
         self.client.get('/health/')
         self.assertEqual(TrafficDailyMetric.objects.get(day=today).page_views, 2)
+
+    @patch('devlog.geoip._country_for_ip')
+    def test_forwarded_public_ip_is_recorded_as_country(self, country_for_ip):
+        country_for_ip.return_value = {
+            'country_code': 'SG', 'country_name': 'Singapore',
+            'latitude': 1.35, 'longitude': 103.82,
+        }
+
+        self.client.get('/', HTTP_X_FORWARDED_FOR='43.160.219.206')
+
+        metric = TrafficCountryMetric.objects.get(
+            day=timezone.localdate(), country_code='SG'
+        )
+        self.assertEqual(metric.requests, 1)
+        country_for_ip.assert_called_once_with('43.160.219.206')
+
+
+class GeoIpVisibilityTests(TestCase):
+    def test_all_geojson_iso_codes_have_centroids(self):
+        centroids = json.loads(Path('devlog/country_centroids.json').read_text())
+        world = json.loads(Path('static/admin/data/world-countries.geojson').read_text())
+        codes = {
+            (feature.get('properties') or {}).get('ISO_A2_EH')
+            or (feature.get('properties') or {}).get('ISO_A2')
+            for feature in world['features']
+        }
+        self.assertTrue({code for code in codes if isinstance(code, str) and len(code) == 2} <= centroids.keys())
+        self.assertIn('DE', centroids)
+        self.assertIn('FR', centroids)
+        self.assertIn('NO', centroids)
+
+    @patch('devlog.geoip._reader')
+    def test_country_without_centroid_is_still_visible(self, reader):
+        from devlog.geoip import _country_for_ip, clear_reader_cache
+
+        class Country:
+            iso_code = 'DE'
+            name = 'Germany'
+
+        class Response:
+            country = Country()
+
+        reader.return_value.country.return_value = Response()
+        clear_reader_cache()
+        try:
+            result = _country_for_ip('45.135.194.31')
+        finally:
+            clear_reader_cache()
+
+        self.assertEqual(result['country_code'], 'DE')
+        self.assertGreater(result['latitude'], 0)
+        self.assertGreater(result['longitude'], 0)
+        reader.return_value.country.assert_called_once_with('45.135.194.31')
 

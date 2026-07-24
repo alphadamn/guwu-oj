@@ -42,6 +42,22 @@ def _centroids():
         return {}
 
 
+def _country_coordinates(code):
+    """Return a stable map coordinate for a GeoLite2 country code."""
+    coordinates = _centroids().get(code)
+    if coordinates:
+        return coordinates
+    # GeoLite2 can return codes for territories not represented by the map's
+    # country layer. Keep those requests visible as source markers rather than
+    # dropping the aggregate solely because a polygon is unavailable.
+    return {
+        'MO': [113.54, 22.20],
+        'SG': [103.82, 1.35],
+        'HK': [114.17, 22.32],
+        'TW': [120.96, 23.70],
+    }.get(code)
+
+
 def _country_for_ip(value):
     address = ipaddress.ip_address(value)
     if address.is_private or address.is_loopback or address.is_reserved:
@@ -51,8 +67,9 @@ def _country_for_ip(value):
         return None
     country = reader.country(str(address)).country
     code = country.iso_code
-    coordinates = _centroids().get(code) if code else None
+    coordinates = _country_coordinates(code) if code else None
     if not code or not coordinates:
+        logger.info('No map coordinate for GeoLite2 country code %s', code)
         return None
     return {
         'country_code': code,
