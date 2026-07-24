@@ -11,6 +11,7 @@
         'Runtime Error': '#ef4444', 'Compile Error': '#64748b',
         'System Error': '#475569', Pending: '#3b82f6'
     };
+    var pendingLocationMode = null;
 
     function escapeHtml(value) {
         return String(value == null ? '' : value).replace(/[&<>'"]/g, function (character) {
@@ -71,10 +72,12 @@
             return '<g class="oj-dashboard__geo-point"><circle cx="' + point[0].toFixed(1) + '" cy="' + point[1].toFixed(1) + '" r="5"><title>' + escapeHtml(item.country_name) + '：' + item.requests + ' 次请求</title></circle></g>';
         }).join('');
         var serverDot = server ? '<g class="oj-dashboard__server-point"><circle cx="' + server[0].toFixed(1) + '" cy="' + server[1].toFixed(1) + '" r="8"></circle></g>' : '';
-        var list = locations.slice(0, 8).map(function (item) { return '<li><span>' + escapeHtml(item.country_name) + '</span><b>' + item.requests + '</b></li>'; }).join('');
+        var listLocations = data.location_list || locations;
+        var list = listLocations.slice(0, 8).map(function (item) { return '<li><span>' + escapeHtml(item.country_name) + '</span><b>' + item.requests + '</b></li>'; }).join('');
         if (!locations.length) list = '<li class="oj-dashboard__geo-empty">暂无可定位的公开请求。请访问前台页面生成请求来源数据。</li>';
         if (locations.length && !destination) list += '<li class="oj-dashboard__geo-empty">已记录来源，但未配置 OJ_SERVER_IP，无法绘制到服务器的线路。</li>';
-        return '<section class="oj-dashboard__card oj-dashboard__geo-card"><header class="oj-dashboard__card-header"><div><h3 class="oj-dashboard__card-title"><i class="fas fa-globe-asia"></i> 请求来源地图</h3><p class="oj-dashboard__card-subtitle">请求沿线路流向服务器 · 近 14 天国家级聚合 · 鼠标中键滚轮缩放</p></div></header><div class="oj-dashboard__geo-layout"><div class="oj-dashboard__map-wrap"><svg class="oj-dashboard__map" viewBox="0 0 650 300" role="img" aria-label="请求来源到服务器的线路地图"><rect width="650" height="300" rx="12" fill="#eff7ff"/><g class="oj-dashboard__map-scene"><g class="oj-dashboard__countries"></g><path class="oj-dashboard__graticule" d="M20 75h610M20 150h610M20 225h610M182 20v260M325 20v260M468 20v260"/>' + lines + dots + serverDot + '</g></svg></div><ol class="oj-dashboard__geo-list">' + list + '</ol></div></section>';
+            var sourceLabel = data.location_source === 'browser' ? '浏览器授权粗略位置' : 'IP GeoIP 定位';
+            return '<section class="oj-dashboard__card oj-dashboard__geo-card"><header class="oj-dashboard__card-header"><div><h3 class="oj-dashboard__card-title"><i class="fas fa-globe-asia"></i> 请求来源地图</h3><p class="oj-dashboard__card-subtitle">请求沿线路流向服务器 · 近 14 天 · 优先使用' + sourceLabel + ' · 鼠标中键滚轮缩放</p></div></header><div class="oj-dashboard__geo-layout"><div class="oj-dashboard__map-wrap"><svg class="oj-dashboard__map" viewBox="0 0 650 300" role="img" aria-label="请求来源到服务器的线路地图"><rect width="650" height="300" rx="12" fill="#eff7ff"/><g class="oj-dashboard__map-scene"><g class="oj-dashboard__countries"></g><path class="oj-dashboard__graticule" d="M20 75h610M20 150h610M20 225h610M182 20v260M325 20v260M468 20v260"/>' + lines + dots + serverDot + '</g></svg></div><ol class="oj-dashboard__geo-list">' + list + '</ol></div></section>';
     }
 
     function render(data) {
@@ -103,11 +106,65 @@
             root._ojCountryCounts[item.country_code] = item.requests;
         });
         root.innerHTML = '<div class="oj-dashboard__summary">' + metricHtml + '</div>' + renderLocationMap(data) + '<div class="oj-dashboard__charts">' + renderChart('traffic', '公开页面访问量', 'fas fa-chart-line', data.labels || [], data.traffic || [], '#3b82f6', !data.traffic_has_data) + renderChart('submissions', '提交量', 'fas fa-code', data.labels || [], data.submissions || [], '#10b981', false) + '</div><section class="oj-dashboard__card"><header class="oj-dashboard__verdict-header"><h3 class="oj-dashboard__card-title"><i class="fas fa-chart-pie"></i> 提交结果分布</h3><p class="oj-dashboard__card-subtitle">所有历史提交</p></header>' + verdictHtml + '</section><div class="oj-dashboard__rankings"><section class="oj-dashboard__card"><header class="oj-dashboard__verdict-header"><h3 class="oj-dashboard__card-title"><i class="fas fa-eye"></i> 最常访问页面</h3><p class="oj-dashboard__card-subtitle">近 14 天公开页面访问</p></header><ol class="oj-dashboard__rank-list">' + pageHtml + '</ol></section><section class="oj-dashboard__card"><header class="oj-dashboard__verdict-header"><h3 class="oj-dashboard__card-title"><i class="fas fa-fire"></i> 提交最多的题目</h3><p class="oj-dashboard__card-subtitle">所有历史普通题目提交</p></header><ol class="oj-dashboard__rank-list">' + problemHtml + '</ol></section></div>';
+        var mode = data.location_mode === 'ip' ? 'ip' : 'browser';
+        bindLocationModeToggle(pendingLocationMode || mode);
         renderWorldCountries();
         bindMapZoom();
         bindChartTooltips(data);
     }
 
+
+    function bindLocationModeToggle(mode) {
+        var toggle = document.getElementById('oj-dashboard-location-toggle');
+        var csrfInput = document.getElementById('oj-dashboard-csrf');
+        var error = document.getElementById('oj-dashboard-location-error');
+        var label = document.querySelector('.oj-dashboard__location-setting .oj-dashboard__switch-label');
+        var labels = {browser: '浏览器定位优先（失败时使用 IP）', ip: '仅使用 IP 定位'};
+        if (!toggle) return;
+
+        function setMode(value) {
+            toggle.checked = value === 'browser';
+            if (label) label.textContent = labels[value];
+        }
+
+        setMode(mode === 'ip' ? 'ip' : 'browser');
+        if (toggle.dataset.bound) return;
+        toggle.dataset.bound = 'true';
+        toggle.addEventListener('change', function () {
+            var requestedMode = toggle.checked ? 'browser' : 'ip';
+            var previousMode = requestedMode === 'browser' ? 'ip' : 'browser';
+            pendingLocationMode = requestedMode;
+            toggle.disabled = true;
+            if (error) {
+                error.hidden = true;
+                error.textContent = '';
+            }
+            fetch('/admin/dashboard-location-mode/', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfInput ? csrfInput.value : ''
+                },
+                body: JSON.stringify({mode: requestedMode})
+            }).then(function (response) {
+                return response.json().catch(function () { return {}; }).then(function (payload) {
+                    if (!response.ok || payload.mode !== requestedMode) {
+                        throw new Error('location mode save failed');
+                    }
+                    window.location.reload();
+                });
+            }).catch(function () {
+                pendingLocationMode = null;
+                setMode(previousMode);
+                if (error) {
+                    error.textContent = '定位模式保存失败，请刷新后重试。';
+                    error.hidden = false;
+                }
+                toggle.disabled = false;
+            });
+        });
+    }
 
     function renderWorldCountries() {
         var container = root.querySelector('.oj-dashboard__countries');

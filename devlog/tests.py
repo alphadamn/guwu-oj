@@ -5,12 +5,13 @@ import json
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from devlog.models import (
     ServiceComponent,
+    TrafficBrowserLocationMetric,
     TrafficCountryMetric,
     TrafficDailyMetric,
     TrafficPageMetric,
@@ -75,21 +76,154 @@ class DashboardMetricsTests(TestCase):
         self.assertIsNone(data['traffic_started_at'])
         self.assertEqual(data['traffic'], [0] * 14)
 
-    def test_dashboard_metrics_includes_country_aggregates(self):
+    def test_dashboard_prefers_browser_locations(self):
         today = timezone.localdate()
         TrafficCountryMetric.objects.create(
-            day=today, country_code='SG', country_name='Singapore',
-            latitude=1.35, longitude=103.82, requests=4,
+            day=today, country_code='FR', country_name='France',
+            latitude=46.2, longitude=2.2, requests=9,
+        )
+        TrafficBrowserLocationMetric.objects.create(
+            day=today, latitude='31.2', longitude='121.5', requests=3,
         )
         self.client.force_login(self.staff)
 
         data = self.client.get(reverse('admin:dashboard_metrics')).json()
 
-        self.assertEqual(data['locations'], [{
-            'country_code': 'SG', 'country_name': 'Singapore',
-            'latitude': 1.35, 'longitude': 103.82, 'requests': 4,
+        self.assertEqual(data['location_source'], 'browser')
+        self.assertEqual(data['locations'][0]['country_code'], 'CN')
+        self.assertEqual(data['locations'][0]['country_name'], 'China')
+        self.assertEqual(data['location_list'], [{
+            'country_code': 'CN', 'country_name': 'China', 'requests': 3,
         }])
-        self.assertTrue(data['location_has_data'])
+
+    def test_browser_country_resolution_is_available(self):
+        from devlog.geoip import country_for_coordinates
+
+        self.assertEqual(country_for_coordinates(31.2, 121.5)['country_code'], 'CN')
+
+    def test_dashboard_uses_ip_locations_when_browser_mode_is_disabled(self):
+        from devlog.models import SiteConfig
+
+        today = timezone.localdate()
+        SiteConfig.objects.create(browser_geolocation_enabled=False)
+        TrafficCountryMetric.objects.create(
+            day=today, country_code='FR', country_name='France',
+            latitude=46.2, longitude=2.2, requests=9,
+        )
+        TrafficBrowserLocationMetric.objects.create(
+            day=today, latitude='31.2', longitude='121.5', requests=3,
+        )
+        self.client.force_login(self.staff)
+
+        data = self.client.get(reverse('admin:dashboard_metrics')).json()
+
+        self.assertEqual(data['location_source'], 'ip')
+        self.assertEqual(data['location_mode'], 'ip')
+        self.assertEqual(data['locations'][0]['country_code'], 'FR')
+
+    def test_dashboard_location_mode_toggle_updates_site_config(self):
+        from devlog.models import SiteConfig
+
+        self.client.force_login(self.staff)
+        response = self.client.post(
+            reverse('admin:dashboard_location_mode'),
+            data=json.dumps({'mode': 'ip'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['mode'], 'ip')
+        self.assertFalse(SiteConfig.objects.get(pk=1).browser_geolocation_enabled)
+
+    def test_dashboard_location_mode_updates_existing_singleton_row(self):
+        from devlog.models import SiteConfig
+
+        config = SiteConfig.objects.create(pk=9, browser_geolocation_enabled=True)
+        self.client.force_login(self.staff)
+        response = self.client.post(
+            reverse('admin:dashboard_location_mode'),
+            data=json.dumps({'mode': 'ip'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config.refresh_from_db()
+        self.assertFalse(config.browser_geolocation_enabled)
+        self.assertFalse(SiteConfig.objects.filter(pk=1).exists())
+        self.assertFalse(SiteConfig.browser_geolocation_is_enabled())
+
+    def test_admin_homepage_includes_location_mode_toggle(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.get(reverse('admin:index'))
+
+        self.assertContains(response, 'oj-dashboard-location-toggle')
+        self.assertContains(response, 'oj-dashboard-location-error')
+        self.assertContains(response, 'oj-dashboard.js')
+
+    def test_dashboard_location_mode_rejects_unknown_mode(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.post(
+            reverse('admin:dashboard_location_mode'),
+            data=json.dumps({'mode': 'unknown'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_dashboard_location_mode_accepts_admin_csrf_token(self):
+        from devlog.models import SiteConfig
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.staff)
+        homepage = client.get(reverse('admin:index'))
+        csrf_token = homepage.cookies['csrftoken'].value
+
+        response = client.post(
+            reverse('admin:dashboard_location_mode'),
+            data=json.dumps({'mode': 'ip'}),
+            content_type='application/json',
+            HTTP_X_CSRFTOKEN=csrf_token,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['mode'], 'ip')
+        self.assertFalse(SiteConfig.objects.get(pk=1).browser_geolocation_enabled)
+
+
+class TrafficMetricsMiddlewareTests(TestCase):
+    @patch('devlog.views._check_judging_system', return_value=3)
+    @patch('django_redis.get_redis_connection')
+    def test_redis_health_probe_uses_direct_ping(self, get_connection, _judge_check):
+        from devlog.views import _do_refresh_auto_components
+
+        component = ServiceComponent.objects.create(
+            name='Redis', auto_check=True, health_key='redis'
+        )
+        client = get_connection.return_value
+        client.get.return_value = b'1'
+
+        _do_refresh_auto_components(force_refresh=True)
+
+        component.refresh_from_db()
+        client.ping.assert_called_once()
+        self.assertEqual(component.status, ServiceComponent.STATUS_OPERATIONAL)
+
+    @patch('django_redis.get_redis_connection')
+    def test_failed_redis_health_probe_is_major(self, get_connection):
+        from devlog.views import _do_refresh_auto_components
+
+        component = ServiceComponent.objects.create(
+            name='Redis', auto_check=True, health_key='redis'
+        )
+        get_connection.return_value.ping.side_effect = ConnectionError('unavailable')
+
+        with patch('devlog.views._check_judging_system', return_value=3):
+            _do_refresh_auto_components(force_refresh=True)
+
+        component.refresh_from_db()
+        self.assertEqual(component.status, ServiceComponent.STATUS_MAJOR)
 
 
 class TrafficMetricsMiddlewareTests(TestCase):
@@ -102,40 +236,64 @@ class TrafficMetricsMiddlewareTests(TestCase):
             created_by=self.author,
         )
 
-    def test_public_page_is_counted_but_admin_and_health_are_excluded(self):
-        self.client.get('/')
-        today = timezone.localdate()
-        self.assertEqual(TrafficDailyMetric.objects.get(day=today).page_views, 1)
-        self.assertEqual(
-            TrafficPageMetric.objects.get(day=today, path='/').page_views, 1
-        )
+    def test_browser_location_is_preferred_over_ip(self):
+        with patch('devlog.geoip._country_for_ip') as country_for_ip:
+            country_for_ip.return_value = {
+                'country_code': 'FR', 'country_name': 'France',
+                'latitude': 46.2, 'longitude': 2.2,
+            }
+            self.client.cookies['oj_analytics_consent'] = 'accepted'
+            self.client.cookies['oj_browser_location'] = '31.2,121.5'
+            self.client.get('/')
 
-        self.client.get(f'/problem/{self.problem.id}/?page=2')
-        self.assertEqual(
-            TrafficPageMetric.objects.get(day=today, path='/problem/:id/').page_views, 1
-        )
-
-        self.client.get('/admin/login/')
-        self.client.get('/health/')
-        self.assertEqual(TrafficDailyMetric.objects.get(day=today).page_views, 2)
-
-    @patch('devlog.geoip._country_for_ip')
-    def test_forwarded_public_ip_is_recorded_as_country(self, country_for_ip):
-        country_for_ip.return_value = {
-            'country_code': 'SG', 'country_name': 'Singapore',
-            'latitude': 1.35, 'longitude': 103.82,
-        }
-
-        self.client.get('/', HTTP_X_FORWARDED_FOR='43.160.219.206')
-
-        metric = TrafficCountryMetric.objects.get(
-            day=timezone.localdate(), country_code='SG'
+        metric = TrafficBrowserLocationMetric.objects.get(
+            day=timezone.localdate(), latitude='31.2', longitude='121.5'
         )
         self.assertEqual(metric.requests, 1)
-        country_for_ip.assert_called_once_with('43.160.219.206')
+        self.assertFalse(TrafficCountryMetric.objects.exists())
+        country_for_ip.assert_not_called()
+
+    def test_invalid_browser_location_falls_back_to_ip(self):
+        with patch('devlog.geoip._country_for_ip') as country_for_ip:
+            country_for_ip.return_value = {
+                'country_code': 'FR', 'country_name': 'France',
+                'latitude': 46.2, 'longitude': 2.2,
+            }
+            self.client.cookies['oj_browser_location'] = '31.234,121.5'
+            self.client.get('/')
+
+        self.assertTrue(TrafficCountryMetric.objects.filter(country_code='FR').exists())
+        self.assertFalse(TrafficBrowserLocationMetric.objects.exists())
+        country_for_ip.assert_called_once()
+
+    def test_record_browser_location_requires_consent_and_rounds_coordinates(self):
+        url = reverse('devlog:record_browser_location')
+        response = self.client.post(
+            url, data=json.dumps({'latitude': 31.234, 'longitude': 121.567}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 403)
+
+        self.client.cookies['oj_analytics_consent'] = 'accepted'
+        response = self.client.post(
+            url, data=json.dumps({'latitude': 31.234, 'longitude': 121.567}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        metric = TrafficBrowserLocationMetric.objects.get(day=timezone.localdate())
+        self.assertEqual((float(metric.latitude), float(metric.longitude)), (31.2, 121.6))
+        self.assertEqual(response.cookies['oj_browser_location'].value, '31.2,121.6')
+
+    def test_record_browser_location_rejects_invalid_coordinates(self):
+        self.client.cookies['oj_analytics_consent'] = 'accepted'
+        response = self.client.post(
+            reverse('devlog:record_browser_location'),
+            data=json.dumps({'latitude': 91, 'longitude': 181}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
 
 
-class GeoIpVisibilityTests(TestCase):
     def test_all_geojson_iso_codes_have_centroids(self):
         centroids = json.loads(Path('devlog/country_centroids.json').read_text())
         world = json.loads(Path('static/admin/data/world-countries.geojson').read_text())

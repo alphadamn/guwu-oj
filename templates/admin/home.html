@@ -1,6 +1,22 @@
 {% load i18n log simpletags %}
 
 <div id="home" class="oj-dashboard">
+    <section class="oj-dashboard__location-setting oj-dashboard__card" aria-label="地图定位设置">
+        <div class="oj-dashboard__card-header">
+            <div>
+                <h3 class="oj-dashboard__card-title"><i class="fas fa-location-dot"></i> 地图定位设置</h3>
+                <p class="oj-dashboard__card-subtitle">浏览器定位优先，定位失败时使用 IP；关闭后仅使用 IP。</p>
+            </div>
+        </div>
+        <label class="oj-dashboard__switch">
+            <input id="oj-dashboard-location-toggle" type="checkbox" checked>
+            <span class="oj-dashboard__switch-slider"></span>
+            <span class="oj-dashboard__switch-label">浏览器定位优先（失败时使用 IP）</span>
+        </label>
+        <input type="hidden" id="oj-dashboard-csrf" value="{{ csrf_token }}">
+        <p id="oj-dashboard-location-error" class="oj-dashboard__location-error" role="alert" hidden></p>
+    </section>
+
     <section id="oj-dashboard-content" class="oj-dashboard__loading" aria-live="polite">
         <i class="el-icon-loading"></i> 正在加载运营数据…
     </section>
@@ -13,3 +29,13 @@
     </el-card>
     {% endif %}
 </div>
+<style>
+    .oj-dashboard__location-setting { margin-bottom: 16px; }
+    .oj-dashboard__switch { display: inline-flex; align-items: center; gap: 10px; color: #52647b; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .oj-dashboard__switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .oj-dashboard__switch-slider { position: relative; width: 42px; height: 22px; border-radius: 999px; background: #cbd5e1; transition: background .18s ease; }
+    .oj-dashboard__switch-slider::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; content: ''; transition: transform .18s ease; }
+    .oj-dashboard__switch input:checked + .oj-dashboard__switch-slider { background: #2563eb; }
+    .oj-dashboard__switch input:checked + .oj-dashboard__switch-slider::after { transform: translateX(20px); }
+    .oj-dashboard__location-error { margin: 8px 0 0; color: #b42318; font-size: 13px; font-weight: 600; }
+</style>

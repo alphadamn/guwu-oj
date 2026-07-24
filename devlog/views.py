@@ -1,11 +1,13 @@
-import threading
+import json
+from decimal import Decimal, InvalidOperation
 
-from django.core.cache import cache as _djcache
 from django.core.mail import mail_managers
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_POST
 
 from problems.markdown_utils import render_markdown
@@ -19,7 +21,39 @@ from .models import (
     HealthSample,
     RegistrationConfig,
     ServiceComponent,
+    TrafficBrowserLocationMetric,
 )
+
+
+@csrf_protect
+@require_POST
+def record_browser_location(request):
+    """Store only a consented, one-decimal browser location point."""
+    if request.COOKIES.get('oj_analytics_consent') != 'accepted':
+        return JsonResponse({'detail': 'Analytics consent required'}, status=403)
+    from .models import SiteConfig
+    if not SiteConfig.browser_geolocation_is_enabled():
+        return JsonResponse({'detail': 'Browser geolocation is disabled'}, status=403)
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+        latitude = Decimal(str(payload['latitude'])).quantize(Decimal('0.1'))
+        longitude = Decimal(str(payload['longitude'])).quantize(Decimal('0.1'))
+    except (KeyError, TypeError, ValueError, InvalidOperation, json.JSONDecodeError):
+        return JsonResponse({'detail': 'Invalid coordinates'}, status=400)
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return JsonResponse({'detail': 'Invalid coordinates'}, status=400)
+    from django.db import IntegrityError
+    from django.db.models import F
+    today = timezone.localdate()
+    updated = TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
+    if not updated:
+        try:
+            TrafficBrowserLocationMetric.objects.create(day=today, latitude=latitude, longitude=longitude, requests=1)
+        except IntegrityError:
+            TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
+    response = JsonResponse({'ok': True})
+    response.set_cookie('oj_browser_location', f'{latitude},{longitude}', max_age=31536000, samesite='Lax')
+    return response
 
 
 # Cache keys written by the devlog module. ``clear_devlog_cache`` drops
@@ -29,6 +63,7 @@ DEVLOG_CACHE_KEYS = (
     'devlog_health_probe',
     'devlog_github_commits',
 )
+
 
 # 以下 prefix 是页面渲染（markdown、问题列表/通过率）、搜索、devlog、
 # 首页 stats 等所有视图级别写的缓存 key。"清除页面缓存" 按钮会用 Redis
@@ -527,22 +562,35 @@ def _do_refresh_auto_components(force_refresh=False, sync_alert=False):
                 detail_plain=f'异常：{e}',
                 sync=sync_alert,
             )
-        # redis / cache
+        # Redis: use the configured Redis client directly.  The Django cache
+        # wrapper can be unavailable or stale independently of a healthy Redis.
         try:
-            _djcache.set('devlog_health_probe', '1')
-            checks['cache'] = _djcache.get('devlog_health_probe') == '1'
-            checks['redis'] = checks['cache']
-            _djcache.delete('devlog_health_probe')
+            from django_redis import get_redis_connection
+            import uuid
+
+            redis_client = get_redis_connection('default')
+            redis_client.ping()
+            probe_key = f'devlog:health:{uuid.uuid4().hex}'
+            redis_client.set(probe_key, '1', ex=15)
+            checks['redis'] = redis_client.get(probe_key) in (b'1', '1')
+            redis_client.delete(probe_key)
         except BaseException as e:
-            checks['cache'] = False
             checks['redis'] = False
             _send_health_alert(
-                component_name='Redis / 缓存',
-                headline='缓存 (Redis) 写入或读取失败',
+                component_name='Redis',
+                headline='Redis 直接 Ping 或读写健康检查失败',
                 detail_html=f'<br/><strong>异常：</strong><code style="color:#991b1b;">{e}</code>',
                 detail_plain=f'异常：{e}',
                 sync=sync_alert,
             )
+
+        # Cache remains an independent application-level capability.
+        try:
+            _djcache.set('devlog_health_probe', '1', timeout=15)
+            checks['cache'] = _djcache.get('devlog_health_probe') == '1'
+            _djcache.delete('devlog_health_probe')
+        except BaseException:
+            checks['cache'] = False
         # judging system
         judge_ac_count = _check_judging_system()
         checks['judge'] = judge_ac_count

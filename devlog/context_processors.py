@@ -22,10 +22,12 @@ def oj_site(request):
         monaco_base = SiteConfig.monaco_base()
         bootstrap_urls = SiteConfig.bootstrap_urls()
         static_ttl = SiteConfig.static_cache_ttl()
+        browser_geolocation_enabled = SiteConfig.browser_geolocation_is_enabled()
     except Exception:
         monaco_base = _DEFAULT_MONACO_BASE
         bootstrap_urls = _DEFAULT_BOOTSTRAP
         static_ttl = _DEFAULT_STATIC_TTL
+        browser_geolocation_enabled = True
 
     if not bootstrap_urls or len(bootstrap_urls) < 3:
         bootstrap_urls = _DEFAULT_BOOTSTRAP
@@ -36,4 +38,5 @@ def oj_site(request):
         'OJ_BOOTSTRAP_ICONS': bootstrap_urls[1],
         'OJ_BOOTSTRAP_JS': bootstrap_urls[2],
         'OJ_STATIC_CACHE_TTL': int(static_ttl or _DEFAULT_STATIC_TTL),
+        'OJ_BROWSER_GEOLOCATION_ENABLED': browser_geolocation_enabled,
     }

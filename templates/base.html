@@ -140,6 +140,7 @@
             <div class="oj-analytics-consent__body">
                 <p id="oj-analytics-consent-text">我们会记录每日页面访问次数和页面类型，用于改进网站体验。</p>
                 <div class="oj-analytics-consent__note"><i class="bi bi-lock me-1"></i>不会保存原始 IP，也不会记录单次访问时间。分析默认开启，您可以拒绝。</div>
+                {% csrf_token %}
                 <div class="oj-analytics-consent__actions"><button type="button" id="oj-analytics-reject" class="btn btn-outline-secondary">拒绝</button><button type="button" id="oj-analytics-accept" class="btn btn-primary">接受并继续</button></div>
             </div>
         </section>
@@ -462,10 +463,27 @@
             var pair = item.split('='); return pair[0] === key ? decodeURIComponent(pair[1] || '') : found;
         }, '');
         if (!value) banner.classList.remove('d-none');
+        function csrfToken() {
+            var hidden = banner.querySelector('input[name="csrfmiddlewaretoken"]');
+            if (hidden && hidden.value) return hidden.value;
+            var match = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+            if (!match) return '';
+            try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
+        }
+        function askLocation() {
+            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || document.cookie.indexOf('oj_browser_location=') !== -1) return;
+            navigator.geolocation.getCurrentPosition(function (position) {
+                fetch('{% url "devlog:record_browser_location" %}', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken()}, body:JSON.stringify({latitude:position.coords.latitude, longitude:position.coords.longitude})})
+                    .then(function (response) { if (response.ok) window.location.reload(); })
+                    .catch(function () {});
+            }, function () {}, {enableHighAccuracy:false, timeout:10000, maximumAge:86400000});
+        }
+        askLocation();
         function decide(choice) {
             document.cookie = key + '=' + choice + '; Max-Age=31536000; Path=/; SameSite=Lax';
             banner.classList.add('d-none');
-            if (choice === 'accepted') window.location.reload();
+            value = choice;
+            if (choice === 'accepted') askLocation();
         }
         document.getElementById('oj-analytics-accept').addEventListener('click', function () { decide('accepted'); });
         document.getElementById('oj-analytics-reject').addEventListener('click', function () { decide('rejected'); });

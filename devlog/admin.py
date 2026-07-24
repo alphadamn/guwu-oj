@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from datetime import timedelta
+import json
 import os
 
 from django.contrib import admin
@@ -23,6 +24,7 @@ from .models import (
     RegistrationConfig,
     ServiceComponent,
     SiteConfig,
+    TrafficBrowserLocationMetric,
     TrafficCountryMetric,
     TrafficDailyMetric,
     TrafficPageMetric,
@@ -33,6 +35,8 @@ admin.site.site_header = '谷物 OJ 管理中心'
 admin.site.site_title = '谷物 OJ 后台'
 admin.site.index_title = '欢迎使用谷物 OJ — 快速查看系统运行状态与配置'
 admin.site.enable_nav_sidebar = True
+
+# Existing admin implementation follows.
 
 
 def env_generator_view(request):
@@ -124,14 +128,61 @@ def dashboard_metrics_view(request):
         .order_by('-requests', 'country_code')[:100]
     )
 
+    browser_rows = list(
+        TrafficBrowserLocationMetric.objects.filter(day__gte=start)
+        .values('latitude', 'longitude')
+        .annotate(requests=Sum('requests'))
+        .order_by('-requests', 'latitude', 'longitude')[:100]
+    )
+    if browser_rows and SiteConfig.browser_geolocation_is_enabled():
+        from devlog.geoip import country_for_coordinates
+
+        browser_locations = []
+        for row in browser_rows:
+            country = country_for_coordinates(row['latitude'], row['longitude']) or {
+                'country_code': 'BROWSER',
+                'country_name': '浏览器授权位置',
+            }
+            browser_locations.append({
+                **country,
+                'latitude': float(row['latitude']),
+                'longitude': float(row['longitude']),
+                'requests': row['requests'],
+            })
+        locations = browser_locations
+        location_source = 'browser'
+    else:
+        locations = country_rows
+        location_source = 'ip'
+
+    location_list = list(locations)
+    if location_source == 'browser':
+        grouped = {}
+        for item in locations:
+            key = item['country_code']
+            if key not in grouped:
+                grouped[key] = {
+                    'country_code': key,
+                    'country_name': item['country_name'],
+                    'requests': 0,
+                }
+            grouped[key]['requests'] += item['requests']
+        location_list = sorted(
+            grouped.values(),
+            key=lambda item: (-item['requests'], item['country_code']),
+        )[:100]
+
     from devlog.geoip import server_location
     destination = server_location()
 
     return JsonResponse({
         'labels': [day.strftime('%m-%d') for day in days],
         'traffic': traffic,
-        'location_has_data': bool(country_rows),
-        'locations': country_rows,
+        'location_has_data': bool(locations),
+        'locations': locations,
+        'location_list': location_list,
+        'location_source': location_source,
+        'location_mode': 'browser' if SiteConfig.browser_geolocation_is_enabled() else 'ip',
         'server_location': destination,
         'server_location_has_data': bool(destination),
         'traffic_has_data': bool(traffic_started_at),
@@ -152,6 +203,27 @@ def dashboard_metrics_view(request):
     })
 
 
+def dashboard_location_mode_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'detail': 'POST required'}, status=405)
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+        mode = payload.get('mode')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({'detail': 'Invalid location mode'}, status=400)
+    if mode not in {'browser', 'ip'}:
+        return JsonResponse({'detail': 'Invalid location mode'}, status=400)
+
+    config = SiteConfig.objects.order_by('pk').first()
+    if config is None:
+        config = SiteConfig(pk=1, browser_geolocation_enabled=mode == 'browser')
+        config.save()
+    else:
+        config.browser_geolocation_enabled = mode == 'browser'
+        config.save(update_fields=['browser_geolocation_enabled', 'updated_at'])
+    return JsonResponse({'mode': mode})
+
+
 _original_admin_get_urls = admin.site.get_urls
 
 
@@ -161,6 +233,11 @@ def _admin_get_urls():
             'dashboard-metrics/',
             admin.site.admin_view(dashboard_metrics_view),
             name='dashboard_metrics',
+        ),
+        path(
+            'dashboard-location-mode/',
+            admin.site.admin_view(dashboard_location_mode_view),
+            name='dashboard_location_mode',
         ),
         path(
             'env-generator/',

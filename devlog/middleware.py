@@ -120,11 +120,48 @@ class TrafficMetricsMiddleware:
                 ).update(page_views=F('page_views') + 1)
 
         country = None
+        browser_location = None
         try:
-            from devlog.geoip import country_for_request
-            country = country_for_request(request)
-        except Exception:
-            country = None
+            from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+            from devlog.models import SiteConfig, TrafficBrowserLocationMetric
+            if not SiteConfig.browser_geolocation_is_enabled():
+                raise ValueError('browser geolocation disabled')
+            raw_location = request.COOKIES.get('oj_browser_location', '')
+            raw_lat, raw_lon = raw_location.split(',', 1)
+            browser_location = (
+                Decimal(raw_lat).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP),
+                Decimal(raw_lon).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP),
+            )
+            # The cookie is client-controlled: accept only the same one-decimal
+            # representation emitted by record_browser_location().
+            if (
+                raw_lat != format(browser_location[0], '.1f')
+                or raw_lon != format(browser_location[1], '.1f')
+                or not (-90 <= browser_location[0] <= 90 and -180 <= browser_location[1] <= 180)
+            ):
+                browser_location = None
+        except (ValueError, TypeError, ArithmeticError, InvalidOperation):
+            browser_location = None
+        if browser_location:
+            latitude, longitude = browser_location
+            location_updated = TrafficBrowserLocationMetric.objects.filter(
+                day=today, latitude=latitude, longitude=longitude,
+            ).update(requests=F('requests') + 1)
+            if not location_updated:
+                try:
+                    TrafficBrowserLocationMetric.objects.create(
+                        day=today, latitude=latitude, longitude=longitude, requests=1,
+                    )
+                except IntegrityError:
+                    TrafficBrowserLocationMetric.objects.filter(
+                        day=today, latitude=latitude, longitude=longitude,
+                    ).update(requests=F('requests') + 1)
+        else:
+            try:
+                from devlog.geoip import country_for_request
+                country = country_for_request(request)
+            except Exception:
+                country = None
         if country:
             country_updated = TrafficCountryMetric.objects.filter(
                 day=today, country_code=country['country_code']

@@ -87,3 +87,13 @@
 .oj-dashboard__geo-point circle:first-child,
 .oj-dashboard__server-point circle,
 .oj-dashboard__request-packet { vector-effect: none; }
+
+.oj-dashboard__location-setting { margin-bottom: 16px; }
+.oj-dashboard__switch { display: inline-flex; align-items: center; gap: 10px; color: #52647b; cursor: pointer; font-size: 13px; font-weight: 600; }
+.oj-dashboard__switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.oj-dashboard__switch-slider { position: relative; width: 42px; height: 22px; border-radius: 999px; background: #cbd5e1; transition: background .18s ease; }
+.oj-dashboard__switch-slider::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .28); content: ''; transition: transform .18s ease; }
+.oj-dashboard__switch input:checked + .oj-dashboard__switch-slider { background: #2563eb; }
+.oj-dashboard__switch input:checked + .oj-dashboard__switch-slider::after { transform: translateX(20px); }
+.oj-dashboard__switch input:focus-visible + .oj-dashboard__switch-slider { outline: 3px solid rgba(37, 99, 235, .28); outline-offset: 2px; }
+.oj-dashboard__switch input:disabled + .oj-dashboard__switch-slider { opacity: .55; }

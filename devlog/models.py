@@ -61,6 +61,26 @@ class TrafficCountryMetric(models.Model):
 
     def __str__(self):
         return f'{self.day} {self.country_name}: {self.requests}'
+class TrafficBrowserLocationMetric(models.Model):
+    """Anonymous coarse browser-geolocation aggregate for the map."""
+
+    day = models.DateField(db_index=True, verbose_name='日期')
+    latitude = models.DecimalField(max_digits=4, decimal_places=1, verbose_name='粗略纬度')
+    longitude = models.DecimalField(max_digits=4, decimal_places=1, verbose_name='粗略经度')
+    requests = models.PositiveBigIntegerField(default=0, verbose_name='请求数')
+
+    class Meta:
+        verbose_name = '浏览器位置流量'
+        verbose_name_plural = '浏览器位置流量'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['day', 'latitude', 'longitude'],
+                name='unique_browser_location_day_point',
+            ),
+        ]
+        indexes = [models.Index(fields=['day', 'latitude', 'longitude'])]
+
+
 class UserTrafficMetric(models.Model):
     """Hourly normalized-route browsing count for a consented visitor."""
 
@@ -675,9 +695,24 @@ class SiteConfig(_Singleton):
         help_text='设置白噪声对 /static/ 文件的 Cache-Control max-age；默认 1 天',
     )
 
+    # Stored for the dashboard-home location source toggle, not exposed in the
+    # SiteConfig settings form.
+    browser_geolocation_enabled = models.BooleanField(
+        '优先使用浏览器定位', default=True,
+        help_text='开启后，在用户明确同意分析且浏览器授权时优先使用浏览器位置；否则使用 IP GeoLite2 定位。',
+    )
+
     class Meta:
         verbose_name = '站点配置'
         verbose_name_plural = '站点配置'
+
+    @classmethod
+    def browser_geolocation_is_enabled(cls):
+        try:
+            config = cls.objects.order_by('pk').first()
+        except Exception:
+            config = None
+        return True if config is None else config.browser_geolocation_enabled
 
     @classmethod
     def monaco_base(cls):

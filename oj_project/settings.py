@@ -28,10 +28,21 @@ ALLOWED_HOSTS = [
     if h.strip()
 ]
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://guwu.camluni.cn:3001",
-    # Add other origins if needed, e.g., "https://example.com"
-]
+_csrf_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '')
+CSRF_TRUSTED_ORIGINS = sorted({
+    origin.strip()
+    for origin in (
+        _csrf_origins.split(',')
+        + [
+            'http://guwu.camluni.cn',
+            'http://guwu.camluni.cn:3001',
+            'https://guwu.camluni.cn',
+            'https://guwu.camluni.cn:3001',
+        ]
+    )
+    if origin.strip()
+})
+
 
 INSTALLED_APPS = [
     # SimpleUI must be registered before django.contrib.admin

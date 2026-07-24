@@ -42,19 +42,66 @@ def _centroids():
         return {}
 
 
+@lru_cache(maxsize=1)
+def _world_features():
+    path = os.path.join(settings.BASE_DIR, 'static', 'admin', 'data', 'world-countries.geojson')
+    try:
+        with open(path, encoding='utf-8') as source:
+            return json.load(source).get('features', [])
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def _point_in_ring(longitude, latitude, ring):
+    inside = False
+    for index, point in enumerate(ring):
+        previous = ring[index - 1]
+        x1, y1 = point[0], point[1]
+        x2, y2 = previous[0], previous[1]
+        if (y1 > latitude) != (y2 > latitude):
+            crossing = (x2 - x1) * (latitude - y1) / ((y2 - y1) or 1e-12) + x1
+            if longitude < crossing:
+                inside = not inside
+    return inside
+
+
+def _point_in_polygon(longitude, latitude, polygon):
+    return bool(polygon) and _point_in_ring(longitude, latitude, polygon[0]) and not any(
+        _point_in_ring(longitude, latitude, hole) for hole in polygon[1:]
+    )
+
+
+def country_for_coordinates(latitude, longitude):
+    """Resolve coarse browser coordinates to the bundled country's ISO code."""
+    try:
+        latitude, longitude = float(latitude), float(longitude)
+    except (TypeError, ValueError):
+        return None
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        return None
+    for feature in _world_features():
+        properties = feature.get('properties') or {}
+        code = properties.get('ISO_A2_EH') or properties.get('ISO_A2')
+        if not isinstance(code, str) or len(code) != 2 or code == '-99':
+            continue
+        geometry = feature.get('geometry') or {}
+        polygons = [geometry.get('coordinates')] if geometry.get('type') == 'Polygon' else geometry.get('coordinates', [])
+        if any(_point_in_polygon(longitude, latitude, polygon) for polygon in polygons):
+            return {
+                'country_code': code,
+                'country_name': properties.get('NAME') or properties.get('NAME_EN') or code,
+            }
+    return None
+
+
 def _country_coordinates(code):
     """Return a stable map coordinate for a GeoLite2 country code."""
     coordinates = _centroids().get(code)
     if coordinates:
         return coordinates
-    # GeoLite2 can return codes for territories not represented by the map's
-    # country layer. Keep those requests visible as source markers rather than
-    # dropping the aggregate solely because a polygon is unavailable.
     return {
-        'MO': [113.54, 22.20],
-        'SG': [103.82, 1.35],
-        'HK': [114.17, 22.32],
-        'TW': [120.96, 23.70],
+        'MO': [113.54, 22.20], 'SG': [103.82, 1.35],
+        'HK': [114.17, 22.32], 'TW': [120.96, 23.70],
     }.get(code)
 
 
@@ -98,3 +145,4 @@ def server_location():
 def clear_reader_cache():
     _reader.cache_clear()
     _centroids.cache_clear()
+    _world_features.cache_clear()
