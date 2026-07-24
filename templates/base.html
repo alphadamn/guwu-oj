@@ -81,11 +81,69 @@
             margin-bottom: .35rem;
             border-radius: .5rem;
         }
-        .guwu-punishment-title-text { color: #2b2b2b; }
+        .oj-analytics-consent {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.25rem;
+            background: rgba(8, 20, 38, .72);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+        .oj-analytics-consent.d-none { display: none !important; }
+        .oj-analytics-consent__dialog {
+            width: min(100%, 32rem);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, .55);
+            border-radius: 1.25rem;
+            background: linear-gradient(145deg, #fff 0%, #f4f8ff 100%);
+            box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, .35);
+            animation: oj-analytics-pop .22s ease-out;
+        }
+        .oj-analytics-consent__header {
+            padding: 1.5rem 1.5rem 1.25rem;
+            color: #fff;
+            background: linear-gradient(135deg, #2563eb, #06b6d4);
+        }
+        .oj-analytics-consent__icon {
+            display: grid;
+            width: 3rem;
+            height: 3rem;
+            margin-bottom: .9rem;
+            place-items: center;
+            border-radius: 1rem;
+            color: #1d4ed8;
+            background: #fff;
+            font-size: 1.45rem;
+        }
+        .oj-analytics-consent__header h2 { margin: 0; font-size: 1.35rem; }
+        .oj-analytics-consent__body { padding: 1.4rem 1.5rem 1.5rem; color: #334155; }
+        .oj-analytics-consent__body p { margin-bottom: 1rem; line-height: 1.65; }
+        .oj-analytics-consent__note { margin-bottom: 1.25rem; padding: .75rem .9rem; border-radius: .75rem; color: #475569; background: #eaf2ff; font-size: .88rem; }
+        .oj-analytics-consent__actions { display: flex; gap: .65rem; justify-content: flex-end; flex-wrap: wrap; }
+        .oj-analytics-consent__actions button { min-width: 6.5rem; }
+        @keyframes oj-analytics-pop { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @media (max-width: 480px) { .oj-analytics-consent__actions { flex-direction: column-reverse; } .oj-analytics-consent__actions button { width: 100%; } }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
+    <div id="oj-analytics-consent" class="oj-analytics-consent d-none" role="dialog" aria-modal="true" aria-labelledby="oj-analytics-consent-title" aria-describedby="oj-analytics-consent-text">
+        <section class="oj-analytics-consent__dialog">
+            <header class="oj-analytics-consent__header">
+                <div class="oj-analytics-consent__icon" aria-hidden="true"><i class="bi bi-shield-check"></i></div>
+                <h2 id="oj-analytics-consent-title">改善网站体验</h2>
+            </header>
+            <div class="oj-analytics-consent__body">
+                <p id="oj-analytics-consent-text">我们会记录每日页面访问次数和页面类型，用于改进网站体验。</p>
+                <div class="oj-analytics-consent__note"><i class="bi bi-lock me-1"></i>不会保存原始 IP，也不会记录单次访问时间。分析默认开启，您可以拒绝。</div>
+                <div class="oj-analytics-consent__actions"><button type="button" id="oj-analytics-reject" class="btn btn-outline-secondary">拒绝</button><button type="button" id="oj-analytics-accept" class="btn btn-primary">接受并继续</button></div>
+            </div>
+        </section>
+    </div>
     <nav class="navbar navbar-expand-lg navbar-dark oj-navbar sticky-top">
         <div class="container">
             <a class="navbar-brand" href="{% url 'home' %}">
@@ -393,6 +451,24 @@
                 .catch(function (err) { error.textContent = err.message; error.classList.remove('d-none'); submit.disabled = false; });
         });
         new window.bootstrap.Modal(modal).show();
+    })();
+    </script>
+    <script>
+    (function () {
+        var banner = document.getElementById('oj-analytics-consent');
+        if (!banner) return;
+        var key = 'oj_analytics_consent';
+        var value = document.cookie.split('; ').reduce(function (found, item) {
+            var pair = item.split('='); return pair[0] === key ? decodeURIComponent(pair[1] || '') : found;
+        }, '');
+        if (!value) banner.classList.remove('d-none');
+        function decide(choice) {
+            document.cookie = key + '=' + choice + '; Max-Age=31536000; Path=/; SameSite=Lax';
+            banner.classList.add('d-none');
+            if (choice === 'accepted') window.location.reload();
+        }
+        document.getElementById('oj-analytics-accept').addEventListener('click', function () { decide('accepted'); });
+        document.getElementById('oj-analytics-reject').addEventListener('click', function () { decide('rejected'); });
     })();
     </script>
     {% block extra_js %}{% endblock %}

@@ -61,6 +61,42 @@ class TrafficCountryMetric(models.Model):
 
     def __str__(self):
         return f'{self.day} {self.country_name}: {self.requests}'
+class UserTrafficMetric(models.Model):
+    """Hourly normalized-route browsing count for a consented visitor."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.CASCADE, related_name='traffic_metrics',
+        verbose_name='用户',
+    )
+    session_key = models.CharField('匿名会话', max_length=40, null=True, blank=True)
+    hour = models.DateTimeField('小时', db_index=True)
+    path = models.CharField('页面路径', max_length=200)
+    page_views = models.PositiveBigIntegerField('访问次数', default=0)
+
+    class Meta:
+        verbose_name = '用户浏览流量'
+        verbose_name_plural = '用户浏览流量'
+        indexes = [
+            models.Index(fields=['user', 'hour']),
+            models.Index(fields=['session_key', 'hour']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'hour', 'path'], condition=models.Q(user__isnull=False),
+                name='unique_user_traffic_hour_path',
+            ),
+            models.UniqueConstraint(
+                fields=['session_key', 'hour', 'path'], condition=models.Q(session_key__isnull=False),
+                name='unique_session_traffic_hour_path',
+            ),
+        ]
+
+    def __str__(self):
+        owner = self.user or self.session_key or 'anonymous'
+        return f'{owner} {self.hour} {self.path}: {self.page_views}'
+
+
 class ServiceComponent(models.Model):
     """A single service component shown on the status page (left column)."""
 

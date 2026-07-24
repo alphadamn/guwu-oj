@@ -1,6 +1,9 @@
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.db.models import Count
+from django.http import JsonResponse
+from django.urls import path
+from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
 from .models import User, UserPunishment, IpBan
@@ -73,6 +76,7 @@ class UserAdmin(BaseUserAdmin):
         'date_joined',
         'solved_count_display',
         'submission_count_display',
+        'traffic_chart',
     )
     actions = [
         'activate_users', 'deactivate_users',
@@ -109,6 +113,7 @@ class UserAdmin(BaseUserAdmin):
                 'last_login',
                 'last_login_ip',
                 'date_joined',
+                'traffic_chart',
             ),
         }),
         (_('已通过题目'), {
@@ -130,6 +135,29 @@ class UserAdmin(BaseUserAdmin):
             ),
         }),
     )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [path('<path:user_id>/traffic-data/', self.admin_site.admin_view(self.traffic_data_view), name='users_user_traffic_data')]
+        return custom + urls
+
+    @admin.display(description='浏览频率图')
+    def traffic_chart(self, obj):
+        if not obj or not obj.pk:
+            return '保存用户后显示浏览频率。'
+        return format_html(
+            '<div id="oj-user-traffic-chart" data-user-id="{}" style="min-height:260px">加载中…</div>'
+            '<script src="/static/admin/js/user-traffic-chart.js?v=20260724-hourly"></script>', obj.pk,
+        )
+
+    def traffic_data_view(self, request, user_id):
+        from datetime import timedelta
+        from django.utils import timezone
+        from devlog.models import UserTrafficMetric
+        target = self.get_object(request, user_id)
+        start = timezone.now() - timedelta(days=90)
+        rows = list(UserTrafficMetric.objects.filter(user=target, hour__gte=start).values('hour', 'path', 'page_views').order_by('hour', 'path'))
+        return JsonResponse({'user': target.pk, 'rows': rows})
 
     # ------ Security overrides ----------------------------------------------
     def get_readonly_fields(self, request, obj=None):

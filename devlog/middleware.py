@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import uuid
 
 _CACHE_LOCK = threading.Lock()
 _CACHE_TTL = None  # type: int | None
@@ -48,6 +49,8 @@ class TrafficMetricsMiddleware:
     EXCLUDED_PREFIXES = (
         '/admin/', '/static/', '/media/', '/health/', '/metrics', '/devlog/', '/rq/',
     )
+    ANALYTICS_COOKIE = 'oj_analytics_id'
+    CONSENT_COOKIE = 'oj_analytics_consent'
     RETENTION_DAYS = 90
 
     def __init__(self, get_response):
@@ -57,13 +60,16 @@ class TrafficMetricsMiddleware:
         response = self.get_response(request)
         if self._should_record(request, response):
             self._record_page_view(request)
+            self._record_user_view(request, response)
         return response
 
     def _should_record(self, request, response):
         path = getattr(request, 'path', '') or ''
+        content_type = response.headers.get('Content-Type', '')
         return (
             request.method in ('GET', 'HEAD')
             and 200 <= response.status_code < 400
+            and 'text/html' in content_type
             and not any(path.startswith(prefix) for prefix in self.EXCLUDED_PREFIXES)
         )
 
@@ -137,6 +143,52 @@ class TrafficMetricsMiddleware:
             TrafficDailyMetric.objects.filter(day__lt=cutoff).delete()
             TrafficPageMetric.objects.filter(day__lt=cutoff).delete()
             TrafficCountryMetric.objects.filter(day__lt=cutoff).delete()
+    def _record_user_view(self, request, response):
+        """Record consented route counts without storing IPs or visit timestamps."""
+        if request.COOKIES.get(self.CONSENT_COOKIE) != 'accepted':
+            return
+        from datetime import timedelta
+        from django.db import IntegrityError, transaction
+        from django.db.models import F
+        from django.utils import timezone
+        from devlog.models import UserTrafficMetric
+
+        visitor_id = request.COOKIES.get(self.ANALYTICS_COOKIE)
+        user = request.user if getattr(request.user, 'is_authenticated', False) else None
+        if not user and not visitor_id:
+            visitor_id = uuid.uuid4().hex
+            response.set_cookie(self.ANALYTICS_COOKIE, visitor_id, max_age=31536000, samesite='Lax')
+        if not user and not visitor_id:
+            return
+        hour = timezone.localtime().replace(minute=0, second=0, microsecond=0)
+        path = self._normalized_path(request)
+        try:
+            with transaction.atomic():
+                if user:
+                    for row in UserTrafficMetric.objects.filter(session_key=visitor_id, user__isnull=True):
+                        target, merged = UserTrafficMetric.objects.get_or_create(
+                            user=user, hour=row.hour, path=row.path,
+                            defaults={'page_views': row.page_views},
+                        )
+                        if not merged:
+                            UserTrafficMetric.objects.filter(pk=target.pk).update(
+                                page_views=F('page_views') + row.page_views,
+                            )
+                    UserTrafficMetric.objects.filter(session_key=visitor_id, user__isnull=True).delete()
+                    lookup = {'user': user, 'hour': hour, 'path': path}
+                else:
+                    lookup = {'session_key': visitor_id, 'hour': hour, 'path': path}
+                metric, created = UserTrafficMetric.objects.get_or_create(
+                    defaults={'page_views': 1}, **lookup,
+                )
+                if not created:
+                    UserTrafficMetric.objects.filter(pk=metric.pk).update(
+                        page_views=F('page_views') + 1,
+                    )
+            cutoff = hour - timedelta(days=self.RETENTION_DAYS)
+            UserTrafficMetric.objects.filter(hour__lt=cutoff).delete()
+        except (IntegrityError, ValueError):
+            return
 
 
 class StaticCacheHeaders:
