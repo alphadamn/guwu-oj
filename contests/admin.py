@@ -64,6 +64,7 @@ class ContestEnrollmentAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+@admin.register(ContestProblem)
 class ContestProblemAdmin(admin.ModelAdmin):
     list_display = ['title', 'contest', 'order', 'difficulty', 'created_by', 'published_problem']
     list_filter = ['contest', 'difficulty']
