@@ -5,6 +5,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="google-site-verification" content="K5qhC6gvicx9Z60kQOnWbsvuAhwew9_2CKT63bAa6dM" />
     <title>{% block title %}谷物 OJ{% endblock %}</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.ico">
@@ -471,12 +472,21 @@
             try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
         }
         function askLocation() {
-            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || document.cookie.indexOf('oj_browser_location=') !== -1) return;
+            var asked = false;
+            try { asked = window.sessionStorage.getItem('oj_geo_done') === '1'; } catch (e) { asked = false; }
+            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || asked || document.cookie.indexOf('oj_browser_location=') !== -1) return;
             navigator.geolocation.getCurrentPosition(function (position) {
                 fetch('{% url "devlog:record_browser_location" %}', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken()}, body:JSON.stringify({latitude:position.coords.latitude, longitude:position.coords.longitude})})
-                    .then(function (response) { if (response.ok) window.location.reload(); })
+                    .then(function (response) {
+                        // Mark the attempt before reloading: if the cookie is not
+                        // persisted we must not re-prompt and reload forever.
+                        try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
+                        if (response.ok) window.location.reload();
+                    })
                     .catch(function () {});
-            }, function () {}, {enableHighAccuracy:false, timeout:10000, maximumAge:86400000});
+            }, function () {
+                try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
+            }, {enableHighAccuracy:false, timeout:10000, maximumAge:86400000});
         }
         askLocation();
         function decide(choice) {

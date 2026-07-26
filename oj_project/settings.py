@@ -506,18 +506,18 @@ if _spsh:
         pass
 
 # Only apply the "secure" cookies & HSTS when outside of dev/test.
-#if not (TEST_MODE or DEBUG):
-#    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
-#    CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
-#    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'true').lower() in ('1', 'true', 'yes')
-#    try:
-#        SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '31536000'))
-#    except ValueError:
-#        SECURE_HSTS_SECONDS = 31536000
-#    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'true').lower() in ('1', 'true', 'yes')
-#    SECURE_HSTS_PRELOAD = os.environ.get('SECURE_HSTS_PRELOAD', 'true').lower() in ('1', 'true', 'yes')
-#    SECURE_BROWSER_XSS_FILTER = os.environ.get('SECURE_BROWSER_XSS_FILTER', 'true').lower() in ('1', 'true', 'yes')
-#    SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get('SECURE_CONTENT_TYPE_NOSNIFF', 'true').lower() in ('1', 'true', 'yes')
+if not (TEST_MODE or DEBUG):
+   SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
+   CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
+   SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'true').lower() in ('1', 'true', 'yes')
+   try:
+       SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '31536000'))
+   except ValueError:
+       SECURE_HSTS_SECONDS = 31536000
+   SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'true').lower() in ('1', 'true', 'yes')
+   SECURE_HSTS_PRELOAD = os.environ.get('SECURE_HSTS_PRELOAD', 'true').lower() in ('1', 'true', 'yes')
+   SECURE_BROWSER_XSS_FILTER = os.environ.get('SECURE_BROWSER_XSS_FILTER', 'true').lower() in ('1', 'true', 'yes')
+   SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get('SECURE_CONTENT_TYPE_NOSNIFF', 'true').lower() in ('1', 'true', 'yes')
 
 # A tiny helper used by ``users/captcha.py::_client_ip`` and by
 # ``users/middleware.py::EnforcementMiddleware`` to detect internal proxy

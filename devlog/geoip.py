@@ -71,8 +71,14 @@ def _point_in_polygon(longitude, latitude, polygon):
     )
 
 
-def country_for_coordinates(latitude, longitude):
-    """Resolve coarse browser coordinates to the bundled country's ISO code."""
+@lru_cache(maxsize=4096)
+def _country_for_coordinates(latitude, longitude):
+    """Resolve coarse browser coordinates to the bundled country's ISO code.
+
+    Inputs are rounded to one decimal degree upstream, so the cache hit rate is
+    high; without it every dashboard render re-scans the whole world GeoJSON
+    once per aggregated point.
+    """
     try:
         latitude, longitude = float(latitude), float(longitude)
     except (TypeError, ValueError):
@@ -92,6 +98,21 @@ def country_for_coordinates(latitude, longitude):
                 'country_name': properties.get('NAME') or properties.get('NAME_EN') or code,
             }
     return None
+
+
+def country_for_coordinates(latitude, longitude):
+    """Cached point-in-country lookup for coarse browser coordinates.
+
+    Coordinates arrive as ``Decimal`` or ``float`` rounded to one decimal
+    degree; normalising to a rounded float keeps both callers on the same cache
+    key.  A copy is returned so callers cannot mutate the cached value.
+    """
+    try:
+        key = (round(float(latitude), 1), round(float(longitude), 1))
+    except (TypeError, ValueError):
+        return None
+    result = _country_for_coordinates(*key)
+    return dict(result) if result else None
 
 
 def _country_coordinates(code):
@@ -146,3 +167,4 @@ def clear_reader_cache():
     _reader.cache_clear()
     _centroids.cache_clear()
     _world_features.cache_clear()
+    _country_for_coordinates.cache_clear()

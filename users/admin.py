@@ -1,7 +1,8 @@
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.db.models import Count
-from django.http import JsonResponse
+from django.core.exceptions import PermissionDenied
+from django.db.models import Count, Sum
+from django.http import Http404, JsonResponse
 from django.urls import path
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
@@ -138,7 +139,7 @@ class UserAdmin(BaseUserAdmin):
 
     def get_urls(self):
         urls = super().get_urls()
-        custom = [path('<path:user_id>/traffic-data/', self.admin_site.admin_view(self.traffic_data_view), name='users_user_traffic_data')]
+        custom = [path('<int:user_id>/traffic-data/', self.admin_site.admin_view(self.traffic_data_view), name='users_user_traffic_data')]
         return custom + urls
 
     @admin.display(description='浏览频率图')
@@ -147,16 +148,27 @@ class UserAdmin(BaseUserAdmin):
             return '保存用户后显示浏览频率。'
         return format_html(
             '<div id="oj-user-traffic-chart" data-user-id="{}" style="min-height:260px">加载中…</div>'
-            '<script src="/static/admin/js/user-traffic-chart.js?v=20260724-hourly"></script>', obj.pk,
+            '<script src="/static/admin/js/user-traffic-chart.js?v=20260726-hourly-agg"></script>', obj.pk,
         )
 
     def traffic_data_view(self, request, user_id):
         from datetime import timedelta
         from django.utils import timezone
         from devlog.models import UserTrafficMetric
+        # ``admin_view`` only enforces is_staff; require the model permission so
+        # a low-privilege staff account cannot read another user's history.
+        if not self.has_view_permission(request):
+            raise PermissionDenied
         target = self.get_object(request, user_id)
+        if target is None:
+            raise Http404('User does not exist')
         start = timezone.now() - timedelta(days=90)
-        rows = list(UserTrafficMetric.objects.filter(user=target, hour__gte=start).values('hour', 'path', 'page_views').order_by('hour', 'path'))
+        # Aggregate per hour server-side: the chart only plots hourly totals and
+        # per-route detail does not need to reach the browser.
+        rows = list(
+            UserTrafficMetric.objects.filter(user=target, hour__gte=start)
+            .values('hour').annotate(page_views=Sum('page_views')).order_by('hour')
+        )
         return JsonResponse({'user': target.pk, 'rows': rows})
 
     # ------ Security overrides ----------------------------------------------

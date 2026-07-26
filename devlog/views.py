@@ -26,6 +26,19 @@ from .models import (
 )
 
 
+BROWSER_LOCATION_POSTS_PER_IP_PER_DAY = 20
+
+
+def _browser_location_rate_ok(request) -> bool:
+    """Cap browser-location submissions per client IP per day."""
+    try:
+        from users.captcha import _client_ip, _increment_rate_counter
+        key = f'oj:browser-location:{_client_ip(request)}:{timezone.localdate().isoformat()}'
+        return _increment_rate_counter(key, BROWSER_LOCATION_POSTS_PER_IP_PER_DAY, 86400)
+    except Exception:
+        return True
+
+
 @csrf_protect
 @require_POST
 def record_browser_location(request):
@@ -35,6 +48,10 @@ def record_browser_location(request):
     from .models import SiteConfig
     if not SiteConfig.browser_geolocation_is_enabled():
         return JsonResponse({'detail': 'Browser geolocation is disabled'}, status=403)
+    # The consent cookie is client-controlled, so throttle per IP to stop a
+    # single client from flooding the admin map aggregate.
+    if not _browser_location_rate_ok(request):
+        return JsonResponse({'detail': 'Too many requests'}, status=429)
     try:
         payload = json.loads(request.body.decode('utf-8'))
         latitude = Decimal(str(payload['latitude'])).quantize(Decimal('0.1'))
@@ -53,7 +70,10 @@ def record_browser_location(request):
         except IntegrityError:
             TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
     response = JsonResponse({'ok': True})
-    response.set_cookie('oj_browser_location', f'{latitude},{longitude}', max_age=31536000, samesite='Lax')
+    response.set_cookie(
+        'oj_browser_location', f'{latitude},{longitude}', max_age=31536000,
+        samesite='Lax', secure=request.is_secure(),
+    )
     return response
 
 

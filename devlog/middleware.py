@@ -66,9 +66,11 @@ class TrafficMetricsMiddleware:
     def _should_record(self, request, response):
         path = getattr(request, 'path', '') or ''
         content_type = response.headers.get('Content-Type', '')
+        # Redirects also carry ``text/html``; counting them inflates page views
+        # with pre-redirect paths (login flows, CommonMiddleware slash-append).
         return (
-            request.method in ('GET', 'HEAD')
-            and 200 <= response.status_code < 400
+            request.method == 'GET'
+            and 200 <= response.status_code < 300
             and 'text/html' in content_type
             and not any(path.startswith(prefix) for prefix in self.EXCLUDED_PREFIXES)
         )
@@ -88,7 +90,12 @@ class TrafficMetricsMiddleware:
         from django.db.models import F
         from django.utils import timezone
 
-        from devlog.models import TrafficCountryMetric, TrafficDailyMetric, TrafficPageMetric
+        from devlog.models import (
+            TrafficBrowserLocationMetric,
+            TrafficCountryMetric,
+            TrafficDailyMetric,
+            TrafficPageMetric,
+        )
 
         today = timezone.localdate()
         updated = TrafficDailyMetric.objects.filter(day=today).update(
@@ -123,7 +130,7 @@ class TrafficMetricsMiddleware:
         browser_location = None
         try:
             from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-            from devlog.models import SiteConfig, TrafficBrowserLocationMetric
+            from devlog.models import SiteConfig
             if not SiteConfig.browser_geolocation_is_enabled():
                 raise ValueError('browser geolocation disabled')
             raw_location = request.COOKIES.get('oj_browser_location', '')
@@ -180,6 +187,7 @@ class TrafficMetricsMiddleware:
             TrafficDailyMetric.objects.filter(day__lt=cutoff).delete()
             TrafficPageMetric.objects.filter(day__lt=cutoff).delete()
             TrafficCountryMetric.objects.filter(day__lt=cutoff).delete()
+            TrafficBrowserLocationMetric.objects.filter(day__lt=cutoff).delete()
     def _record_user_view(self, request, response):
         """Record consented route counts without storing IPs or visit timestamps."""
         if request.COOKIES.get(self.CONSENT_COOKIE) != 'accepted':
@@ -194,9 +202,10 @@ class TrafficMetricsMiddleware:
         user = request.user if getattr(request.user, 'is_authenticated', False) else None
         if not user and not visitor_id:
             visitor_id = uuid.uuid4().hex
-            response.set_cookie(self.ANALYTICS_COOKIE, visitor_id, max_age=31536000, samesite='Lax')
-        if not user and not visitor_id:
-            return
+            response.set_cookie(
+                self.ANALYTICS_COOKIE, visitor_id, max_age=31536000,
+                samesite='Lax', secure=request.is_secure(),
+            )
         hour = timezone.localtime().replace(minute=0, second=0, microsecond=0)
         path = self._normalized_path(request)
         try:
@@ -222,8 +231,11 @@ class TrafficMetricsMiddleware:
                     UserTrafficMetric.objects.filter(pk=metric.pk).update(
                         page_views=F('page_views') + 1,
                     )
-            cutoff = hour - timedelta(days=self.RETENTION_DAYS)
-            UserTrafficMetric.objects.filter(hour__lt=cutoff).delete()
+            # Prune only when a new bucket appears; this table is the largest of
+            # the analytics tables and a scan on every request is wasteful.
+            if created:
+                cutoff = hour - timedelta(days=self.RETENTION_DAYS)
+                UserTrafficMetric.objects.filter(hour__lt=cutoff).delete()
         except (IntegrityError, ValueError):
             return
 
@@ -239,10 +251,9 @@ class StaticCacheHeaders:
         path = getattr(request, 'path', '') or ''
         if path.startswith('/static/') or path == '/static' or path.startswith('static/'):
             filename = os.path.basename(path)
-            if _MANIFEST_HASH_RE.search(filename) or '.min.' in filename:
-                immutable = True
-            else:
-                immutable = False
+            # Only manifest-hashed filenames are content-addressed and therefore
+            # safe to mark immutable; a plain ``*.min.js`` changes in place.
+            immutable = bool(_MANIFEST_HASH_RE.search(filename))
 
             ttl = _read_ttl()
             if immutable:
