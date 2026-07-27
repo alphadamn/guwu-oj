@@ -63,7 +63,7 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get install xvfb
       - name: Run migrations
-        run: venv/bin/python manage.py migrate
+        run: venv/bin/python manage.py makemigrations && venv/bin/python manage.py migrate
 
       - name: Direct Redis connection test (bypass Django)
         run: |
