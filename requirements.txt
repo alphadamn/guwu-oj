@@ -30,4 +30,4 @@ webdriver-manager>=4.0.0
 django-crontab
 django-simpleui
 redis
-cryptography>=42.0.0
+cryptography>=49.0.0
