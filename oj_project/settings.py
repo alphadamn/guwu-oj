@@ -401,6 +401,15 @@ if not DEMO_MODE:
                 RQ_QUEUES[machine['queue']] = _rq_queue_entry(machine)
 
     RQ = {
+        # Pin enqueue timing explicitly rather than relying on the default,
+        # which changed in django-rq 4.0 (AUTOCOMMIT/'auto' -> 'on_db_commit').
+        # 'on_db_commit' keeps the judge task from starting before the
+        # Submission row is committed and visible to the worker.
+        # django-rq 2.x ignores this key and always enqueues immediately;
+        # django-rq 4+ returns None from enqueue() in this mode when inside a
+        # transaction, so callers must not assume a Job is returned
+        # (see submissions/judge_queue.py).
+        'COMMIT_MODE': 'on_db_commit',
         'exception_handler': 'django_rq.handlers.sentry',
     }
 else:

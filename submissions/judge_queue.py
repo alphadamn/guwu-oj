@@ -48,9 +48,12 @@ def enqueue_judge(submission_id):
                 logger.warning('No healthy judge machines available, falling back to default queue')
 
         job = enqueue(judge_submission_task, submission_id)
+        # django-rq >= 4 returns None when the enqueue is deferred to the
+        # database commit (COMMIT_MODE 'on_db_commit') or to the end of the
+        # request ('request_finished'). The job is still queued, just later.
         logger.info(
             'Enqueued judge task for submission %s to default queue, job ID: %s',
-            submission_id, job.id,
+            submission_id, getattr(job, 'id', 'deferred'),
         )
         return job
     except Exception:
