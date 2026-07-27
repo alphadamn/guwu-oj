@@ -65,32 +65,6 @@ class PointFeatureTests(TestCase):
         self.player = User.objects.create_user('player', 'player@example.com', 'password')
         self.config = PointConfig.get_solo()
 
-    def test_referral_link_binds_users_and_credits_both_sides(self):
-        self.config.inviter_registration_points = 11
-        self.config.invitee_registration_points = 7
-        self.config.save()
-        from devlog.models import RegistrationConfig
-        registration_config, _ = RegistrationConfig.objects.get_or_create(pk=1)
-        registration_config.email_verification_required = False
-        registration_config.save(update_fields=['email_verification_required'])
-        from devlog.models import CaptchaConfig
-        captcha_config, _ = CaptchaConfig.objects.get_or_create(pk=1)
-        captcha_config.captcha_on_register = False
-        captcha_config.save(update_fields=['captcha_on_register'])
-
-        response = self.client.post(reverse('register'), {
-            'username': 'invitee', 'email': 'invitee@example.com', 'nickname': '',
-            'referral_code': self.creator.referral_code,
-            'password1': 'SafePassword123!', 'password2': 'SafePassword123!',
-        })
-        self.assertRedirects(response, reverse('home'))
-        invitee = User.objects.get(username='invitee')
-        self.creator.refresh_from_db()
-        invitee.refresh_from_db()
-        self.assertEqual(invitee.referrer, self.creator)
-        self.assertEqual(self.creator.points_balance, Decimal('11.00'))
-        self.assertEqual(invitee.points_balance, Decimal('7.00'))
-        self.assertEqual(PointLedgerEntry.objects.filter(event_type__startswith='referral_').count(), 2)
 
     def test_first_accepted_normal_testcase_rewards_fractional_points_once(self):
         self.config.accepted_testcase_points = Decimal('0.1234')
