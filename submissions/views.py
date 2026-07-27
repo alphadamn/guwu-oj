@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404, JsonResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
 from django_ratelimit.decorators import ratelimit
 
@@ -99,6 +100,7 @@ def submit_solution(request, problem_id):
     })
 
 
+@never_cache
 @login_required
 def submission_detail(request, submission_id):
     submission = get_object_or_404(
@@ -128,6 +130,7 @@ def submission_detail(request, submission_id):
     })
 
 
+@never_cache
 @login_required
 @require_GET
 def submission_status_api(request, submission_id):
@@ -167,12 +170,14 @@ def submission_status_api(request, submission_id):
     })
 
 
+@never_cache
 @login_required
 def submission_list(request):
     submissions = Submission.objects.filter(user=request.user).select_related('problem', 'contest_problem__contest', 'user')
     return render(request, 'submissions/list.html', {'submissions': submissions})
 
 
+@never_cache
 @login_required
 def all_submissions(request):
     submissions = Submission.objects.select_related(
