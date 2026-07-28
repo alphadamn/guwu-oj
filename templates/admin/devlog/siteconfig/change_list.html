@@ -1,0 +1,30 @@
+{% extends "admin/change_list.html" %}
+
+{% comment %}
+SimpleUI does not render this list as HTML. Its change_list.html ends with:
+
+    $(".object-tools").hide().find('li a').each(function () {
+        _action.exts.push({name: $(this).text(), url: $(this).attr('href')})
+    })
+
+so the <ul> is hidden and the toolbar is rebuilt from <a> elements only, using
+just their text and href. Anything that is not a link (a <form>, a <button>)
+disappears silently. Both shortcuts must therefore be plain <a href> GETs, and
+any state-changing work has to happen on a confirmation page behind them.
+{% endcomment %}
+
+{% block object-tools-items %}
+    {% if request.user.is_superuser %}
+        <li>
+            <a href="{% url 'admin:devlog_siteconfig_database_backup' %}">
+                备份当前数据库
+            </a>
+        </li>
+        <li>
+            <a href="{% url 'admin:devlog_siteconfig_database_restore' %}">
+                从备份导入数据库
+            </a>
+        </li>
+    {% endif %}
+    {{ block.super }}
+{% endblock %}

@@ -20,7 +20,7 @@ EXCLUDED_DIRS = {
 }
 
 # File suffixes / names we skip to avoid noise.
-EXCLUDED_SUFFIXES = ('.pyc', '.pyo', '.log', '.sqlite3', '.swp', '.tmp')
+EXCLUDED_SUFFIXES = ('.pyc', '.pyo', '.log', '.sqlite3', '.swp', '.tmp', '.env')
 
 # Skip hashing very large files; they are still tracked by size + mtime.
 MAX_HASH_BYTES = 5 * 1024 * 1024

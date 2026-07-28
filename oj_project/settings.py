@@ -454,6 +454,18 @@ else:
         }
     }
 
+# Hostname presented to libpq for TLS certificate verification by the
+# ``pg_dump``/``psql`` CLI used for admin database backup and restore.
+#
+# Django's bundled libpq (psycopg2 ships 17.x) matches IP addresses in a
+# certificate's subjectAltName, but libpq only gained that ability in
+# PostgreSQL 16. A PostgreSQL 14/15 CLI therefore rejects a certificate that
+# Django accepts when ``DB_HOST`` is an IP address and ``DB_SSLMODE`` is
+# ``verify-full``. Setting this to the DNS name in the server certificate lets
+# the CLI verify the name while still connecting to ``DB_HOST`` via
+# ``hostaddr``, so verification stays fully enabled.
+DB_TLS_HOSTNAME = os.environ.get('DB_TLS_HOSTNAME', '')
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',

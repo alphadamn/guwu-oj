@@ -1,0 +1,79 @@
+{% extends "admin/base_site.html" %}
+
+{% block title %}从备份导入数据库{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">首页</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:devlog_siteconfig_changelist' %}">站点配置</a>
+    &rsaquo; 从备份导入数据库
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>从备份导入数据库</h1>
+
+<p style="max-width: 720px;">
+    导入会<strong>覆盖当前数据库的全部内容</strong>，此操作不可撤销。建议先执行一次“备份当前数据库”，
+    并在低峰期操作。导入完成后可能需要重新登录。
+</p>
+
+{% if directory_error %}
+<p class="errornote">{{ directory_error }}</p>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" style="max-width: 720px; margin-top: 1.5rem;">
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+        <h2>导入来源</h2>
+
+        <div class="form-row">
+            <label style="display: block; font-weight: bold;">
+                <input type="radio" name="source" value="path" checked> 从服务器指定路径导入
+            </label>
+            <p class="help">备份目录：<code>{{ backup_dir|default:"（不可用）" }}</code></p>
+            {% if backups %}
+            <select name="filename" style="max-width: 100%; padding: 6px;">
+                {% for item in backups %}
+                <option value="{{ item.name }}">
+                    {{ item.name }} — {{ item.size_display }} — {{ item.modified|date:"Y-m-d H:i" }}
+                </option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <p class="help">该目录下暂无可用备份文件（仅识别扩展名 {{ allowed_suffixes }}）。</p>
+            {% endif %}
+        </div>
+
+        <div class="form-row">
+            <label style="display: block; font-weight: bold;">
+                <input type="radio" name="source" value="upload" {% if not upload_allowed %}disabled{% endif %}>
+                从上传的文件导入
+            </label>
+            {% if upload_allowed %}
+            <input type="file" name="file" accept="{{ accept_attr }}">
+            <p class="help">最大 {{ max_upload_mb }} MB，扩展名需为 {{ allowed_suffixes }}。</p>
+            {% else %}
+            <p class="help">当前为非 HTTPS 访问，出于传输安全考虑已禁用上传导入，请使用服务器路径导入。</p>
+            {% endif %}
+        </div>
+    </fieldset>
+
+    <fieldset class="module aligned">
+        <h2>确认</h2>
+        <div class="form-row">
+            <label>
+                <input type="checkbox" name="confirm" value="1">
+                我已了解导入会覆盖当前数据库的全部数据，且此操作不可撤销。
+            </label>
+        </div>
+    </fieldset>
+
+    <div class="submit-row">
+        <input type="submit" value="开始导入" class="default" style="background:#ba2121;">
+        <a href="{% url 'admin:devlog_siteconfig_changelist' %}" class="closelink">取消</a>
+    </div>
+</form>
+{% endblock %}

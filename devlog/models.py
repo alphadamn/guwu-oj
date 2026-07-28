@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -702,9 +704,49 @@ class SiteConfig(_Singleton):
         help_text='开启后，在用户明确同意分析且浏览器授权时优先使用浏览器位置；否则使用 IP GeoLite2 定位。',
     )
 
+    # ---------- 数据库备份 ----------
+    database_backup_dir = models.CharField(
+        '数据库备份目录（服务器路径）', max_length=500, blank=True, default='',
+        help_text='非 HTTPS 访问时，备份文件写入该目录；导入时也从该目录列出可选备份。'
+                  '留空则使用项目下的 backups/database/。目录必须可被运行 Django 的用户读写。',
+    )
+
     class Meta:
         verbose_name = '站点配置'
         verbose_name_plural = '站点配置'
+
+    DEFAULT_BACKUP_SUBPATH = ('backups', 'database')
+
+    def backup_directory(self):
+        """Absolute path of the configured (or default) backup directory."""
+        configured = (self.database_backup_dir or '').strip()
+        if configured:
+            return Path(configured).expanduser()
+        return Path(settings.BASE_DIR).joinpath(*self.DEFAULT_BACKUP_SUBPATH)
+
+    @classmethod
+    def resolved_backup_directory(cls):
+        """Backup directory for the active singleton row, default if absent.
+
+        Legacy deployments may hold the single row at a non-1 pk, so read the
+        lowest-pk row rather than assuming pk=1.
+        """
+        config = cls.objects.order_by('pk').first()
+        if config is not None:
+            return config.backup_directory()
+        return Path(settings.BASE_DIR).joinpath(*cls.DEFAULT_BACKUP_SUBPATH)
+
+    @classmethod
+    def resolved_backup_directory(cls):
+        from django.conf import settings
+
+        try:
+            config = cls.objects.order_by('pk').first()
+        except Exception:
+            config = None
+        if config is not None:
+            return config.backup_directory()
+        return Path(settings.BASE_DIR) / 'backups' / 'database'
 
     @classmethod
     def browser_geolocation_is_enabled(cls):

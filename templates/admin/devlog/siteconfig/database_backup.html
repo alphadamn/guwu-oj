@@ -1,0 +1,60 @@
+{% extends "admin/base_site.html" %}
+
+{% block title %}备份当前数据库{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">首页</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:devlog_siteconfig_changelist' %}">站点配置</a>
+    &rsaquo; 备份当前数据库
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>备份当前数据库</h1>
+
+{% if is_secure %}
+<p style="max-width: 720px;">
+    当前为 HTTPS 访问，点击下面的按钮会立即导出数据库并<strong>直接下载到你的浏览器</strong>，
+    服务器上不会留下备份文件。
+</p>
+{% else %}
+<p style="max-width: 720px;">
+    当前为非 HTTPS 访问，点击下面的按钮会导出数据库并<strong>保存到服务器备份目录</strong>，
+    不会通过明文连接传输备份内容。
+</p>
+{% endif %}
+
+<p style="max-width: 720px;">
+    导出期间数据库仍可正常使用，但大库导出会占用一定 I/O，建议在低峰期操作。
+</p>
+
+{% if directory_error %}
+<p class="errornote">{{ directory_error }}</p>
+{% endif %}
+
+<form method="post" style="max-width: 720px; margin-top: 1.5rem;">
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+        <h2>备份去向</h2>
+        <div class="form-row">
+            {% if is_secure %}
+            <p class="help">浏览器下载（文件名形如 <code>{{ example_filename }}</code>）。</p>
+            {% else %}
+            <p class="help">服务器目录：<code>{{ backup_dir|default:"（不可用）" }}</code></p>
+            <p class="help">
+                该目录可在“站点配置”的“数据库备份”一栏中修改；留空则使用项目下的
+                <code>backups/database/</code>。
+            </p>
+            {% endif %}
+        </div>
+    </fieldset>
+
+    <div class="submit-row">
+        <input type="submit" value="开始备份" class="default">
+        <a href="{% url 'admin:devlog_siteconfig_changelist' %}" class="closelink">取消</a>
+    </div>
+</form>
+{% endblock %}

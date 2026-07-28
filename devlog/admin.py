@@ -1,15 +1,19 @@
 from collections import OrderedDict
 from datetime import timedelta
+from pathlib import Path
 import json
 import os
+import shutil
 
-from django.contrib import admin
+from django.conf import settings
+from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied
 from django.db import connection
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
-from django.http import JsonResponse
-from django.shortcuts import render
-from django.urls import path
+from django.http import FileResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import path, reverse
 from django.utils import timezone
 
 from .models import (
@@ -764,6 +768,12 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
                             '浏览器 Cache-Control: max-age 秒数。默认 86400（1 天）；'
                             '带有内容 hash 的文件会自动提升为 1 年 immutable。修改后约 30 秒生效。'},
         ),
+        (
+            '数据库备份',
+            {'fields': ('database_backup_dir',),
+             'description': '通过 HTTP（非 HTTPS）访问时，“备份当前数据库”会把备份文件写入该目录，'
+                            '“从备份导入”也从该目录列出候选文件。'},
+        ),
     )
     list_display = (
         'pk',
@@ -773,3 +783,177 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         'updated_at',
     )
     actions = []
+    change_list_template = 'admin/devlog/siteconfig/change_list.html'
+
+    # ------------------------------------------------------------------
+    # 数据库备份 / 导入快捷操作
+    # ------------------------------------------------------------------
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                'database-backup/',
+                self.admin_site.admin_view(self.database_backup_view),
+                name='devlog_siteconfig_database_backup',
+            ),
+            path(
+                'database-restore/',
+                self.admin_site.admin_view(self.database_restore_view),
+                name='devlog_siteconfig_database_restore',
+            ),
+        ]
+        return custom + urls
+
+    def _require_backup_permission(self, request):
+        """Backup and restore expose/replace the entire database.
+
+        ``admin_view`` only checks ``is_staff``, and even ``change`` permission
+        on SiteConfig is far weaker than "may read every row of every table",
+        so restrict both operations to superusers.
+        """
+        if not request.user.is_superuser:
+            raise PermissionDenied
+
+    def _backup_directory(self, request):
+        from .dbbackup import BackupError
+
+        config = SiteConfig.objects.order_by('pk').first()
+        directory = (
+            config.backup_directory() if config is not None
+            else Path(settings.BASE_DIR) / 'backups' / 'database'
+        )
+        if not directory.is_absolute():
+            raise BackupError(f'备份目录必须是绝对路径，当前配置为 {directory}。')
+        return directory
+
+    def database_backup_view(self, request):
+        from . import dbbackup
+
+        self._require_backup_permission(request)
+        redirect_url = reverse('admin:devlog_siteconfig_changelist')
+
+        if request.method != 'POST':
+            # Creating a dump is a side effect, so a bare GET only renders the
+            # confirmation form. SimpleUI rebuilds the changelist object-tools
+            # from ``li a`` elements and drops anything else, so the shortcut
+            # has to be a plain link into this page rather than a POST button.
+            directory_error = ''
+            backup_dir = ''
+            if not request.is_secure():
+                try:
+                    backup_dir = str(self._backup_directory(request))
+                except dbbackup.BackupError as exc:
+                    directory_error = str(exc)
+            context = {
+                **self.admin_site.each_context(request),
+                'opts': self.model._meta,
+                'title': '备份当前数据库',
+                'is_secure': request.is_secure(),
+                'backup_dir': backup_dir,
+                'directory_error': directory_error,
+                'example_filename': dbbackup.suggested_filename(),
+            }
+            return render(
+                request,
+                'admin/devlog/siteconfig/database_backup.html',
+                context,
+            )
+
+        try:
+            if request.is_secure():
+                # HTTPS: stream the dump to the browser and keep nothing behind.
+                path_obj = dbbackup.temporary_backup()
+                response = FileResponse(
+                    open(path_obj, 'rb'),
+                    as_attachment=True,
+                    filename=path_obj.name,
+                    content_type='application/octet-stream',
+                )
+                response['Cache-Control'] = 'no-store'
+                # The temporary directory is removed once the response body has
+                # been fully written out.
+                response._resource_closers.append(
+                    lambda: shutil.rmtree(path_obj.parent, ignore_errors=True)
+                )
+                return response
+
+            directory = self._backup_directory(request)
+            written = dbbackup.create_backup(directory / dbbackup.suggested_filename())
+            messages.success(
+                request,
+                f'当前为非 HTTPS 访问，备份已保存到服务器路径：{written}'
+                f'（{dbbackup.format_size(written.stat().st_size)}）。',
+            )
+        except dbbackup.BackupError as exc:
+            messages.error(request, f'备份失败：{exc}')
+        return redirect(redirect_url)
+
+    def database_restore_view(self, request):
+        from . import dbbackup
+
+        self._require_backup_permission(request)
+        redirect_url = reverse('admin:devlog_siteconfig_changelist')
+        upload_allowed = request.is_secure()
+
+        directory = None
+        backups = []
+        directory_error = None
+        try:
+            directory = self._backup_directory(request)
+            backups = dbbackup.list_backups(directory)
+        except dbbackup.BackupError as exc:
+            directory_error = str(exc)
+
+        if request.method == 'POST':
+            source = request.POST.get('source') or 'path'
+            staged = None
+            try:
+                if not request.POST.get('confirm'):
+                    raise dbbackup.BackupError('请先勾选确认框，导入会覆盖当前数据库的全部数据。')
+                if source == 'upload':
+                    if not upload_allowed:
+                        raise dbbackup.BackupError(
+                            '当前为非 HTTPS 访问，已禁用上传文件导入；请改用服务器路径导入。'
+                        )
+                    upload = request.FILES.get('file')
+                    if upload is None:
+                        raise dbbackup.BackupError('请选择要上传的备份文件。')
+                    staged = dbbackup.stage_upload(upload)
+                    dbbackup.restore_backup(staged)
+                    messages.success(
+                        request, f'已从上传文件 {upload.name} 导入数据库。请重新登录以确认状态。'
+                    )
+                else:
+                    if directory is None:
+                        raise dbbackup.BackupError(directory_error or '备份目录不可用。')
+                    name = (request.POST.get('filename') or '').strip()
+                    if not name:
+                        raise dbbackup.BackupError('请选择要导入的服务器备份文件。')
+                    chosen = dbbackup.resolve_inside(directory, name)
+                    dbbackup.restore_backup(chosen)
+                    messages.success(
+                        request, f'已从服务器备份 {chosen.name} 导入数据库。请重新登录以确认状态。'
+                    )
+                return redirect(redirect_url)
+            except dbbackup.BackupError as exc:
+                messages.error(request, f'导入失败：{exc}')
+            finally:
+                if staged is not None:
+                    shutil.rmtree(staged.parent, ignore_errors=True)
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': '从备份导入数据库',
+            'opts': self.model._meta,
+            'backup_dir': str(directory) if directory else '',
+            'directory_error': directory_error,
+            'backups': [
+                {**item, 'size_display': dbbackup.format_size(item['size'])}
+                for item in backups
+            ],
+            'upload_allowed': upload_allowed,
+            'allowed_suffixes': '、'.join(dbbackup.allowed_suffixes()),
+            'accept_attr': ','.join(dbbackup.allowed_suffixes()),
+            'max_upload_mb': dbbackup.MAX_UPLOAD_BYTES // (1024 * 1024),
+        }
+        return render(request, 'admin/devlog/siteconfig/database_restore.html', context)
