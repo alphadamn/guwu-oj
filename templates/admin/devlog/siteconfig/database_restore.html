@@ -1,4 +1,4 @@
-{% extends "admin/base_site.html" %}
+{% extends 'admin/base_site.html' %}
 
 {% block title %}从备份导入数据库{% endblock %}
 
@@ -11,69 +11,130 @@
 </div>
 {% endblock %}
 
+{% block extrahead %}
+<style>
+    .restore-container { max-width: 720px; margin: 0 auto; }
+    .restore-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .restore-header h1 { margin: 0; font-size: 28px; }
+    .restore-icon { font-size: 32px; }
+    .danger-card { background: #f8d7da; border-left: 4px solid #dc3545; padding: 16px; margin-bottom: 16px; border-radius: 4px; color: #721c24; }
+    .danger-card strong { color: #721c24; }
+    .info-card { background: #f8f9fa; border-left: 4px solid #0066cc; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
+    .info-card strong { color: #0066cc; }
+    .warning-card { background: #fef3cd; border-left: 4px solid #ff9800; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
+    .error-card { background: #f8d7da; border-left: 4px solid #dc3545; padding: 16px; margin-bottom: 16px; border-radius: 4px; color: #721c24; }
+    .source-section { background: #f5f5f5; padding: 16px; border-radius: 4px; margin-bottom: 12px; }
+    .radio-group { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+    .radio-input { margin-top: 2px; cursor: pointer; }
+    .radio-label { flex: 1; }
+    .radio-label label { font-weight: bold; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .select-box { max-width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-top: 8px; }
+    .select-box option { padding: 4px; }
+    .help-text { color: #666; font-size: 12px; margin-top: 6px; }
+    .upload-disabled { opacity: 0.6; cursor: not-allowed; }
+    .submit-row { margin-top: 24px; display: flex; gap: 8px; }
+    .submit-row input[type="submit"] { padding: 8px 24px; font-size: 14px; cursor: pointer; border-radius: 4px; background: #ba2121; color: white; border: none; }
+    .submit-row input[type="submit"]:hover { background: #9d1a1a; }
+    .submit-row .closelink { padding: 8px 24px; display: inline-block; color: #666; border: 1px solid #ddd; text-decoration: none; border-radius: 4px; }
+    .submit-row .closelink:hover { color: #333; background: #f9f9f9; }
+    .confirm-checkbox { margin-top: 16px; padding: 12px; background: #f9f9f9; border-radius: 4px; }
+    .confirm-checkbox label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; }
+    .confirm-checkbox input[type="checkbox"] { margin-top: 3px; cursor: pointer; }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1>从备份导入数据库</h1>
-
-<p style="max-width: 720px;">
-    导入会<strong>覆盖当前数据库的全部内容</strong>，此操作不可撤销。建议先执行一次“备份当前数据库”，
-    并在低峰期操作。导入完成后可能需要重新登录。
-</p>
-
-{% if directory_error %}
-<p class="errornote">{{ directory_error }}</p>
-{% endif %}
-
-<form method="post" enctype="multipart/form-data" style="max-width: 720px; margin-top: 1.5rem;">
-    {% csrf_token %}
-
-    <fieldset class="module aligned">
-        <h2>导入来源</h2>
-
-        <div class="form-row">
-            <label style="display: block; font-weight: bold;">
-                <input type="radio" name="source" value="path" checked> 从服务器指定路径导入
-            </label>
-            <p class="help">备份目录：<code>{{ backup_dir|default:"（不可用）" }}</code></p>
-            {% if backups %}
-            <select name="filename" style="max-width: 100%; padding: 6px;">
-                {% for item in backups %}
-                <option value="{{ item.name }}">
-                    {{ item.name }} — {{ item.size_display }} — {{ item.modified|date:"Y-m-d H:i" }}
-                </option>
-                {% endfor %}
-            </select>
-            {% else %}
-            <p class="help">该目录下暂无可用备份文件（仅识别扩展名 {{ allowed_suffixes }}）。</p>
-            {% endif %}
-        </div>
-
-        <div class="form-row">
-            <label style="display: block; font-weight: bold;">
-                <input type="radio" name="source" value="upload" {% if not upload_allowed %}disabled{% endif %}>
-                从上传的文件导入
-            </label>
-            {% if upload_allowed %}
-            <input type="file" name="file" accept="{{ accept_attr }}">
-            <p class="help">最大 {{ max_upload_mb }} MB，扩展名需为 {{ allowed_suffixes }}。</p>
-            {% else %}
-            <p class="help">当前为非 HTTPS 访问，出于传输安全考虑已禁用上传导入，请使用服务器路径导入。</p>
-            {% endif %}
-        </div>
-    </fieldset>
-
-    <fieldset class="module aligned">
-        <h2>确认</h2>
-        <div class="form-row">
-            <label>
-                <input type="checkbox" name="confirm" value="1">
-                我已了解导入会覆盖当前数据库的全部数据，且此操作不可撤销。
-            </label>
-        </div>
-    </fieldset>
-
-    <div class="submit-row">
-        <input type="submit" value="开始导入" class="default" style="background:#ba2121;">
-        <a href="{% url 'admin:devlog_siteconfig_changelist' %}" class="closelink">取消</a>
+<div class="restore-container">
+    <div class="restore-header">
+        <span class="restore-icon">⚡</span>
+        <h1>从备份导入数据库</h1>
     </div>
-</form>
+
+    <div class="danger-card">
+        <strong>注意：此操作将覆盖所有数据</strong><br>
+        导入会完全覆盖当前数据库的全部内容（所有表和数据都会被替换），<strong>此操作不可撤销</strong>。请确保你已备份重要数据。
+    </div>
+
+    <div class="warning-card">
+        <strong>建议在业务低峰期操作</strong><br>
+        导入期间数据库会短暂不可用，其他用户可能无法访问系统。导入完成后可能需要重新登录。
+    </div>
+
+    {% if directory_error %}
+    <div class="error-card">
+        <strong>错误</strong><br>
+        {{ directory_error }}
+    </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" style="margin-top: 1.5rem;">
+        {% csrf_token %}
+
+        <fieldset class="module aligned">
+            <h2>选择导入来源</h2>
+
+            <div class="source-section">
+                <div class="radio-group">
+                    <input type="radio" id="source-path" name="source" value="path" checked class="radio-input">
+                    <div class="radio-label" style="flex: 1;">
+                        <label for="source-path">从服务器指定路径导入</label>
+                        <div class="help-text" style="margin-left: 0; margin-top: 6px;">
+                            备份目录：<code>{% if backup_dir %}{{ backup_dir }}{% else %}（不可用）{% endif %}</code>
+                        </div>
+                    </div>
+                </div>
+
+                {% if backups %}
+                <select name="filename" class="select-box">
+                    {% for item in backups %}
+                    <option value="{{ item.name }}">
+                        {{ item.name }} — {{ item.size_display }} — {{ item.modified|date:'Y-m-d H:i' }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                <div class="help-text" style="margin-top: 8px;">
+                    该目录下暂无可用备份文件（仅识别扩展名 {{ allowed_suffixes }}）。
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="source-section {% if not upload_allowed %}upload-disabled{% endif %}">
+                <div class="radio-group">
+                    <input type="radio" id="source-upload" name="source" value="upload" {% if not upload_allowed %}disabled{% endif %} class="radio-input">
+                    <div class="radio-label" style="flex: 1;">
+                        <label for="source-upload">从上传的文件导入</label>
+                    </div>
+                </div>
+
+                {% if upload_allowed %}
+                <input type="file" name="file" accept="{{ accept_attr }}" style="margin-top: 8px; display: block;">
+                <div class="help-text">
+                    最大 {{ max_upload_mb }} MB，扩展名需为 {{ allowed_suffixes }}。
+                </div>
+                {% else %}
+                <div class="help-text" style="margin-top: 8px;">
+                    当前为非 HTTPS 访问，出于传输安全考虑已禁用上传导入。<br>
+                    请使用服务器路径导入，或切换到 HTTPS 连接。
+                </div>
+                {% endif %}
+            </div>
+        </fieldset>
+
+        <fieldset class="module aligned">
+            <h2>确认操作</h2>
+            <div class="confirm-checkbox">
+                <label for="confirm">
+                    <input type="checkbox" id="confirm" name="confirm" value="1">
+                    <strong>我已充分了解此操作的风险</strong>。我确认当前导入会覆盖数据库的全部数据，且此操作无法撤销。我已备份重要数据。
+                </label>
+            </div>
+        </fieldset>
+
+        <div class="submit-row">
+            <input type="submit" value="开始导入" class="default">
+            <a href="{% url 'admin:devlog_siteconfig_changelist' %}" class="closelink">取消</a>
+        </div>
+    </form>
+</div>
 {% endblock %}

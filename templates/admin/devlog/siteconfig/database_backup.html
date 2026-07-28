@@ -1,4 +1,4 @@
-{% extends "admin/base_site.html" %}
+{% extends 'admin/base_site.html' %}
 
 {% block title %}备份当前数据库{% endblock %}
 
@@ -11,50 +11,88 @@
 </div>
 {% endblock %}
 
+{% block extrahead %}
+<style>
+    .backup-container { max-width: 720px; margin: 0 auto; }
+    .backup-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .backup-header h1 { margin: 0; font-size: 28px; }
+    .backup-icon { font-size: 32px; }
+    .info-card { background: #f8f9fa; border-left: 4px solid #0066cc; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
+    .info-card strong { color: #0066cc; }
+    .warning-card { background: #fef3cd; border-left: 4px solid #ff9800; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
+    .error-card { background: #f8d7da; border-left: 4px solid #dc3545; padding: 16px; margin-bottom: 16px; border-radius: 4px; color: #721c24; }
+    .dest-box { background: #f5f5f5; padding: 12px 14px; margin: 12px 0; border-radius: 4px; font-family: monospace; font-size: 13px; border: 1px solid #ddd; }
+    .submit-row { margin-top: 24px; display: flex; gap: 8px; }
+    .submit-row input[type="submit"] { padding: 8px 24px; font-size: 14px; cursor: pointer; border-radius: 4px; }
+    .submit-row .default { background: #417690; color: white; border: none; }
+    .submit-row .default:hover { background: #205067; }
+    .submit-row .closelink { padding: 8px 24px; display: inline-block; color: #666; border: 1px solid #ddd; text-decoration: none; border-radius: 4px; }
+    .submit-row .closelink:hover { color: #333; background: #f9f9f9; }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1>备份当前数据库</h1>
-
-{% if is_secure %}
-<p style="max-width: 720px;">
-    当前为 HTTPS 访问，点击下面的按钮会立即导出数据库并<strong>直接下载到你的浏览器</strong>，
-    服务器上不会留下备份文件。
-</p>
-{% else %}
-<p style="max-width: 720px;">
-    当前为非 HTTPS 访问，点击下面的按钮会导出数据库并<strong>保存到服务器备份目录</strong>，
-    不会通过明文连接传输备份内容。
-</p>
-{% endif %}
-
-<p style="max-width: 720px;">
-    导出期间数据库仍可正常使用，但大库导出会占用一定 I/O，建议在低峰期操作。
-</p>
-
-{% if directory_error %}
-<p class="errornote">{{ directory_error }}</p>
-{% endif %}
-
-<form method="post" style="max-width: 720px; margin-top: 1.5rem;">
-    {% csrf_token %}
-
-    <fieldset class="module aligned">
-        <h2>备份去向</h2>
-        <div class="form-row">
-            {% if is_secure %}
-            <p class="help">浏览器下载（文件名形如 <code>{{ example_filename }}</code>）。</p>
-            {% else %}
-            <p class="help">服务器目录：<code>{{ backup_dir|default:"（不可用）" }}</code></p>
-            <p class="help">
-                该目录可在“站点配置”的“数据库备份”一栏中修改；留空则使用项目下的
-                <code>backups/database/</code>。
-            </p>
-            {% endif %}
-        </div>
-    </fieldset>
-
-    <div class="submit-row">
-        <input type="submit" value="开始备份" class="default">
-        <a href="{% url 'admin:devlog_siteconfig_changelist' %}" class="closelink">取消</a>
+<div class="backup-container">
+    <div class="backup-header">
+        <span class="backup-icon">💾</span>
+        <h1>备份当前数据库</h1>
     </div>
-</form>
+
+    {% if is_secure %}
+    <div class="info-card">
+        <strong>HTTPS 安全连接</strong><br>
+        数据库会立即导出并<strong>直接下载到你的浏览器</strong>，服务器上不会留下备份文件。备份内容在传输中受 HTTPS 加密保护。
+    </div>
+    {% else %}
+    <div class="warning-card">
+        <strong>非 HTTPS 连接</strong><br>
+        数据库会导出并<strong>保存到服务器备份目录</strong>，不会通过明文连接传输备份内容。备份文件存储在服务器上，可在"站点配置"中查看或删除。
+    </div>
+    {% endif %}
+
+    <div class="info-card">
+        <strong>操作说明</strong><br>
+        导出期间数据库仍可正常使用，但大型数据库的导出会占用一定的 I/O 资源。<strong>建议在业务低峰期操作</strong>，以减少对其他用户的影响。
+    </div>
+
+    {% if directory_error %}
+    <div class="error-card">
+        <strong>错误</strong><br>
+        {{ directory_error }}
+    </div>
+    {% endif %}
+
+    <form method="post" style="margin-top: 1.5rem;">
+        {% csrf_token %}
+
+        <fieldset class="module aligned">
+            <h2>备份去向</h2>
+            <div class="form-row">
+                {% if is_secure %}
+                <div class="dest-box">
+                    浏览器下载
+                    <div style="margin-top: 6px; color: #666; font-size: 12px;">
+                        文件名形如：{{ example_filename }}
+                    </div>
+                </div>
+                {% else %}
+                <div class="dest-box">
+                    服务器目录
+                    <div style="margin-top: 6px; color: #666; font-size: 12px;">
+                        {% if backup_dir %}{{ backup_dir }}{% else %}（不可用）{% endif %}
+                    </div>
+                </div>
+                <p class="help">
+                    该目录可在"站点配置"的"数据库备份"一栏中修改；留空则使用项目默认的 <code>backups/database/</code>。
+                </p>
+                {% endif %}
+            </div>
+        </fieldset>
+
+        <div class="submit-row">
+            <input type="submit" value="开始备份" class="default">
+            <a href="{% url 'admin:devlog_siteconfig_changelist' %}" class="closelink">取消</a>
+        </div>
+    </form>
+</div>
 {% endblock %}
