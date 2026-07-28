@@ -420,6 +420,7 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 - [x] 文档搜索引擎
 - [x] 添加题解功能
 - [ ] 优化移动端体验
+- [ ] 优化Windows支持（Worker Class重构……）
 
 ## 许可证
 
