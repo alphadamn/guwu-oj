@@ -56,7 +56,9 @@ def docker_available(force_check=False):
             timeout=10,
         )
         ok = result.returncode == 0
+        print(result.returncode)
     except (subprocess.TimeoutExpired, OSError):
+        print("!!!!!")
         ok = False
     entry["ok"] = ok
     entry["ts"] = now
@@ -166,6 +168,7 @@ class JudgeContainer:
         ensure_docker_ready()
         ensure_judge_image_available(self.image)
         _prepare_work_dir(self.work_dir)
+        print(self.work_dir)
         args = [
             "docker", "run", "--rm", "-d", "-i",
             "--network", "none",

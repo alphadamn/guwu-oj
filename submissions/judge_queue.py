@@ -23,7 +23,7 @@ def enqueue_judge(submission_id):
                         machine['queue'], connection=load_balancer._machine_redis(machine)
                     )
                     job = queue.enqueue(
-                        judge_submission_task,
+                        'submissions.tasks.judge_submission_task',
                         submission_id,
                         meta={
                             'judge_machine': machine['name'],

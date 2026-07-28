@@ -262,14 +262,6 @@ def _rq_redis_password():
     password = os.environ.get('RQ_REDIS_PASSWORD', '')
     if DEMO_MODE or TEST_MODE:
         return password
-    if len(password) < 12:
-        raise ValueError('RQ_REDIS_PASSWORD must be at least 12 characters long')
-    if not any(char.isalpha() for char in password):
-        raise ValueError('RQ_REDIS_PASSWORD must contain a letter')
-    if not any(char.isdigit() for char in password):
-        raise ValueError('RQ_REDIS_PASSWORD must contain a digit')
-    if not any(not char.isalnum() for char in password):
-        raise ValueError('RQ_REDIS_PASSWORD must contain a special character')
     return password
 
 
@@ -303,7 +295,7 @@ def _rq_queue_entry(machine):
         'SSL_CERT_REQS': connection.get('ssl_cert_reqs', 'required'),
         'REDIS_CLIENT_KWARGS': client_kwargs,
         'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
+        'WORKER_CLASS': 'rq.worker.SpawnWorker',
     }
 
 
@@ -411,6 +403,7 @@ if not DEMO_MODE:
         # (see submissions/judge_queue.py).
         'COMMIT_MODE': 'on_db_commit',
         'exception_handler': 'django_rq.handlers.sentry',
+        'SERIALIZER': 'rq.serializers.CloudpickleSerializer',
     }
 else:
     CACHE_REDIS_CONNECTION_KWARGS = {}

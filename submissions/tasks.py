@@ -2,6 +2,10 @@ import django
 import os
 import logging
 
+import sys
+print('Default encoding:', sys.getdefaultencoding())
+print('Filesystem encoding:', sys.getfilesystemencoding())
+
 # Setup Django before importing models
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oj_project.settings')
 django.setup()

@@ -1,28 +1,34 @@
+import sys
+import os
 import logging
 import threading
 import time
-
-from submissions.container_cleanup import start_container_cleanup
-
 import redis
-from rq.worker import Worker
+from rq.worker import SimpleWorker  # 改为继承 SimpleWorker
 
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SEC = 30
 HEARTBEAT_TTL_SEC = 90
 
+# Windows 信号宏补丁（SimpleWorker 不会用到，但保留无害）
+if sys.platform == 'win32':
+    if not hasattr(os, 'WIFSIGNALED'):
+        os.WIFSIGNALED = lambda status: False
+    if not hasattr(os, 'WTERMSIG'):
+        os.WTERMSIG = lambda status: 0
+    if not hasattr(os, 'WIFEXITED'):
+        os.WIFEXITED = lambda status: True
+    if not hasattr(os, 'WEXITSTATUS'):
+        os.WEXITSTATUS = lambda status: status
 
-class AutoReconnectWorker(Worker):
-    """RQ worker with auto-reconnect and judge heartbeat."""
-
+class AutoReconnectWorker(SimpleWorker):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_retries = 5
         self.retry_delay = 5
         self._stop_heartbeat = threading.Event()
         self._connection_kwargs = None
-        start_container_cleanup()
 
     def _queue_names(self):
         if self.queues:
@@ -78,18 +84,23 @@ class AutoReconnectWorker(Worker):
         raise redis.ConnectionError('Failed to reconnect to Redis after multiple attempts.')
 
     def work(self, *args, **kwargs):
+        """重写 work 方法以支持自动重连（SimpleWorker 在主进程执行任务）"""
         self._connection_options()
         self._start_heartbeat()
         try:
             while True:
                 try:
+                    # SimpleWorker.work() 会循环处理任务，直到队列为空或发生异常
                     super().work(*args, **kwargs)
+                    # 如果正常结束（比如队列为空），退出循环
                     break
                 except (redis.ConnectionError, redis.TimeoutError) as exc:
                     logger.error('Redis connection lost: %s. Attempting to reconnect...', exc)
                     self._reconnect()
-                except Exception:
-                    logger.exception('An unexpected error occurred in judge worker')
+                    # 重连后继续循环
+                except Exception as e:
+                    logger.exception('An unexpected error occurred in judge worker: %s', e)
+                    # 根据业务决定是否继续
                     break
         finally:
             self._stop_heartbeat_thread()
@@ -97,7 +108,6 @@ class AutoReconnectWorker(Worker):
 
 def get_auto_reconnect_worker(*args, **kwargs):
     from django.conf import settings
-
     worker = AutoReconnectWorker(*args, **kwargs)
     worker.redis_url = settings.RQ_QUEUES['default']['URL']
     return worker
