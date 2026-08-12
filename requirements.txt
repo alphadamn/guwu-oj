@@ -1,4 +1,4 @@
-Django>=6.1
+Django<=6.0.8
 django-simpleui
 crispy-bootstrap5>=2026.3
 django-crispy-forms>=2.6
