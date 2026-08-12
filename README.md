@@ -427,8 +427,8 @@ MIT License
 
 <a href="https://www.star-history.com/?repos=alphadamn%2Fguwu-oj&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=alphadamn/guwu-oj&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=alphadamn/guwu-oj&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=alphadamn/guwu-oj&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=alphadamn/guwu-oj&type=date&theme=dark&legend=top-left&sealed_token=yqA0UZU3rN-0gv3AQcGczh_JbALQAu_GVP0W649r7Fmb5fyVOzScWkdSCbrBAZl0Mr4MeCD4knhWPpDI8rZ2uyX2bhr45-LsZV66D8Nws7YrxMjbk51Srg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=alphadamn/guwu-oj&type=date&legend=top-left&sealed_token=yqA0UZU3rN-0gv3AQcGczh_JbALQAu_GVP0W649r7Fmb5fyVOzScWkdSCbrBAZl0Mr4MeCD4knhWPpDI8rZ2uyX2bhr45-LsZV66D8Nws7YrxMjbk51Srg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=alphadamn/guwu-oj&type=date&legend=top-left&sealed_token=yqA0UZU3rN-0gv3AQcGczh_JbALQAu_GVP0W649r7Fmb5fyVOzScWkdSCbrBAZl0Mr4MeCD4knhWPpDI8rZ2uyX2bhr45-LsZV66D8Nws7YrxMjbk51Srg" />
  </picture>
 </a>
