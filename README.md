@@ -113,6 +113,7 @@ python manage.py runserver
 ```bash
 gunicorn oj_project.wsgi --bind 0.0.0.0:8000
 ```
+访问 http://127.0.0.1:8000 查看网站。
 
 ### 8. 启动 Redis 服务
 
@@ -239,7 +240,6 @@ python verify_setup.py
 python manage.py test
 ```
 
-访问 http://127.0.0.1:8000 查看网站。
 
 ## 项目结构
 
