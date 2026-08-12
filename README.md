@@ -28,20 +28,13 @@
   - 用户管理
   - 提交记录管理
 
-## 技术栈
+## 核心架构
 
-- Python 3.9+
-- Django 4.2+
-- Bootstrap 5
+- Django 5+
+- Bootstrap
 - PostgreSQL
 - Docker (用于沙箱评测环境)
-- django-crispy-forms
-- crispy-bootstrap5
-- Redis (缓存 + 任务队列)
-- Whitenoise (静态文件服务)
-- Django-RQ (异步任务队列)
-- django-ratelimit (速率限制)
-- django-prometheus (监控指标)
+- Redis+RQ (缓存 + 任务队列)
 
 ## 安装步骤
 
