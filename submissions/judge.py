@@ -24,6 +24,7 @@ Key performance / stability changes:
 """
 
 import os
+import os.path
 import re
 import shlex
 import shutil
@@ -317,7 +318,7 @@ class SandboxRunner:
     def compile_java(self, code):
         class_name = extract_java_class_name(code)
         #src = Path(self.work_dir) / f"{class_name}.java"
-        src = os.path.realpath(os.path.join(self.work_dir, f"{class_name}.java))
+        src = os.path.realpath(os.path.join(self.work_dir, f"{class_name}.java"))
         if not fullpath.startswith(self.work_dir):
             return None, "Compilation Failed"
         src.write_text(code, encoding="utf-8")
