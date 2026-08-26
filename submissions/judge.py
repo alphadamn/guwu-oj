@@ -320,7 +320,7 @@ class SandboxRunner:
         #src = Path(self.work_dir) / f"{class_name}.java"
         src = os.path.realpath(os.path.join(self.work_dir, f"{class_name}.java"))
         if not fullpath.startswith(self.work_dir):
-            return None, "Compilation Failed"
+            return None, "Invalid file path"
         src = Path(src)
         src.write_text(code, encoding="utf-8")
         try:
