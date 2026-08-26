@@ -238,7 +238,7 @@ class SandboxRunner:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         # chmod via host filesystem (work_dir is bind-mounted).
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -257,7 +257,7 @@ class SandboxRunner:
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -276,7 +276,7 @@ class SandboxRunner:
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -295,7 +295,7 @@ class SandboxRunner:
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -321,7 +321,7 @@ class SandboxRunner:
         except subprocess.TimeoutExpired:
             return None, "Compile timeout"
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
