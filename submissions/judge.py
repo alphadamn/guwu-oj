@@ -149,7 +149,7 @@ class SandboxRunner:
 
     def __enter__(self):
         try:
-            os.chmod(self.work_dir, 0o777)
+            os.chmod(self.work_dir, 0o755)
         except OSError:
             pass
         self._container = JudgeContainer(
