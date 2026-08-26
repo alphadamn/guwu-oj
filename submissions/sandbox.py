@@ -135,7 +135,7 @@ def chown_rec(path, user, group):
 def _prepare_work_dir(work_dir):
     try:
         chown_rec(work_dir, "nobody", "nogroup")
-        os.chmod(work_dir, 0o755)
+        os.chmod(work_dir, 0o754)
     except OSError:
         pass
 
