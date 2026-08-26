@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from submissions.judge_health import evaluate_machine_health
 from submissions.judge_load_balancer import load_balancer
 
-
+@user_passes_test(_is_staff)
 def health_check(request):
     """
     Health check endpoint for monitoring.
