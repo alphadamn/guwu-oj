@@ -7,6 +7,9 @@ from django.contrib.auth.decorators import user_passes_test
 from submissions.judge_health import evaluate_machine_health
 from submissions.judge_load_balancer import load_balancer
 
+def _is_staff(user):
+    return user.is_authenticated and user.is_staff
+
 @user_passes_test(_is_staff)
 def health_check(request):
     """
