@@ -160,7 +160,7 @@ class SandboxRunner:
     def __enter__(self):
         try:
             self.chown_rec(self.work_dir, "nobody", "nogroup")
-            os.chmod(self.work_dir, 0o755)
+            os.chmod(self.work_dir, 0o754)
         except OSError:
             pass
         self._container = JudgeContainer(
