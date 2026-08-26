@@ -159,7 +159,7 @@ class SandboxRunner:
     
     def __enter__(self):
         try:
-            chown_rec(self.work_dir, "nobody", "nogroup")
+            self.chown_rec(self.work_dir, "nobody", "nogroup")
             os.chmod(self.work_dir, 0o755)
         except OSError:
             pass
