@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
+from django.contrib.auth.decorators import user_passes_test
 
 from submissions.judge_health import evaluate_machine_health
 from submissions.judge_load_balancer import load_balancer
