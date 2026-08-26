@@ -67,7 +67,7 @@ def render_markdown(text):
         return ''
     
     # Generate cache key based on content hash
-    content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+    content_hash = hashlib.md5(text.encode('utf-8'), usedforsecurity=False).hexdigest()
     cache_key = f'markdown_render_{content_hash}'
     
     # Try to get cached result
