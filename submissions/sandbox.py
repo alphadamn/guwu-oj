@@ -16,6 +16,8 @@ Performance / stability changes vs the previous naive approach:
 """
 
 import os
+import grp
+import pwd
 import shutil
 import subprocess
 import time
@@ -121,9 +123,18 @@ def _apparmor_flag():
         raise DockerNotAvailableError("OJ_DOCKER_APPARMOR_PROFILE must not be empty")
     return profile
 
+def chown_rec(path, user, group):
+    uid = pwd.getpwnam(user).pw_uid
+    gid = grp.getgrnam(group).gr_gid
+
+    for root, dirs, files in os.walk(path):
+        os.chown(root, uid, gid)          # 处理当前目录
+        for name in dirs + files:         # 处理所有子项（目录和文件）
+            os.chown(os.path.join(root, name), uid, gid)
 
 def _prepare_work_dir(work_dir):
     try:
+        chown_rec(work_dir, "nobody", "nogroup")
         os.chmod(work_dir, 0o755)
     except OSError:
         pass
