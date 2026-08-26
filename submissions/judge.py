@@ -148,7 +148,7 @@ class SandboxRunner:
         self._global_timeout_sec = None  # loaded lazily
 
     # ── context manager ──────────────────────────────────────────────────
-    def chown_rec(path, user, group):
+    def chown_rec(self, path, user, group):
         uid = pwd.getpwnam(user).pw_uid
         gid = grp.getgrnam(group).gr_gid
 
