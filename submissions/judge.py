@@ -25,6 +25,8 @@ Key performance / stability changes:
 
 import os
 import os.path
+import pwd
+import grp
 import re
 import shlex
 import shutil
@@ -146,9 +148,18 @@ class SandboxRunner:
         self._global_timeout_sec = None  # loaded lazily
 
     # ── context manager ──────────────────────────────────────────────────
+    def chown_rec(path, user, group):
+        uid = pwd.getpwnam(user).pw_uid
+        gid = grp.getgrnam(group).gr_gid
 
+        for root, dirs, files in os.walk(path):
+            os.chown(root, uid, gid)          # 处理当前目录
+            for name in dirs + files:         # 处理所有子项（目录和文件）
+                os.chown(os.path.join(root, name), uid, gid)
+    
     def __enter__(self):
         try:
+            chown_rec(self.work_dir, "nobody", "nogroup")
             os.chmod(self.work_dir, 0o755)
         except OSError:
             pass
