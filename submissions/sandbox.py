@@ -124,7 +124,7 @@ def _apparmor_flag():
 
 def _prepare_work_dir(work_dir):
     try:
-        os.chmod(work_dir, 0o777)
+        os.chmod(work_dir, 0o755)
     except OSError:
         pass
 
