@@ -256,7 +256,7 @@ def _render_captcha_image(answer: str) -> bytes:
             tile_draw.text((3, 0), ch, font=font, fill=_random_color(20, 90))
         else:
             tile_draw.text((3, 0), ch, fill=_random_color(20, 90))
-        tile = tile.rotate(random.uniform(-22, 22), resample=Image.BICUBIC,
+        tile = tile.rotate(secrets.SystemRandom().uniform(-22, 22), resample=Image.BICUBIC,
                             expand=False)
         x = int(step * (idx + 1) - IMAGE_FONT_SIZE / 2)
         y = rint(4, IMAGE_HEIGHT - IMAGE_FONT_SIZE - 2)
