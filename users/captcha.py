@@ -183,6 +183,9 @@ def _looks_like_ip(value: str) -> bool:
     except (ValueError, TypeError):
         return False
 
+def rint(a: int, b: int) -> int:
+    """Return a random integer N such that a <= N <= b."""
+    return a + secrets.randbelow(b - a + 1)
 
 # ---------------------------------------------------------------------------
 # Image rendering
@@ -190,9 +193,9 @@ def _looks_like_ip(value: str) -> bool:
 
 def _random_color(lo: int = 30, hi: int = 180) -> tuple[int, int, int]:
     return (
-        random.randint(lo, hi),
-        random.randint(lo, hi),
-        random.randint(lo, hi),
+        rint(lo, hi),
+        rint(lo, hi),
+        rint(lo, hi),
     )
 
 
@@ -208,15 +211,15 @@ def _render_captcha_image(answer: str) -> bytes:
     # 1. Background noise dots — OCR works much better on clean input.
     for _ in range(IMAGE_WIDTH * IMAGE_HEIGHT // 8):
         draw.point(
-            (random.randint(0, IMAGE_WIDTH - 1),
-             random.randint(0, IMAGE_HEIGHT - 1)),
+            (rint(0, IMAGE_WIDTH - 1),
+             rint(0, IMAGE_HEIGHT - 1)),
             fill=_random_color(180, 230),
         )
 
     # 2. Interference lines.
     for _ in range(4):
-        start = (0, random.randint(0, IMAGE_HEIGHT - 1))
-        end = (IMAGE_WIDTH, random.randint(0, IMAGE_HEIGHT - 1))
+        start = (0, rint(0, IMAGE_HEIGHT - 1))
+        end = (IMAGE_WIDTH, rint(0, IMAGE_HEIGHT - 1))
         draw.line([start, end], fill=_random_color(80, 180), width=1)
 
     # 3. Load a font — fall back to the default PIL font if nothing is
@@ -256,7 +259,7 @@ def _render_captcha_image(answer: str) -> bytes:
         tile = tile.rotate(random.uniform(-22, 22), resample=Image.BICUBIC,
                             expand=False)
         x = int(step * (idx + 1) - IMAGE_FONT_SIZE / 2)
-        y = random.randint(4, IMAGE_HEIGHT - IMAGE_FONT_SIZE - 2)
+        y = rint(4, IMAGE_HEIGHT - IMAGE_FONT_SIZE - 2)
         image.paste(tile, (x, y), tile)
 
     # 5. Final light blur — defeats naive threshold OCR.
