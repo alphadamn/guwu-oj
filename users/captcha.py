@@ -98,13 +98,13 @@ IMAGE_WIDTH = 180
 IMAGE_HEIGHT = 50
 IMAGE_FONT_SIZE = 32
 
-# Bundled dot-matrix font (Zen Dots, SIL OFL — https://fonts.google.com/specimen/Zen+Dots).
-# Renders glyphs as round dots so we can offer a second, visually distinct captcha
+# Bundled dot-matrix font (Serif Dot Digital-7, by Style-7 — http://www.styleseven.com).
+# Renders glyphs as discrete dots so we can offer a second, visually distinct captcha
 # style without hand-rolling a bitmap font.
 _DOTMATRIX_FONT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'fonts',
-    'ZenDots-Regular.ttf',
+    'serif_dot_digital-7.ttf',
 )
 
 CHALLENGE_TTL_SECONDS = lambda: _cfg_int('captcha_challenge_ttl_seconds', 600)
@@ -374,10 +374,14 @@ def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
     """Render the captcha image with heavy anti‑OCR measures.
 
     ``mode`` is either ``'original'`` (the classic multi-font renderer) or
-    ``'dotmatrix'`` (the bundled Zen Dots dot-matrix font). Both share the
+    ``'dotmatrix'`` (the bundled serif-dot dot-matrix font). Both share the
     same anti-OCR pipeline below.
     """
     from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageChops
+
+    # Dot-matrix glyphs are themselves hard to read, so that mode uses a
+    # lighter anti-OCR treatment; the original keeps the full pipeline.
+    light = (mode == 'dotmatrix')
 
     # ------------------------------------------------------------------
     # 1. Background: subtle diagonal line pattern + pastel base
@@ -391,16 +395,18 @@ def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
                   fill=_random_color(200, 240), width=1)
 
     # Add random small dots (speckles)
-    _add_noise(image, intensity=0.15)
+    _add_noise(image, intensity=0.08 if light else 0.15)
 
     # ------------------------------------------------------------------
-    # 2. Interference lines and curves
+    # 2. Interference lines and curves (skipped for dot-matrix: its dotted
+    # glyphs are already anti-OCR, and extra lines make them unreadable)
     # ------------------------------------------------------------------
-    # Straight lines
-    _add_interference_lines(draw, IMAGE_WIDTH, IMAGE_HEIGHT)
-    # Curved lines (extra)
-    for _ in range(secrets.randbelow(3) + 2):
-        _add_curved_line(draw, IMAGE_WIDTH, IMAGE_HEIGHT)
+    if not light:
+        # Straight lines
+        _add_interference_lines(draw, IMAGE_WIDTH, IMAGE_HEIGHT)
+        # Curved lines (extra)
+        for _ in range(secrets.randbelow(3) + 2):
+            _add_curved_line(draw, IMAGE_WIDTH, IMAGE_HEIGHT)
 
     # ------------------------------------------------------------------
     # 3. Load multiple fonts (including bold/italic variants if available)
@@ -452,13 +458,16 @@ def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
         tile = Image.new('RGBA', (tile_width, tile_height), (0, 0, 0, 0))
         tile_draw = ImageDraw.Draw(tile)
 
-        # Dark, random color (with slight variation)
-        char_color = _random_color(10, 100)
+        # Dark, random color (with slight variation). Dot-matrix uses a
+        # darker range for stronger contrast against the pastel background.
+        char_color = _random_color(0, 50) if light else _random_color(10, 100)
         tile_draw.text((int(tile_width * 0.15), int(tile_height * 0.15)),
                        ch, font=font, fill=char_color)
 
-        # Apply per‑character distortion (rotation, shear, scale)
-        tile = _distort_char_image(tile)
+        # Apply per-character distortion (rotation, shear, scale).
+        # Skipped for dot-matrix so the dots stay aligned and legible.
+        if not light:
+            tile = _distort_char_image(tile)
 
         # Paste with random horizontal jitter
         x = int(step * (idx + 1) - tile.width / 2) + secrets.randbelow(5) - 2
@@ -468,14 +477,16 @@ def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
     # ------------------------------------------------------------------
     # 5. Global wave distortion (smooth)
     # ------------------------------------------------------------------
-    image = _apply_global_wave_distortion(image, amplitude=3, wavelength=35)
+    image = _apply_global_wave_distortion(
+        image, amplitude=1 if light else 3, wavelength=35,
+    )
 
     # ------------------------------------------------------------------
     # 6. Additional semi‑transparent lines crossing the text
     # ------------------------------------------------------------------
     overlay = Image.new('RGBA', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    for _ in range(secrets.randbelow(4) + 3):  # 3‑6 lines
+    for _ in range(1 if light else secrets.randbelow(4) + 3):  # 1 / 3-6 lines
         start = (secrets.randbelow(IMAGE_WIDTH), secrets.randbelow(IMAGE_HEIGHT))
         end = (secrets.randbelow(IMAGE_WIDTH), secrets.randbelow(IMAGE_HEIGHT))
         # Semi‑transparent random color (alpha between 60 and 180)
@@ -484,21 +495,25 @@ def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
     image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
 
     # ------------------------------------------------------------------
-    # 7. Add Gaussian noise overlay (very subtle)
+    # 7. Add Gaussian noise overlay (very subtle) — skipped for dot-matrix
     # ------------------------------------------------------------------
-    noise = Image.effect_noise((IMAGE_WIDTH, IMAGE_HEIGHT), sigma=10)
-    noise = noise.convert('RGB')
-    # Blend with 5% opacity
-    image = ImageChops.blend(image, noise, alpha=0.05)
+    if not light:
+        noise = Image.effect_noise((IMAGE_WIDTH, IMAGE_HEIGHT), sigma=10)
+        noise = noise.convert('RGB')
+        # Blend with 5% opacity
+        image = ImageChops.blend(image, noise, alpha=0.05)
 
     # ------------------------------------------------------------------
     # 8. Post‑processing: blur, sharpen, final contrast
     # ------------------------------------------------------------------
-    image = image.filter(ImageFilter.GaussianBlur(radius=0.3))
+    if not light:
+        image = image.filter(ImageFilter.GaussianBlur(radius=0.3))
     image = ImageOps.autocontrast(image)
-    image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=0))
+    if not light:
+        image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=0))
     # Final tiny noise
-    _add_noise(image, intensity=0.03)
+    if not light:
+        _add_noise(image, intensity=0.03)
 
     # ------------------------------------------------------------------
     # 9. Convert to PNG bytes
