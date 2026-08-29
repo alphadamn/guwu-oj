@@ -27,6 +27,7 @@ from .captcha import (
     CAPTCHA_ON_ALL_POST as _captcha_all_post_cfg,
     _client_ip as _client_ip,  # reuse shared logic
 )
+from .altcha import verify_solution as _altcha_check
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,8 @@ class EnforcementMiddleware(MiddlewareMixin):
         'devlog:status',
         'users:captcha_image',
         'captcha_image',
+        'users:captcha_altcha',
+        'captcha_altcha',
     }
 
     # Path prefixes for Django's built-in admin — we never want an admin
@@ -211,10 +214,13 @@ class EnforcementMiddleware(MiddlewareMixin):
                 challenge_id = request.POST.get('captcha_id') or request.META.get(
                     'HTTP_X_CAPTCHA_ID') or ''
                 submitted = request.POST.get('captcha_answer') or ''
-                if not challenge_id or not submitted:
-                    return self._forbid('当前处于高风险模式，需要图形验证码')
+                altcha_payload = request.POST.get('altcha') or ''
+                if not challenge_id or not submitted or not altcha_payload:
+                    return self._forbid('当前处于高风险模式，需要完成图形验证码')
                 if not _captcha_check(request, challenge_id, submitted):
                     return self._forbid('图形验证码错误或已过期')
+                if not _altcha_check(altcha_payload):
+                    return self._forbid('验证失败或已过期')
 
         return None
 

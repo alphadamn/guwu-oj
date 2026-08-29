@@ -14,12 +14,24 @@ from .captcha import (
     get_current_challenge_id as _captcha_current_id,
     login_requires_captcha as _login_captcha_required,
     CAPTCHA_ON_REGISTER as _captcha_on_register_cfg,
+    CAPTCHA_ON_FORGOT_PASSWORD as _captcha_on_forgot_cfg,
 )
+from .altcha import verify_solution as _altcha_check
 
 
 def _captcha_on_register() -> bool:
     try:
         fn = _captcha_on_register_cfg
+        if callable(fn):
+            return bool(fn())
+        return bool(fn)
+    except Exception:
+        return True
+
+
+def _captcha_on_forgot_password() -> bool:
+    try:
+        fn = _captcha_on_forgot_cfg
         if callable(fn):
             return bool(fn())
         return bool(fn)
@@ -54,6 +66,10 @@ class CaptchaMixin(forms.Form):
                 'placeholder': '请输入图形验证码',
             }),
         )
+        self.fields['altcha'] = forms.CharField(
+            required=True,
+            widget=forms.HiddenInput(),
+        )
 
     def clean_captcha(self):
         """Call from the subclass's clean chain."""
@@ -68,6 +84,13 @@ class CaptchaMixin(forms.Form):
             raise ValidationError('请输入图形验证码。')
         if not _captcha_check(request, captcha_id, captcha_answer):
             raise ValidationError('图形验证码无效或已过期，请刷新后重试。')
+        # Hidden proof-of-work captcha must always accompany the image
+        # captcha — they are verified together, never in isolation.
+        altcha_payload = self.cleaned_data.get('altcha') or ''
+        if not altcha_payload:
+            raise ValidationError('验证失败，请重试。')
+        if not _altcha_check(altcha_payload):
+            raise ValidationError('验证失败，请刷新后重试。')
         return captcha_answer
 
 
@@ -226,17 +249,28 @@ class SendVerificationCodeForm(forms.Form):
         return self.cleaned_data['email'].strip().lower()
 
 
-class PasswordResetRequestForm(forms.Form):
+class PasswordResetRequestForm(CaptchaMixin):
     email = forms.EmailField(
         required=True,
         widget=forms.EmailInput(attrs={'placeholder': '请输入注册时使用的邮箱'}),
     )
 
+    def __init__(self, *args, request=None, **kwargs):
+        self.request = request
+        super().__init__(*args, **kwargs)
+        if _captcha_on_forgot_password():
+            self._enable_captcha()
+
     def clean_email(self):
         return self.cleaned_data['email'].strip().lower()
 
+    def clean(self):
+        cleaned_data = super().clean()
+        self.clean_captcha()
+        return cleaned_data
 
-class PasswordResetForm(SetPasswordForm):
+
+class PasswordResetForm(SetPasswordForm, CaptchaMixin):
     """Second step of password reset: verify code and set a new password."""
 
     MAX_INVALID_CODE_ATTEMPTS = 5
@@ -270,6 +304,13 @@ class PasswordResetForm(SetPasswordForm):
                     pass
             user = _DummyUser()
         super().__init__(user, *args, **kwargs)
+        if _captcha_on_forgot_password():
+            self._enable_captcha()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        self.clean_captcha()
+        return cleaned_data
 
     @classmethod
     def _invalid_code_attempt_key(cls, email):

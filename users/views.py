@@ -47,6 +47,7 @@ from .captcha import (
     verify_avatar_captcha,
     _client_ip,
 )
+from .altcha import generate_challenge as generate_altcha_challenge
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,13 @@ class CustomLoginView(LoginView):
 
     def form_invalid(self, form):
         record_login_attempt(self.request, success=False)
+        # ``login_requires_captcha`` now reflects the incremented failure
+        # count, but the *form* above was built before this failure was
+        # recorded, so it may lack the captcha fields. Rebuild it so the
+        # re-rendered page shows the captcha immediately after the very first
+        # failure (instead of lagging one extra round-trip behind).
+        if login_requires_captcha(self.request) and 'captcha_id' not in form.fields:
+            form = self.get_form()
         return super().form_invalid(form)
 
     def _next_url(self) -> str:
@@ -155,6 +163,7 @@ class CustomLoginView(LoginView):
                 and 'captcha_id' in getattr(context['form'], 'fields', {})
             )
             context['captcha_url'] = reverse('captcha_image')
+            context['altcha_url'] = reverse('captcha_altcha')
             next_url = self._next_url()
             if next_url:
                 context['next'] = next_url
@@ -180,6 +189,7 @@ class CustomLoginView(LoginView):
             bool(form) and 'captcha_id' in getattr(form, 'fields', {})
         )
         context['captcha_url'] = reverse('captcha_image')
+        context['altcha_url'] = reverse('captcha_altcha')
         # Make sure ``next`` is available to the template's hidden input so
         # redirects survive a hard-ban re-render.
         if not context.get('next'):
@@ -271,6 +281,21 @@ def captcha_image(request):
     # can populate a hidden input without a page reload.
     if challenge_id:
         response['X-Captcha-Id'] = challenge_id
+    return response
+
+
+def captcha_altcha(request):
+    """Return a fresh ALTCHA proof-of-work challenge as JSON.
+
+    Stateless and HMAC-signed, so no session/cache write is required on the
+    issuing side. The client widget solves it and posts the base64 payload
+    back alongside the image captcha.
+    """
+    challenge = generate_altcha_challenge()
+    response = JsonResponse(challenge)
+    response['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response['Pragma'] = 'no-cache'
+    response['Expires'] = '0'
     return response
 
 
@@ -390,6 +415,7 @@ def register(request):
         'email_verification_required': email_verification_required(),
         'captcha_required': 'captcha_id' in form.fields,
         'captcha_url': reverse('captcha_image'),
+        'altcha_url': reverse('captcha_altcha'),
         'captcha_id': get_current_challenge_id(request) or '',
     }
     return render(request, 'users/register.html', context)
@@ -398,7 +424,7 @@ def register(request):
 def password_reset_request(request):
     """Step 1: enter email to receive a verification code."""
     if request.method == 'POST':
-        form = PasswordResetRequestForm(request.POST)
+        form = PasswordResetRequestForm(request.POST, request=request)
         if form.is_valid():
             email = form.cleaned_data['email']
 
@@ -420,9 +446,16 @@ def password_reset_request(request):
 
             return redirect('password_reset_confirm', email=email)
     else:
-        form = PasswordResetRequestForm()
+        form = PasswordResetRequestForm(request=request)
 
-    return render(request, 'users/password_reset_request.html', {'form': form})
+    context = {
+        'form': form,
+        'captcha_required': 'captcha_id' in form.fields,
+        'captcha_url': reverse('captcha_image'),
+        'altcha_url': reverse('captcha_altcha'),
+        'captcha_id': get_current_challenge_id(request) or '',
+    }
+    return render(request, 'users/password_reset_request.html', context)
 
 
 @ratelimit(key='ip', rate='5/m', method='POST', block=False)
@@ -448,11 +481,15 @@ def password_reset_confirm(request, email):
     else:
         form = PasswordResetForm(initial={'email': email}, request=request)
 
-    return render(
-        request,
-        'users/password_reset_confirm.html',
-        {'form': form, 'email': email},
-    )
+    context = {
+        'form': form,
+        'email': email,
+        'captcha_required': 'captcha_id' in form.fields,
+        'captcha_url': reverse('captcha_image'),
+        'altcha_url': reverse('captcha_altcha'),
+        'captcha_id': get_current_challenge_id(request) or '',
+    }
+    return render(request, 'users/password_reset_confirm.html', context)
 
 
 @login_required
@@ -529,9 +566,12 @@ def verify_avatar_captcha_view(request):
         return JsonResponse({'ok': False, 'message': '请使用 POST 请求。'}, status=405)
     challenge_id = (request.POST.get('captcha_id') or '').strip()
     answer = (request.POST.get('captcha_answer') or '').strip()
+    altcha_payload = (request.POST.get('altcha') or '').strip()
     if not challenge_id or not answer:
         return JsonResponse({'ok': False, 'message': '请填写图形验证码。'}, status=400)
-    proof = verify_avatar_captcha(request, challenge_id, answer)
+    if not altcha_payload:
+        return JsonResponse({'ok': False, 'message': '验证失败，请刷新后重试。'}, status=400)
+    proof = verify_avatar_captcha(request, challenge_id, answer, altcha_payload)
     if not proof:
         return JsonResponse({'ok': False, 'message': '图形验证码错误或已失效，请重新获取。'}, status=400)
     return JsonResponse({'ok': True, 'proof': proof, 'expires_in': 300})

@@ -12,6 +12,7 @@ from .views import (
     password_reset_request,
     password_reset_confirm,
     captcha_image,
+    captcha_altcha,
     verify_avatar_captcha_view,
     clear_punishment_notice,
 )
@@ -22,6 +23,7 @@ urlpatterns = [
     path('register/', register, name='register'),
     path('send-verification-code/', send_verification_code, name='send_verification_code'),
     path('captcha/image/', captcha_image, name='captcha_image'),
+    path('captcha/altcha/', captcha_altcha, name='captcha_altcha'),
     path('avatar-captcha/verify/', verify_avatar_captcha_view, name='verify_avatar_captcha'),
     path('clear-punishment-notice/', clear_punishment_notice, name='clear_punishment_notice'),
     path('password-reset/', password_reset_request, name='password_reset'),

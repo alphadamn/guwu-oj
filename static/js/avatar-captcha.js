@@ -8,6 +8,8 @@
     var verificationInProgress = false;
     var proofStorageKey = 'oj.avatarCaptchaProof';
     var avatarProof = '';
+    var altchaPayload = '';
+    var altchaPromise = null;
     try {
         avatarProof = window.sessionStorage.getItem(proofStorageKey) || '';
     } catch (error) {}
@@ -16,6 +18,39 @@
         var match = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
         return match ? decodeURIComponent(match[1]) : '';
     }
+
+    // ------------------------------------------------------------------
+    // Hidden proof-of-work captcha (ALTCHA v2 / Argon2id)
+    // Solving is delegated to the shared solver in altcha-solver.js.
+    function solveAltcha() {
+        if (altchaPayload) return Promise.resolve(altchaPayload);
+        if (altchaPromise) return altchaPromise;
+        console.log('[ALTCHA] solving (avatar)…');
+        var solver = window.OJAltcha && window.OJAltcha.solve;
+        if (typeof solver !== 'function') {
+            return Promise.reject(new Error('验证组件未加载。'));
+        }
+        altchaPromise = solver().then(function (payload) {
+            altchaPayload = payload;
+            console.log('[ALTCHA] solved; payload ready (length=' + payload.length + ')');
+            return payload;
+        }).catch(function (err) {
+            console.warn('[ALTCHA] failed:', err);
+            throw err;
+        }).finally(function () {
+            altchaPromise = null;
+        });
+        return altchaPromise;
+    }
+
+    function ensureAltchaPayload() {
+        if (altchaPayload) return Promise.resolve(altchaPayload);
+        return solveAltcha();
+    }
+
+    // ------------------------------------------------------------------
+    // Modal
+    // ------------------------------------------------------------------
 
     function ensureModal() {
         if (modal) return modal;
@@ -50,6 +85,9 @@
 
     function showModal() {
         var element = ensureModal();
+        // Pre-solve the hidden proof-of-work captcha in the background while
+        // the user reads and types the image captcha.
+        solveAltcha().catch(function () {});
         if (window.bootstrap && window.bootstrap.Modal) {
             window.bootstrap.Modal.getOrCreateInstance(element).show();
         } else {
@@ -113,25 +151,31 @@
         }
         verificationInProgress = true;
         error.textContent = '';
-        var body = new URLSearchParams();
-        body.set('captcha_id', challengeId);
-        body.set('captcha_answer', answer);
-        fetch('/users/avatar-captcha/verify/', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-                'X-CSRFToken': csrfToken(),
-            },
-            body: body.toString(),
-        }).then(function (response) {
-            return response.json().then(function (data) {
-                if (!response.ok || !data.ok) throw new Error(data.message || '验证失败。');
-                return data;
+
+        ensureAltchaPayload().then(function (payload) {
+            var body = new URLSearchParams();
+            body.set('captcha_id', challengeId);
+            body.set('captcha_answer', answer);
+            body.set('altcha', payload);
+            return fetch('/users/avatar-captcha/verify/', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-CSRFToken': csrfToken(),
+                },
+                body: body.toString(),
+            }).then(function (response) {
+                return response.json().then(function (data) {
+                    if (!response.ok || !data.ok) throw new Error(data.message || '验证失败。');
+                    return data;
+                });
             });
         }).then(function (data) {
+            console.log('[ALTCHA] verified by server; avatar proof granted');
             challengeId = '';
             answerInput.value = '';
+            altchaPayload = '';
             saveProof(data.proof);
             hideModal();
             var blockedImages = pending.slice();
@@ -141,7 +185,11 @@
             error = error || new Error('验证失败。');
             element.querySelector('.avatar-captcha-error').textContent = error.message;
             challengeId = '';
+            altchaPayload = '';
             loadChallenge();
+            // Re-pre-solve ALTCHA in the background so the next attempt does
+            // not have to solve at submit time.
+            solveAltcha().catch(function () {});
         }).finally(function () {
             verificationInProgress = false;
         });

@@ -349,6 +349,7 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 - **输入验证**: 搜索端点验证输入长度和字符
 - **XSS 防护**: Markdown 渲染使用 bleach 清理 HTML
 - **CSRF 保护**: 所有 POST 请求受 CSRF 保护
+- **验证码**: 图形验证码（原始 + 点阵双风格）+ ALTCHA 隐藏工作量证明，登录失败/注册/重置密码/高频提交/头像访问时要求
 
 ### 支持的编程语言
 
@@ -364,6 +365,45 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 | Ruby | — | `ruby` |
 | Kotlin | `kotlinc` | `java -jar` |
 | Assembly | `as` + `ld` | Linux 原生 |
+
+## 验证码系统
+
+项目在图形验证码之上叠加了一层**非交互式的隐藏工作量证明验证码（ALTCHA v2）**。凡是需要验证码的场景，图形验证码与 ALTCHA **始终同时出现、同时校验**，不允许单独出现。
+
+### 图形验证码
+
+两种渲染风格按 50/50 随机切换（`users/captcha.py`）：
+
+- **原始风格**：多字体（DejaVu / Liberation / FreeSans）+ 逐字符旋转、剪切、缩放 + 波纹扭曲、干扰线、噪声等抗 OCR 处理。
+- **点阵风格**：内置点阵字体 `users/fonts/ZenDots-Regular.ttf`（Google Fonts，SIL OFL 许可）渲染为圆点字符，复用同一套抗 OCR 管线。
+
+两者均采用一次性消费（防重放）、每 IP 限流与缓存 TTL 到期失效。
+
+### ALTCHA 隐藏验证码
+
+- 使用官方 [`altcha`](https://pypi.org/project/altcha/) v2 库实现工作量证明（PoW），参数集中在 `users/altcha.py`：
+
+  ```python
+  ALGORITHM = 'PBKDF2/SHA-512'   # 可选 'PBKDF2/SHA-256' / 'ARGON2ID' / 'SCRYPT'
+  KDF_COST = 30000               # PBKDF2 迭代次数
+  COUNTER_MIN = 10               # 确定性 counter 范围（决定求解工作量）
+  COUNTER_MAX = 50
+  DEFAULT_TTL_SECONDS = 600      # 挑战 10 分钟内有效，一次性防重放
+  ```
+
+- 客户端在 `static/js/altcha-worker.js` 的 Web Worker 中用 WebCrypto 原生 `crypto.subtle.deriveBits` 求解，不阻塞主线程（无需 WASM）。若切换为 `ARGON2ID`，则服务端需安装 `argon2-cffi`，并使用对应的 WASM 求解器。
+- 服务端验证为 O(1)：通过 HMAC `keySignature` 校验解出的密钥，无需重算 KDF；并带 nonce 一次性防重放。
+
+### 触发位置
+
+| 场景 | 图形验证码 | ALTCHA |
+|------|:---------:|:------:|
+| 登录失败后（默认 1 次失败即触发） | ✅ | ✅ |
+| 注册 | ✅ | ✅ |
+| 重置密码（请求 + 确认两步） | ✅ | ✅ |
+| 提交频率超阈值 | ✅ | ✅ |
+| 头像高频访问 | ✅ | ✅ |
+| 全站高风险模式（所有 POST） | ✅ | ✅ |
 
 ## 生产部署建议
 

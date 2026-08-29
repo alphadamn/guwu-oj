@@ -42,6 +42,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import random
 import secrets
 import string
@@ -51,6 +52,8 @@ import uuid
 from django.core.cache import cache
 from django.http import HttpResponse
 from django.utils import timezone
+
+from .altcha import verify_solution as verify_altcha_solution
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,15 @@ assert len(ANSWER_ALPHABET) >= 25
 IMAGE_WIDTH = 180
 IMAGE_HEIGHT = 50
 IMAGE_FONT_SIZE = 32
+
+# Bundled dot-matrix font (Zen Dots, SIL OFL — https://fonts.google.com/specimen/Zen+Dots).
+# Renders glyphs as round dots so we can offer a second, visually distinct captcha
+# style without hand-rolling a bitmap font.
+_DOTMATRIX_FONT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'fonts',
+    'ZenDots-Regular.ttf',
+)
 
 CHALLENGE_TTL_SECONDS = lambda: _cfg_int('captcha_challenge_ttl_seconds', 600)
 CHALLENGES_PER_IP_PER_MINUTE = lambda: _cfg_int(
@@ -198,77 +210,302 @@ def _random_color(lo: int = 30, hi: int = 180) -> tuple[int, int, int]:
         rint(lo, hi),
     )
 
+def _random_gradient_color() -> tuple[int, int, int]:
+    """Return a random pastel-ish background color."""
+    return (
+        secrets.randbelow(56) + 200,  # 200-255
+        secrets.randbelow(56) + 200,
+        secrets.randbelow(56) + 200,
+    )
 
-def _render_captcha_image(answer: str) -> bytes:
-    """Render ``answer`` on a noisy background and return a PNG bytestring."""
-    # Local import so the rest of the module still works if Pillow is
-    # temporarily unavailable (we'll fall back to a placeholder image).
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+def _add_noise(image: Image.Image, intensity: float = 0.08) -> None:
+    """Add salt-and-pepper noise to the image."""
+    pixels = image.load()
+    width, height = image.size
+    for _ in range(int(width * height * intensity)):
+        x = secrets.randbelow(width)
+        y = secrets.randbelow(height)
+        if secrets.randbelow(2):
+            pixels[x, y] = (0, 0, 0)  # black
+        else:
+            pixels[x, y] = (255, 255, 255)  # white
 
-    image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (245, 245, 245))
+def _add_interference_lines(draw: ImageDraw.ImageDraw, width: int, height: int) -> None:
+    """Draw random lines, arcs, and shapes to break segmentation."""
+    # Random lines
+    for _ in range(secrets.randbelow(5) + 10):  # 10-14 lines
+        start = (secrets.randbelow(width), secrets.randbelow(height))
+        end = (secrets.randbelow(width), secrets.randbelow(height))
+        color = _random_color(50, 200)
+        draw.line([start, end], fill=color, width=secrets.choice([1, 2, 3]))
+
+    # Random arcs
+    for _ in range(secrets.randbelow(3) + 2):  # 2-4 arcs
+        bbox = [
+            secrets.randbelow(width),
+            secrets.randbelow(height),
+            secrets.randbelow(width),
+            secrets.randbelow(height),
+        ]
+        # Normalize bbox
+        left = min(bbox[0], bbox[2])
+        top = min(bbox[1], bbox[3])
+        right = max(bbox[0], bbox[2])
+        bottom = max(bbox[1], bbox[3])
+        if right - left < 10 or bottom - top < 10:
+            continue
+        start_angle = secrets.randbelow(360)
+        end_angle = secrets.randbelow(360)
+        draw.arc([left, top, right, bottom], start=start_angle, end=end_angle,
+                 fill=_random_color(60, 180), width=secrets.choice([1, 2]))
+
+    # Random small circles/ellipses
+    for _ in range(secrets.randbelow(10) + 5):  # 5-14 shapes
+        x = secrets.randbelow(width)
+        y = secrets.randbelow(height)
+        radius = secrets.randbelow(4) + 1
+        draw.ellipse([x - radius, y - radius, x + radius, y + radius],
+                     outline=_random_color(80, 200), width=1)
+
+def _distort_char_image(char_image: Image.Image) -> Image.Image:
+    """Apply moderate rotation, shear, and scale variation to a character tile."""
+    from PIL import Image
+
+    # Random rotation ±12° (safe for 6/9, 2/5, etc.)
+    angle = secrets.SystemRandom().uniform(-12, 12)
+    char_image = char_image.rotate(angle, resample=Image.BICUBIC, expand=True)
+
+    # Random shear in both axes (limits kept low to preserve legibility)
+    shear_x = secrets.SystemRandom().uniform(-0.2, 0.2)
+    shear_y = secrets.SystemRandom().uniform(-0.2, 0.2)
+
+    # Random scale variation (independent x and y) – makes OCR harder
+    scale_x = secrets.SystemRandom().uniform(0.9, 1.3)
+    scale_y = secrets.SystemRandom().uniform(0.9, 1.3)
+
+    width, height = char_image.size
+    new_width = max(1, int(width * scale_x) + int(abs(shear_x) * height))
+    new_height = max(1, int(height * scale_y) + int(abs(shear_y) * width))
+
+    # Combined affine transform: scale first, then shear
+    # Matrix: (scale_x, shear_x, 0, shear_y, scale_y, 0)
+    char_image = char_image.transform(
+        (new_width, new_height),
+        Image.AFFINE,
+        (scale_x, shear_x, 0, shear_y, scale_y, 0),
+        resample=Image.BICUBIC,
+        fillcolor=(0, 0, 0, 0),
+    )
+    return char_image
+
+
+def _apply_global_wave_distortion(image: Image.Image,
+                                  amplitude: int = 2,
+                                  wavelength: int = 40) -> Image.Image:
+    """
+    Apply a smooth sine‑wave distortion to the whole image using a mesh.
+    This bends text lines and background together, breaking OCR segmentation.
+    """
+    from PIL import Image
+    import math
+
+    width, height = image.size
+    # Create a mesh grid: 4 cells horizontally, 2 cells vertically
+    mesh_x = 4
+    mesh_y = 2
+    cell_w = width / mesh_x
+    cell_h = height / mesh_y
+
+    # Build the list of source quad vertices for each cell
+    # For each cell, we define 4 destination points; the source points are the original rectangle.
+    # We'll shift each vertex horizontally by a sinusoidal offset.
+    mesh = []
+    for j in range(mesh_y):
+        for i in range(mesh_x):
+            # Original rectangle corners (source)
+            src = [
+                (i * cell_w, j * cell_h),
+                ((i + 1) * cell_w, j * cell_h),
+                ((i + 1) * cell_w, (j + 1) * cell_h),
+                (i * cell_w, (j + 1) * cell_h),
+            ]
+            # Destination corners: shift x coordinate by sine of y
+            dst = []
+            for (x, y) in src:
+                # Horizontal shift based on y position and x index (to create wavy pattern)
+                shift = amplitude * math.sin(2 * math.pi * y / wavelength) + \
+                        amplitude * 0.5 * math.sin(2 * math.pi * x / wavelength)
+                dst.append((x + shift, y))
+            # Append as (src_quad, dst_quad) tuple
+            mesh.append((src, dst))
+
+    # Apply mesh transform
+    try:
+        warped = image.transform(
+            (width, height),
+            Image.MESH,
+            mesh,
+            resample=Image.BICUBIC,
+            fillcolor=(255, 255, 255),
+        )
+        return warped
+    except Exception:
+        # Fallback: no distortion if mesh transform fails
+        return image
+
+
+def _add_curved_line(draw: ImageDraw.ImageDraw, width: int, height: int) -> None:
+    """Draw a random curved interference line using many short segments."""
+    points = []
+    x = secrets.randbelow(width)
+    y = secrets.randbelow(height)
+    points.append((x, y))
+    for _ in range(secrets.randbelow(15) + 10):  # 10-25 segments
+        x += secrets.randbelow(15) - 7
+        y += secrets.randbelow(15) - 7
+        # Keep within bounds
+        x = max(0, min(width - 1, x))
+        y = max(0, min(height - 1, y))
+        points.append((x, y))
+    draw.line(points, fill=_random_color(50, 200), width=secrets.choice([1, 2]))
+
+
+def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
+    """Render the captcha image with heavy anti‑OCR measures.
+
+    ``mode`` is either ``'original'`` (the classic multi-font renderer) or
+    ``'dotmatrix'`` (the bundled Zen Dots dot-matrix font). Both share the
+    same anti-OCR pipeline below.
+    """
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageChops
+
+    # ------------------------------------------------------------------
+    # 1. Background: subtle diagonal line pattern + pastel base
+    # ------------------------------------------------------------------
+    image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), _random_gradient_color())
     draw = ImageDraw.Draw(image)
 
-    # 1. Background noise dots — OCR works much better on clean input.
-    for _ in range(IMAGE_WIDTH * IMAGE_HEIGHT // 8):
-        draw.point(
-            (rint(0, IMAGE_WIDTH - 1),
-             rint(0, IMAGE_HEIGHT - 1)),
-            fill=_random_color(180, 230),
-        )
+    # Draw many thin diagonal lines as background texture
+    for i in range(-IMAGE_HEIGHT, IMAGE_WIDTH, 4):
+        draw.line([(i, 0), (i + IMAGE_HEIGHT, IMAGE_HEIGHT)],
+                  fill=_random_color(200, 240), width=1)
 
-    # 2. Interference lines.
-    for _ in range(4):
-        start = (0, rint(0, IMAGE_HEIGHT - 1))
-        end = (IMAGE_WIDTH, rint(0, IMAGE_HEIGHT - 1))
-        draw.line([start, end], fill=_random_color(80, 180), width=1)
+    # Add random small dots (speckles)
+    _add_noise(image, intensity=0.15)
 
-    # 3. Load a font — fall back to the default PIL font if nothing is
-    # installed on the host (common on minimal containers).
-    font = None
-    for font_path in (
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-        '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
-        '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
-        'C:/Windows/Fonts/arialbd.ttf',
-    ):
+    # ------------------------------------------------------------------
+    # 2. Interference lines and curves
+    # ------------------------------------------------------------------
+    # Straight lines
+    _add_interference_lines(draw, IMAGE_WIDTH, IMAGE_HEIGHT)
+    # Curved lines (extra)
+    for _ in range(secrets.randbelow(3) + 2):
+        _add_curved_line(draw, IMAGE_WIDTH, IMAGE_HEIGHT)
+
+    # ------------------------------------------------------------------
+    # 3. Load multiple fonts (including bold/italic variants if available)
+    # ------------------------------------------------------------------
+    if mode == 'dotmatrix':
+        font_paths = [_DOTMATRIX_FONT_PATH]
+    else:
+        font_paths = [
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf',
+            '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
+            '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+            'C:/Windows/Fonts/arialbd.ttf',
+        ]
+    # Dot-matrix glyphs (round dots) read better slightly larger, so the
+    # two styles stay clearly distinguishable after the anti-OCR pipeline.
+    base_size = IMAGE_FONT_SIZE + 8 if mode == 'dotmatrix' else IMAGE_FONT_SIZE
+    fonts = []
+    for path in font_paths:
         try:
-            font = ImageFont.truetype(font_path, IMAGE_FONT_SIZE)
-            break
+            fonts.append(ImageFont.truetype(path, base_size))
         except (OSError, IOError):
             continue
-    if font is None:
-        try:
-            font = ImageFont.load_default()
-        except Exception:  # pragma: no cover - best effort
-            font = None
+    if not fonts:
+        fonts = [ImageFont.load_default()]
 
-    # 4. Draw every glyph with per-char jitter / rotation / color.
-    # Calculate a small horizontal offset so the text is roughly centered.
+    # ------------------------------------------------------------------
+    # 4. Draw each character individually with distortions
+    # ------------------------------------------------------------------
     step = IMAGE_WIDTH / (len(answer) + 1)
     for idx, ch in enumerate(answer):
-        # Per-character tile for independent rotation.
-        tile = Image.new('RGBA', (IMAGE_FONT_SIZE + 6, IMAGE_FONT_SIZE + 6),
-                         (0, 0, 0, 0))
+        # Random font selection
+        base_font = secrets.choice(fonts)
+        # Random size (0.85 to 1.25 of base) – we will also scale in distortion
+        try:
+            font = ImageFont.truetype(base_font.path,
+                                      int(base_size * secrets.SystemRandom().uniform(0.85, 1.25)))
+        except AttributeError:
+            font = base_font
+
+        # Create a transparent tile
+        tile_width = int(base_size * 1.8)
+        tile_height = int(base_size * 1.8)
+        tile = Image.new('RGBA', (tile_width, tile_height), (0, 0, 0, 0))
         tile_draw = ImageDraw.Draw(tile)
-        if font is not None:
-            tile_draw.text((3, 0), ch, font=font, fill=_random_color(20, 90))
-        else:
-            tile_draw.text((3, 0), ch, fill=_random_color(20, 90))
-        tile = tile.rotate(secrets.SystemRandom().uniform(-22, 22), resample=Image.BICUBIC,
-                            expand=False)
-        x = int(step * (idx + 1) - IMAGE_FONT_SIZE / 2)
-        y = rint(4, IMAGE_HEIGHT - IMAGE_FONT_SIZE - 2)
+
+        # Dark, random color (with slight variation)
+        char_color = _random_color(10, 100)
+        tile_draw.text((int(tile_width * 0.15), int(tile_height * 0.15)),
+                       ch, font=font, fill=char_color)
+
+        # Apply per‑character distortion (rotation, shear, scale)
+        tile = _distort_char_image(tile)
+
+        # Paste with random horizontal jitter
+        x = int(step * (idx + 1) - tile.width / 2) + secrets.randbelow(5) - 2
+        y = secrets.randbelow(max(2, IMAGE_HEIGHT - tile.height))
         image.paste(tile, (x, y), tile)
 
-    # 5. Final light blur — defeats naive threshold OCR.
-    image = image.filter(ImageFilter.SMOOTH)
+    # ------------------------------------------------------------------
+    # 5. Global wave distortion (smooth)
+    # ------------------------------------------------------------------
+    image = _apply_global_wave_distortion(image, amplitude=3, wavelength=35)
 
+    # ------------------------------------------------------------------
+    # 6. Additional semi‑transparent lines crossing the text
+    # ------------------------------------------------------------------
+    overlay = Image.new('RGBA', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    for _ in range(secrets.randbelow(4) + 3):  # 3‑6 lines
+        start = (secrets.randbelow(IMAGE_WIDTH), secrets.randbelow(IMAGE_HEIGHT))
+        end = (secrets.randbelow(IMAGE_WIDTH), secrets.randbelow(IMAGE_HEIGHT))
+        # Semi‑transparent random color (alpha between 60 and 180)
+        color = (*_random_color(50, 200), secrets.randbelow(120) + 60)
+        overlay_draw.line([start, end], fill=color, width=secrets.choice([1, 2]))
+    image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
+
+    # ------------------------------------------------------------------
+    # 7. Add Gaussian noise overlay (very subtle)
+    # ------------------------------------------------------------------
+    noise = Image.effect_noise((IMAGE_WIDTH, IMAGE_HEIGHT), sigma=10)
+    noise = noise.convert('RGB')
+    # Blend with 5% opacity
+    image = ImageChops.blend(image, noise, alpha=0.05)
+
+    # ------------------------------------------------------------------
+    # 8. Post‑processing: blur, sharpen, final contrast
+    # ------------------------------------------------------------------
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.3))
+    image = ImageOps.autocontrast(image)
+    image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=0))
+    # Final tiny noise
+    _add_noise(image, intensity=0.03)
+
+    # ------------------------------------------------------------------
+    # 9. Convert to PNG bytes
+    # ------------------------------------------------------------------
     buf = io.BytesIO()
     image.save(buf, format='PNG')
     return buf.getvalue()
-
 
 # ---------------------------------------------------------------------------
 # Challenge issuing / verification
@@ -326,8 +563,10 @@ def generate_challenge(request) -> tuple[str, str, bytes]:
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.warning('Captcha cache write failed (%s); continuing', exc)
 
+    # 50/50 mix of the original anti-OCR renderer and the dot-matrix renderer.
+    render_mode = 'dotmatrix' if secrets.randbelow(2) == 0 else 'original'
     try:
-        png = _render_captcha_image(answer)
+        png = _render_captcha_image(answer, render_mode)
     except Exception as exc:  # pragma: no cover - best effort
         logger.exception('Captcha rendering failed (%s); using placeholder', exc)
         png = _placeholder_png(answer)
@@ -556,11 +795,16 @@ def check_submission_captcha(request) -> tuple[bool, str]:
         or ''
     ).strip()
     submitted = (request.POST.get('captcha_answer') or '').strip()
+    altcha_payload = (request.POST.get('altcha') or '').strip()
     if not challenge_id or not submitted:
         return False, '请先输入图形验证码再提交。'
-    if check_challenge(request, challenge_id, submitted, consume=True):
-        return True, ''
-    return False, '图形验证码错误或已失效，请重新输入。'
+    if not altcha_payload:
+        return False, '验证失败，请重试。'
+    if not check_challenge(request, challenge_id, submitted, consume=True):
+        return False, '图形验证码错误或已失效，请重新输入。'
+    if not verify_altcha_solution(altcha_payload, consume=True):
+        return False, '验证失败或已过期，请重新提交。'
+    return True, ''
 
 
 # ---------------------------------------------------------------------------
@@ -662,7 +906,8 @@ def grant_avatar_captcha_proof(request) -> str | None:
         return None
 
 
-def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str) -> str | None:
+def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str,
+                          altcha_payload: str = None) -> str | None:
     """Strictly validate an avatar CAPTCHA and return a page-local proof."""
     if not check_challenge(
         request,
@@ -671,6 +916,8 @@ def verify_avatar_captcha(request, challenge_id: str, submitted_answer: str) -> 
         consume=True,
         fail_open_on_cache_error=False,
     ):
+        return None
+    if not altcha_payload or not verify_altcha_solution(altcha_payload, consume=True):
         return None
     return grant_avatar_captcha_proof(request)
 
