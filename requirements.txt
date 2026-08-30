@@ -34,4 +34,4 @@ cryptography>=50.0.0
 
 # 验证码（ALTCHA v2 工作量证明）
 altcha>=2.0
-argon2-cffi>=23.0.0
+argon2-cffi>=25.1.0
