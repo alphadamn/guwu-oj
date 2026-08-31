@@ -22,10 +22,19 @@ from submissions.models import Submission
 
 class DashboardMetricsTests(TestCase):
     def setUp(self):
-        self.staff = get_user_model().objects.create_superuser(
+        User = get_user_model()
+        self.staff = User.objects.create_superuser(
             username='dashboard-admin', email='dashboard@example.com', password='pass'
         )
-        self.author = get_user_model().objects.create_user(
+        # ``StaffTwoFactorMiddleware`` blocks admin access for staff without
+        # 2FA enabled. Give the test superuser a dummy TOTP secret so admin
+        # routes behave normally in this suite (this suite is about the
+        # dashboard aggregates, not the 2FA enforcement layer).
+        from users.two_factor import encrypt_secret, generate_secret
+        self.staff.two_factor_enabled = True
+        self.staff.two_factor_secret = encrypt_secret(generate_secret())
+        self.staff.save(update_fields=['two_factor_enabled', 'two_factor_secret'])
+        self.author = User.objects.create_user(
             username='author', email='author@example.com', password='pass'
         )
         self.problem = Problem.objects.create(

@@ -366,7 +366,10 @@ def captcha_image(request):
         from .captcha import _placeholder_png
         png = _placeholder_png('?')
         challenge_id = ''
-    response = captcha_image_response(png)
+        status=403
+    else:
+        status=200
+    response = captcha_image_response(png, status=status)
     # Expose the challenge_id in a JS-readable header so the template
     # can populate a hidden input without a page reload.
     if challenge_id:

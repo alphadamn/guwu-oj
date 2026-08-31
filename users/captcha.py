@@ -153,27 +153,47 @@ def _login_failure_key(ip: str) -> str:
 def _client_ip(request) -> str:
     """Return the *real* client IP address.
 
-    Strategy (first non-empty wins):
+    Strategy (first usable candidate wins):
 
-    1. ``HTTP_X_FORWARDED_FOR`` — this is what nginx sets by default when you
-       include ``proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;``
-       in the server block. nginx appends the immediate upstream's address, so
-       the *second* value is always the real client IP — this is what we use.
-    2. ``HTTP_X_REAL_IP`` — some setups (e.g. Cloudflare) write the client IP
-       into this header instead.
-    3. ``REMOTE_ADDR`` — the direct TCP peer (always ``127.0.0.1`` when a
-       reverse proxy is on the same machine; kept as a fallback for local dev).
+    1. ``HTTP_X_FORWARDED_FOR`` — split the comma-separated list, strip
+       entries whose IP is listed in ``TRUSTED_PROXY_IPS`` from the
+       **right** (nginx uses ``$proxy_add_x_forwarded_for`` which appends
+       the immediately-previous hop on the right; our own trusted proxies'
+       addresses are the ones appended last, never the attacker-controlled
+       left-hand side).  After stripping, the **leftmost** remaining
+       entry is treated as the original client address — this matches the
+       documented contract (see ``USE_X_FORWARDED_HOST`` comment in
+       ``oj_project.settings``).  If after stripping nothing remains, or
+       no entry parses as a valid IP, we try the next header.
+    2. ``HTTP_X_REAL_IP`` — setups such as Cloudflare or nginx ``real_ip``
+       module write the client address here.
+    3. ``REMOTE_ADDR`` — the direct TCP peer; always kept as the final
+       fallback because when no reverse proxy sits in front, this IS the
+       client IP.
 
-    The result is validated using :mod:`ipaddress` — anything that isn't a
-    real IP falls back to ``REMOTE_ADDR``. This prevents an attacker from
-    poisoning ``X-Forwarded-For`` with something like ``"<script>..."``.
+    Every candidate is validated with :mod:`ipaddress`.  This prevents
+    header-poisoning attacks (``"<script>..."`` or otherwise malformed
+    input) from being stored or used as a cache key.
     """
-    # 1) X-Forwarded-For (the most common)
+    # 1) X-Forwarded-For, trusted-proxy aware
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(xff)
     if xff:
-        candidate = xff.split(',')[1].strip()
-        if _looks_like_ip(candidate):
-            return candidate
+        from django.conf import settings
+        trusted = set(getattr(settings, 'TRUSTED_PROXY_IPS', None) or [])
+        parts = [s.strip() for s in xff.split(',') if s.strip()]
+        # Strip trusted proxies from the right (most recent hops appended
+        # by our own infrastructure).
+        while parts and parts[-1] in trusted:
+            parts.pop()
+        if parts:
+            # Rightmost remaining entry = the original client address.
+            candidate = parts[-1]
+            print(candidate)
+            if _looks_like_ip(candidate):
+                return candidate
 
     # 2) X-Real-IP (often set by Cloudflare / CDNs / nginx "real_ip" module)
     xri = request.META.get('HTTP_X_REAL_IP')
@@ -560,11 +580,15 @@ def generate_challenge(request) -> tuple[str, str, bytes]:
     deterministically on the server side.
     """
     ip = _client_ip(request)
-    if not _increment_rate_counter(
+    if not (_increment_rate_counter(
         _ip_rate_key(ip, int(time.time() // 60)),
         int(CHALLENGES_PER_IP_PER_MINUTE()),
         90,
-    ):
+    ) and _increment_rate_counter(
+        _ip_rate_key(ip, int(time.time() // 600)),
+        int(CAPTCHA_ATTEMPTS_PER_IP_PER_10_MINUTES()),
+        600,
+    )):
         raise TooManyChallenges(
             '生成验证码过于频繁，请稍后再试。'
         )
@@ -620,7 +644,7 @@ def check_challenge(request, challenge_id: str, submitted_answer: str,
     # Per-IP attempt rate-limit.
     window = int(time.time() // 600)
     if not _increment_rate_counter(
-        _ip_rate_key(f'attempt:{ip}', window),
+        _ip_rate_key(ip, window),
         int(CAPTCHA_ATTEMPTS_PER_IP_PER_10_MINUTES()),
         600,
     ):
@@ -968,9 +992,9 @@ def _placeholder_png(answer: str) -> bytes:
 # Django view helpers
 # ---------------------------------------------------------------------------
 
-def captcha_image_response(png_bytes: bytes) -> HttpResponse:
+def captcha_image_response(png_bytes: bytes, status=200) -> HttpResponse:
     """Wrap ``png_bytes`` in a non-cached ``image/png`` HttpResponse."""
-    response = HttpResponse(png_bytes, content_type='image/png')
+    response = HttpResponse(png_bytes, content_type='image/png', status=status)
     response['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response['Pragma'] = 'no-cache'
     response['Expires'] = '0'
