@@ -12,11 +12,20 @@ class EnvGeneratorAdminTests(TestCase):
         self.assertIn('/admin/login/', response['Location'])
 
     def test_staff_user_can_view_generator_without_post_form(self):
-        user = get_user_model().objects.create_superuser(
+        User = get_user_model()
+        user = User.objects.create_superuser(
             username='env-generator-admin',
             email='admin@example.com',
             password='safe-test-password',
         )
+        # ``StaffTwoFactorMiddleware`` intercepts admin access and redirects
+        # staff without 2FA to the setup page. This suite is not about 2FA
+        # enforcement, so grant the test user a dummy TOTP credential so the
+        # admin route runs normally.
+        from users.two_factor import encrypt_secret, generate_secret
+        user.two_factor_enabled = True
+        user.two_factor_secret = encrypt_secret(generate_secret())
+        user.save(update_fields=['two_factor_enabled', 'two_factor_secret'])
         client = Client()
         self.assertTrue(client.login(
             username=user.username,
