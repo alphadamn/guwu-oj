@@ -2,7 +2,7 @@ Django<=6.0.8
 django-simpleui
 crispy-bootstrap5>=2026.3
 django-crispy-forms>=2.6
-Pillow>=10.0.0
+Pillow>=12.3.0
 psycopg2-binary>=2.9.12
 markdown>=3.10.3
 bleach>=6.4.0
