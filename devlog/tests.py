@@ -243,7 +243,9 @@ class TrafficMetricsMiddlewareTests(TestCase):
                 'latitude': 46.2, 'longitude': 2.2,
             }
             self.client.cookies['oj_analytics_consent'] = 'accepted'
-            self.client.cookies['oj_browser_location'] = '31.2,121.5'
+            session = self.client.session
+            session['oj_browser_location'] = '31.2,121.5'
+            session.save()
             self.client.get('/')
 
         metric = TrafficBrowserLocationMetric.objects.get(
@@ -259,7 +261,11 @@ class TrafficMetricsMiddlewareTests(TestCase):
                 'country_code': 'FR', 'country_name': 'France',
                 'latitude': 46.2, 'longitude': 2.2,
             }
-            self.client.cookies['oj_browser_location'] = '31.234,121.5'
+            # An out-of-range session value (e.g. a corrupt or hand-edited
+            # session store) must be ignored so the country fallback takes over.
+            session = self.client.session
+            session['oj_browser_location'] = '91,181'
+            session.save()
             self.client.get('/')
 
         self.assertTrue(TrafficCountryMetric.objects.filter(country_code='FR').exists())
@@ -282,7 +288,11 @@ class TrafficMetricsMiddlewareTests(TestCase):
         self.assertEqual(response.status_code, 200)
         metric = TrafficBrowserLocationMetric.objects.get(day=timezone.localdate())
         self.assertEqual((float(metric.latitude), float(metric.longitude)), (31.2, 121.6))
-        self.assertEqual(response.cookies['oj_browser_location'].value, '31.2,121.6')
+        # The location is stored server-side in the session, not in a cookie.
+        self.assertEqual(response.json()['location'], '31.2,121.6')
+        self.assertNotIn('oj_browser_location', response.cookies)
+        session = self.client.session
+        self.assertEqual(session['oj_browser_location'], '31.2,121.6')
 
     def test_record_browser_location_rejects_invalid_coordinates(self):
         self.client.cookies['oj_analytics_consent'] = 'accepted'

@@ -133,19 +133,17 @@ class TrafficMetricsMiddleware:
             from devlog.models import SiteConfig
             if not SiteConfig.browser_geolocation_is_enabled():
                 raise ValueError('browser geolocation disabled')
-            raw_location = request.COOKIES.get('oj_browser_location', '')
+            # The location lives in the server-side session (written by
+            # record_browser_location) — it is never exposed to the browser,
+            # so no client-side forgery is possible. The value is always the
+            # one-decimal representation emitted by that view.
+            raw_location = request.session.get('oj_browser_location', '')
             raw_lat, raw_lon = raw_location.split(',', 1)
             browser_location = (
                 Decimal(raw_lat).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP),
                 Decimal(raw_lon).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP),
             )
-            # The cookie is client-controlled: accept only the same one-decimal
-            # representation emitted by record_browser_location().
-            if (
-                raw_lat != format(browser_location[0], '.1f')
-                or raw_lon != format(browser_location[1], '.1f')
-                or not (-90 <= browser_location[0] <= 90 and -180 <= browser_location[1] <= 180)
-            ):
+            if not (-90 <= browser_location[0] <= 90 and -180 <= browser_location[1] <= 180):
                 browser_location = None
         except (ValueError, TypeError, ArithmeticError, InvalidOperation):
             browser_location = None

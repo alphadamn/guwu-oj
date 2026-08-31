@@ -475,14 +475,32 @@
         function askLocation() {
             var asked = false;
             try { asked = window.sessionStorage.getItem('oj_geo_done') === '1'; } catch (e) { asked = false; }
-            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || asked || document.cookie.indexOf('oj_browser_location=') !== -1) return;
+            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || asked) return;
             navigator.geolocation.getCurrentPosition(function (position) {
+                // The authoritative copy of the location now lives in the
+                // server-side session, so we cannot read it from a cookie.
+                // Keep the last uploaded point in localStorage and only
+                // re-POST when the reported position actually changes —
+                // this is the "定位改变是重新上传" behaviour.
+                var lat = position.coords.latitude.toFixed(1);
+                var lon = position.coords.longitude.toFixed(1);
+                var current = lat + ',' + lon;
+                var last = '';
+                try { last = window.localStorage.getItem('oj_geo_last') || ''; } catch (e) { last = ''; }
+                if (last === current) {
+                    try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
+                    return;
+                }
                 fetch('{% url "devlog:record_browser_location" %}', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken()}, body:JSON.stringify({latitude:position.coords.latitude, longitude:position.coords.longitude})})
                     .then(function (response) {
-                        // Mark the attempt before reloading: if the cookie is not
-                        // persisted we must not re-prompt and reload forever.
+                        // Mark the attempt before reloading: if the session
+                        // write does not persist we must not re-prompt and
+                        // reload forever.
                         try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
-                        if (response.ok) window.location.reload();
+                        if (response.ok) {
+                            try { window.localStorage.setItem('oj_geo_last', current); } catch (e) {}
+                            window.location.reload();
+                        }
                     })
                     .catch(function () {});
             }, function () {
