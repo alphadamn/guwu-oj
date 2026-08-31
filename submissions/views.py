@@ -173,14 +173,14 @@ def submission_status_api(request, submission_id):
 @never_cache
 @login_required
 def submission_list(request):
-    submissions = Submission.objects.filter(user=request.user).select_related('problem', 'contest_problem__contest', 'user')
+    submissions = Submission.objects.filter(user=request.user, problem__isnull=False).select_related('problem', 'contest_problem__contest', 'user')
     return render(request, 'submissions/list.html', {'submissions': submissions})
 
 
 @never_cache
 @login_required
 def all_submissions(request):
-    submissions = Submission.objects.select_related(
+    submissions = Submission.objects.filter(problem__isnull=False).select_related(
         'user', 'problem', 'contest_problem__contest'
     ).all()
 

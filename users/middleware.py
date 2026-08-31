@@ -296,3 +296,154 @@ def _call_cfg_bool(cfg_callable) -> bool:
         return bool(cfg_callable)
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Staff two-factor + re-authentication ("sudo mode") middleware
+# ---------------------------------------------------------------------------
+
+# Admin paths whose access requires the user to have 2FA enabled. We keep
+# this conservative: any path under /admin/ counts.
+ADMIN_PATH_PREFIX = '/admin'
+
+# Destructive admin operations that require a *fresh* 2FA reauth (within
+# STAFF_REAUTH_TTL_SECONDS). Listed by URL path prefix so the middleware
+# can block them without resolving the view. Per-view / per-action
+# enforcement is added on top in devlog/admin.py and users/admin.py.
+REAUTH_REQUIRED_PATH_PREFIXES = (
+    '/admin/devlog/siteconfig/database-backup/',
+    '/admin/devlog/siteconfig/database-restore/',
+)
+
+
+def _safe_next_path(path):
+    """Only allow ``next`` paths that point inside the admin site."""
+    if not path:
+        return ''
+    if path.startswith('/admin') or path.startswith('/users/'):
+        return path
+    return ''
+
+
+class StaffTwoFactorMiddleware(MiddlewareMixin):
+    """Enforce the staff 2FA requirement on admin access.
+
+    Behaviour for an authenticated staff user hitting an admin path:
+
+    * No 2FA enabled yet → redirect to ``/users/2fa/setup/`` (forced).
+    * 2FA enabled but not completed in this session → redirect to
+      ``/users/2fa/reauth/`` so the user can re-verify. (The login flow
+      itself sets ``two_factor_verified_at`` when 2FA was completed there,
+      so a normal admin login via the patched login view will not trip
+      this branch; it is here as defense-in-depth for sessions restored
+      from cookies or otherwise bypassing the login flow.)
+    * Path matches a destructive operation in
+      ``REAUTH_REQUIRED_PATH_PREFIXES`` and the staff-reauth stamp is stale
+      → redirect to ``/users/2fa/reauth/?next=<original_path>``.
+    """
+
+    def process_request(self, request):
+        path = getattr(request, 'path', '') or ''
+        if not path.startswith(ADMIN_PATH_PREFIX):
+            return None
+
+        user = getattr(request, 'user', None)
+        if user is None or not user.is_authenticated:
+            return None
+        if not (user.is_staff or user.is_superuser):
+            return None
+
+        # 1) Staff must have 2FA enabled.
+        if not getattr(user, 'has_two_factor', False):
+            from django.urls import reverse
+            from django.shortcuts import redirect
+            from urllib.parse import urlencode
+            target = reverse('two_factor_setup')
+            qs = urlencode({'next': path, 'forced': '1'})
+            return redirect(f'{target}?{qs}')
+
+        # 2) Destructive operations need a fresh staff-reauth stamp.
+        from .views import staff_reauth_valid, require_staff_reauth
+        if path.startswith(REAUTH_REQUIRED_PATH_PREFIXES):
+            redir = require_staff_reauth(request)
+            if redir is not None:
+                return redir
+
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Per-module upload size cap middleware
+# ---------------------------------------------------------------------------
+
+def _module_upload_limits():
+    """Read the ``MODULE_UPLOAD_LIMITS`` mapping from settings.
+
+    Returns a list of ``(path_prefix, max_bytes, label)`` triples, sorted
+    longest-prefix-first so more specific rules win.
+    """
+    from django.conf import settings
+    raw = getattr(settings, 'MODULE_UPLOAD_LIMITS', {}) or {}
+    out = []
+    for key, value in raw.items():
+        if isinstance(value, (tuple, list)):
+            max_bytes, label = value[0], (value[1] if len(value) > 1 else key)
+        else:
+            max_bytes, label = value, key
+        try:
+            max_bytes = int(max_bytes)
+        except (TypeError, ValueError):
+            continue
+        if max_bytes <= 0:
+            continue
+        out.append((str(key), max_bytes, str(label)))
+    out.sort(key=lambda item: len(item[0]), reverse=True)
+    return out
+
+
+def _content_length(request):
+    raw = request.META.get('CONTENT_LENGTH') or request.META.get('HTTP_CONTENT_LENGTH')
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+class UploadCapMiddleware(MiddlewareMixin):
+    """Reject uploads larger than the per-module configured cap.
+
+    The cap is matched against the request path prefix. If a request
+    advertises a ``Content-Length`` larger than the configured limit, the
+    middleware responds with 413 (Request Entity Too Large) *before* the
+    body has been buffered, so a memory-exhausting upload cannot tie up
+    worker resources. Even requests that lie about their Content-Length are
+    caught downstream by Django's own ``DATA_UPLOAD_MAX_MEMORY_SIZE`` for
+    form-encoded bodies, and by per-view streaming checks for file uploads
+    (see ``devlog.dbbackup.stage_upload``).
+    """
+
+    def process_request(self, request):
+        # Only POST / PUT / PATCH can carry an upload body worth capping.
+        if request.method not in ('POST', 'PUT', 'PATCH'):
+            return None
+        content_length = _content_length(request)
+        if content_length is None or content_length <= 0:
+            return None
+        path = getattr(request, 'path', '') or ''
+        for prefix, max_bytes, label in _module_upload_limits():
+            if not prefix or not path.startswith(prefix):
+                continue
+            if content_length > max_bytes:
+                from django.http import HttpResponse
+                mb = max_bytes // (1024 * 1024)
+                return HttpResponse(
+                    f'上传过大：该操作允许的最大上传体积为 {mb} MB（{label}）。'
+                    f'当前请求约 {content_length // (1024 * 1024)} MB，已被拒绝。',
+                    content_type='text/plain; charset=utf-8',
+                    status=413,
+                )
+            # First matching prefix wins; the rest are irrelevant.
+            return None
+        return None

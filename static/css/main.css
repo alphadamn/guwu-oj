@@ -498,6 +498,34 @@ main.container {
     margin-top: 1rem;
 }
 
+/* Floating problem sidebar: sticks and follows the statement while scrolling */
+.problem-detail-float {
+    align-items: stretch; /* stretch columns so the sticky sidebar has room to travel */
+}
+
+.problem-detail-float .problem-sidebar-float {
+    z-index: 5;
+    max-height: calc(100vh - 6.5rem);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    padding: 0.5rem 0.5rem 1rem;
+    margin: -0.5rem 0 0;
+}
+
+.problem-detail-float .problem-sidebar-float::-webkit-scrollbar {
+    width: 6px;
+}
+
+.problem-detail-float .problem-sidebar-float::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.5);
+    border-radius: 999px;
+}
+
+.problem-detail-float .problem-sidebar-card,
+.problem-detail-float .problem-actions-card {
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
 
 
 .submission-actions {
@@ -521,6 +549,13 @@ main.container {
     .problem-sidebar-stack,
     .submission-sidebar-stack {
         position: static;
+    }
+
+    .problem-detail-float .problem-sidebar-float {
+        max-height: none;
+        overflow: visible;
+        padding: 0;
+        margin: 0;
     }
 }
 

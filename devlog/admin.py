@@ -801,6 +801,11 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
                 self.admin_site.admin_view(self.database_restore_view),
                 name='devlog_siteconfig_database_restore',
             ),
+            path(
+                'sudo-cancel/',
+                self.admin_site.admin_view(self.sudo_cancel_view),
+                name='devlog_siteconfig_sudo_cancel',
+            ),
         ]
         return custom + urls
 
@@ -813,6 +818,66 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         """
         if not request.user.is_superuser:
             raise PermissionDenied
+
+    def _require_staff_reauth(self, request):
+        """Force a fresh 2FA "sudo" challenge before destructive operations.
+
+        The :class:`users.middleware.StaffTwoFactorMiddleware` already redirects
+        stale-sudo sessions away from these paths, but the per-view check is
+        defense in depth: it also covers any caller that bypasses middleware
+        (e.g. tests, future internal admin actions). Returns a redirect to the
+        reauth page on failure, or ``None`` if sudo mode is fresh.
+        """
+        from users.views import require_staff_reauth
+        return require_staff_reauth(request)
+
+    def _consume_staff_reauth(self, request):
+        """Single-use sudo: burn the stamp the moment the operation runs.
+
+        Called right before the destructive mutation, after every permission
+        and reauth check has passed, so the *next* sensitive operation
+        requires a fresh explicit TOTP challenge.
+        """
+        from users.views import consume_staff_reauth
+        consume_staff_reauth(request)
+
+    def sudo_cancel_view(self, request):
+        """Burn the sudo stamp when the user cancels out of a sensitive
+        operation page (backup / restore), so "verify then cancel" leaves
+        nothing behind — the next attempt needs a fresh TOTP challenge."""
+        from users.views import consume_staff_reauth
+        consume_staff_reauth(request)
+        messages.info(request, '已取消本次敏感操作授权，下次执行时需重新验证。')
+        return redirect(reverse('admin:devlog_siteconfig_changelist'))
+
+    def _enforce_same_site(self, request):
+        """Defense-in-depth same-site check for the restore operation.
+
+        Django's CSRF middleware already validates the ``Origin`` header
+        against ``CSRF_TRUSTED_ORIGINS``; we additionally require that
+        *some* same-site signal (``Origin`` or ``Referer``) is present,
+        which rules out direct cross-site POST attempts that bypass cookies.
+        Returns ``True`` if the request looks same-site, ``False`` otherwise.
+        """
+        host = request.get_host()
+        origin = request.META.get('HTTP_ORIGIN') or ''
+        if origin:
+            # Strip scheme://; compare host[:port] only.
+            from urllib.parse import urlparse
+            parsed = urlparse(origin)
+            origin_host = parsed.netloc
+            if origin_host == host:
+                return True
+            return False
+        referer = request.META.get('HTTP_REFERER') or ''
+        if referer:
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            if parsed.netloc == host:
+                return True
+            return False
+        # No Origin/Referer at all on a state-changing POST — refuse.
+        return False
 
     def _backup_directory(self, request):
         from .dbbackup import BackupError
@@ -828,8 +893,15 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
 
     def database_backup_view(self, request):
         from . import dbbackup
+        from django.views.decorators.csrf import csrf_protect
+        from django.utils.decorators import method_decorator
 
         self._require_backup_permission(request)
+        # Staff-reauth (sudo) — middleware also catches this, but the in-view
+        # check guards against any direct invocation path.
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
         redirect_url = reverse('admin:devlog_siteconfig_changelist')
 
         if request.method != 'POST':
@@ -852,12 +924,17 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
                 'backup_dir': backup_dir,
                 'directory_error': directory_error,
                 'example_filename': dbbackup.suggested_filename(),
+                'sudo_active': True,
             }
             return render(
                 request,
                 'admin/devlog/siteconfig/database_backup.html',
                 context,
             )
+
+        # Single-use sudo: this POST is the destructive dump itself. Burn the
+        # reauth stamp so the next sensitive operation needs a fresh TOTP.
+        self._consume_staff_reauth(request)
 
         try:
             if request.is_secure():
@@ -892,6 +969,13 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
         from . import dbbackup
 
         self._require_backup_permission(request)
+        # Staff-reauth (sudo) — middleware also catches this, but the in-view
+        # check guards against any direct invocation path. Both GET (so the
+        # user sees the reauth banner before filling the form) and POST (so a
+        # stale sudo session cannot sneak through) are gated.
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
         redirect_url = reverse('admin:devlog_siteconfig_changelist')
         upload_allowed = request.is_secure()
 
@@ -905,11 +989,29 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
             directory_error = str(exc)
 
         if request.method == 'POST':
+            # Defense-in-depth same-site check: refuse state-changing POSTs
+            # that arrive without a same-site Origin/Referer header. Django's
+            # CSRF middleware already validates Origin against the allow-list;
+            # this additionally rules out direct cross-site POSTs that bypass
+            # the cookie (e.g. via a form on another domain).
+            if not self._enforce_same_site(request):
+                raise PermissionDenied(
+                    '导入操作要求同源请求（缺失或异常的 Origin/Referer 头）。'
+                )
             source = request.POST.get('source') or 'path'
             staged = None
             try:
                 if not request.POST.get('confirm'):
                     raise dbbackup.BackupError('请先勾选确认框，导入会覆盖当前数据库的全部数据。')
+                # Typed-name confirmation: the user must type the literal
+                # word "RESTORE" into the confirmation field. This prevents
+                # accidental / drive-by clicks from triggering a destructive
+                # import even when both the checkbox and CSRF check pass.
+                typed = (request.POST.get('confirm_name') or '').strip()
+                if typed != 'RESTORE':
+                    raise dbbackup.BackupError(
+                        '确认词不匹配。请在"确认词"输入框中输入大写字母 RESTORE 再继续。'
+                    )
                 if source == 'upload':
                     if not upload_allowed:
                         raise dbbackup.BackupError(
@@ -919,6 +1021,9 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
                     if upload is None:
                         raise dbbackup.BackupError('请选择要上传的备份文件。')
                     staged = dbbackup.stage_upload(upload)
+                    # Single-use sudo: burn the stamp right before the
+                    # destructive import.
+                    self._consume_staff_reauth(request)
                     dbbackup.restore_backup(staged)
                     messages.success(
                         request, f'已从上传文件 {upload.name} 导入数据库。请重新登录以确认状态。'
@@ -930,6 +1035,9 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
                     if not name:
                         raise dbbackup.BackupError('请选择要导入的服务器备份文件。')
                     chosen = dbbackup.resolve_inside(directory, name)
+                    # Single-use sudo: burn the stamp right before the
+                    # destructive import.
+                    self._consume_staff_reauth(request)
                     dbbackup.restore_backup(chosen)
                     messages.success(
                         request, f'已从服务器备份 {chosen.name} 导入数据库。请重新登录以确认状态。'
@@ -955,5 +1063,6 @@ class SiteConfigAdmin(_SingletonAdminMixin, admin.ModelAdmin):
             'allowed_suffixes': '、'.join(dbbackup.allowed_suffixes()),
             'accept_attr': ','.join(dbbackup.allowed_suffixes()),
             'max_upload_mb': dbbackup.MAX_UPLOAD_BYTES // (1024 * 1024),
+            'sudo_active': True,
         }
         return render(request, 'admin/devlog/siteconfig/database_restore.html', context)

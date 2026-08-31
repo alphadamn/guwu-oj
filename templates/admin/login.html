@@ -1,0 +1,118 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site_title|default:"谷物 OJ" }} · 登录</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f0f2f5;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+        }
+        .login-card {
+            width: 380px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            padding: 36px 32px 32px;
+        }
+        .login-card h1 { margin: 0 0 24px; font-size: 20px; text-align: center; color: #303133; }
+        .form-row { margin-bottom: 16px; }
+        .form-row label { display: block; margin-bottom: 6px; font-size: 14px; color: #303133; }
+        .form-row input[type=text], .form-row input[type=password] {
+            width: 100%; padding: 10px 12px; border: 1px solid #dcdfe6; border-radius: 4px;
+            font-size: 14px; outline: none; transition: border-color .2s;
+        }
+        .form-row input:focus { border-color: #409eff; }
+        .captcha-block { margin-bottom: 16px; }
+        .captcha-row { display: flex; gap: 8px; align-items: center; }
+        .captcha-row input { flex: 1; padding: 10px 12px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; }
+        .captcha-row button { padding: 9px 12px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; white-space: nowrap; }
+        .captcha-block img { display: block; margin-top: 8px; width: 180px; height: 50px; border: 1px solid #dcdfe6; border-radius: 4px; cursor: pointer; }
+        .hint { margin-top: 6px; font-size: 12px; color: #909399; }
+        .errornote {
+            background: #fef0f0; border: 1px solid #fde2e2; color: #f56c6c;
+            padding: 9px 12px; border-radius: 4px; margin-bottom: 16px; font-size: 13px;
+        }
+        .btn {
+            width: 100%; padding: 11px; border: none; border-radius: 4px; background: #409eff;
+            color: #fff; font-size: 15px; cursor: pointer;
+        }
+        .btn:hover { background: #3a8ee6; }
+    </style>
+</head>
+<body>
+<div class="login-card">
+    <h1>{{ site_header|default:"谷物 OJ 管理中心" }}</h1>
+
+    {% if form.non_field_errors %}
+        <div class="errornote">
+            {% for error in form.non_field_errors %}{{ error }}{% if not forloop.last %}<br>{% endif %}{% endfor %}
+        </div>
+    {% endif %}
+
+    <form method="post" action="{{ app_path }}" id="login-form">
+        {% csrf_token %}
+        <div class="form-row">
+            <label for="id_username">用户名</label>
+            <input type="text" name="username" id="id_username" autofocus required>
+        </div>
+        <div class="form-row">
+            <label for="id_password">密码</label>
+            <input type="password" name="password" id="id_password" required>
+        </div>
+
+        {% if captcha_required %}
+        <div class="form-row captcha-block">
+            <label for="id_captcha_answer">图形验证码</label>
+            <div class="captcha-row">
+                <input type="text" name="captcha_answer" id="id_captcha_answer"
+                       placeholder="请输入图形验证码" autocomplete="off" required>
+                <button type="button" class="captcha-refresh" title="刷新验证码">换一张</button>
+            </div>
+            <img id="captcha-img" src="{{ captcha_url }}" alt="图形验证码" title="点击刷新">
+            <input type="hidden" id="id_captcha_id" name="captcha_id" value="">
+            <input type="hidden" name="altcha" value="">
+            <div class="hint">登录失败后需要输入图形验证码；看不清？点击图片或“换一张”刷新。</div>
+        </div>
+        {% endif %}
+
+        <input type="hidden" name="next" value="{{ next }}">
+        <button type="submit" class="btn">登录</button>
+    </form>
+</div>
+
+<script src="{% static 'js/altcha-solver.js' %}?v=2"></script>
+<script>
+(function () {
+    var img = document.getElementById('captcha-img');
+    var idEl = document.getElementById('id_captcha_id');
+    var url = '{{ captcha_url }}';
+    if (!img || !idEl) return;
+    function refresh() {
+        fetch(url, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+            .then(function (resp) {
+                var newId = (resp.headers.get('X-Captcha-Id') || '').trim();
+                if (!newId) throw new Error('captcha unavailable');
+                idEl.value = newId;
+                return resp.blob();
+            })
+            .then(function (blob) { img.src = URL.createObjectURL(blob); })
+            .catch(function () { idEl.value = ''; img.removeAttribute('src'); });
+    }
+    img.addEventListener('click', refresh);
+    document.querySelectorAll('.captcha-refresh').forEach(function (el) {
+        el.addEventListener('click', refresh);
+    });
+    refresh();
+})();
+</script>
+</body>
+</html>

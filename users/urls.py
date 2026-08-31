@@ -15,6 +15,11 @@ from .views import (
     captcha_altcha,
     verify_avatar_captcha_view,
     clear_punishment_notice,
+    two_factor_verify,
+    two_factor_setup,
+    two_factor_disable,
+    two_factor_regenerate_backup,
+    two_factor_reauth,
 )
 
 urlpatterns = [
@@ -33,4 +38,10 @@ urlpatterns = [
     path('daily-check-in/', daily_check_in, name='daily_check_in'),
     path('edit/', edit_profile, name='edit_profile'),
     path('avatar/<str:username>/', avatar, name='avatar'),
+    # Two-factor authentication -------------------------------------------------
+    path('2fa/verify/', two_factor_verify, name='two_factor_verify'),
+    path('2fa/setup/', two_factor_setup, name='two_factor_setup'),
+    path('2fa/disable/', two_factor_disable, name='two_factor_disable'),
+    path('2fa/regenerate-backup/', two_factor_regenerate_backup, name='two_factor_regenerate_backup'),
+    path('2fa/reauth/', two_factor_reauth, name='two_factor_reauth'),
 ]

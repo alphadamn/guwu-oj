@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+
+{% block title %}两步验证 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-shield-lock"></i> 两步验证</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    欢迎，<strong>{{ target_user.username }}</strong>。请输入
+                    Authenticator 应用中显示的 6 位动态验证码以完成登录。
+                </p>
+
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert {% if message.tags == 'error' %}alert-danger{% elif message.tags == 'success' %}alert-success{% else %}alert-info{% endif %} small">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="id_code" class="form-label">动态验证码</label>
+                        <input type="text" class="form-control form-control-lg font-monospace"
+                               name="code" id="id_code" maxlength="20" required
+                               inputmode="numeric" autocomplete="one-time-code"
+                               placeholder="请输入 6 位动态验证码"
+                               value="{{ form.code.value|default:'' }}" autofocus>
+                        {% if form.code.errors %}
+                            <div class="text-danger small mt-1">{{ form.code.errors|join:'; ' }}</div>
+                        {% endif %}
+                        {% if form.non_field_errors %}
+                            <div class="text-danger small mt-1">{{ form.non_field_errors|join:'; ' }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg">完成登录</button>
+                    </div>
+                </form>
+
+                <div class="mt-3 d-flex justify-content-between">
+                    <a href="{% url 'login' %}" class="small text-muted">使用其他账号</a>
+                    {% if has_backup_codes %}
+                    <button type="button" class="btn btn-link btn-sm small" data-bs-toggle="collapse"
+                            data-bs-target="#backup-form" aria-expanded="false"
+                            aria-controls="backup-form">使用备用码登录</button>
+                    {% endif %}
+                </div>
+
+                {% if has_backup_codes %}
+                <div class="collapse mt-2" id="backup-form">
+                    <div class="alert alert-info small mb-2">
+                        如果丢失了 Authenticator 设备，可以在上方验证码框中输入任一 8 位备用码（区分大小写）登录。
+                        备用码只能使用一次。
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

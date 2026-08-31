@@ -24,6 +24,10 @@ from .forms import (
     PasswordResetRequestForm,
     PasswordResetForm,
     LoginFormWithCaptcha,
+    TwoFactorSetupForm,
+    TwoFactorVerifyForm,
+    TwoFactorReauthForm,
+    TwoFactorDisableForm,
 )
 from .models import User
 from .email_utils import (
@@ -50,6 +54,31 @@ from .captcha import (
 from .altcha import generate_challenge as generate_altcha_challenge
 
 logger = logging.getLogger(__name__)
+
+
+# Session keys used by the two-factor / staff-reauth flow. Keeping them in
+# one place makes it easier to audit and to flush after a successful login.
+TWO_FACTOR_PENDING_USER_KEY = 'two_factor_pending_user_id'
+TWO_FACTOR_PENDING_NEXT_KEY = 'two_factor_pending_next'
+TWO_FACTOR_VERIFIED_KEY = 'two_factor_verified_at'  # timestamp (seconds)
+TWO_FACTOR_SETUP_SECRET_KEY = 'two_factor_setup_secret'  # plaintext secret during setup
+# v2: renamed so sudo stamps that older code granted at login time (still
+# living in existing sessions until their TTL expired) become invalid at
+# once — those sessions would otherwise silently pass sensitive-operation
+# checks without a fresh explicit TOTP challenge.
+STAFF_REAUTH_AT_KEY = 'staff_reauth_at_v2'  # timestamp (seconds)
+STAFF_REAUTH_NEXT_KEY = 'staff_reauth_next'
+# The admin path this sudo stamp was verified for (see ``staff_reauth_valid``):
+# the stamp authorizes only that operation, so verifying and then canceling
+# out does NOT leave a blanket sudo grant for other sensitive operations.
+STAFF_REAUTH_TARGET_KEY = 'staff_reauth_target'
+
+# How long a successful staff-reauth ("sudo" mode) lasts before another 2FA
+# challenge is required for destructive admin actions. Imported from settings
+# so deployments can tune it.
+def _staff_reauth_ttl() -> int:
+    from django.conf import settings
+    return int(getattr(settings, 'STAFF_REAUTH_TTL_SECONDS', 30 * 60))
 
 
 # ---- Config helpers (graceful when DB / migrations are not ready yet) -----
@@ -176,6 +205,21 @@ class CustomLoginView(LoginView):
             )
         else:
             self.request.session.pop('punishment_notice', None)
+
+        # 3) Two-factor authentication — if the user has 2FA enabled, do
+        #    NOT log them in yet. Stash the user id + ``next`` in the
+        #    session and redirect to the 2FA verify view, which will
+        #    finish the login flow once a valid TOTP code is supplied.
+        #    The password itself was valid, so the captcha failure counter
+        #    is reset (we only escalate on real password failures). The
+        #    verify view enforces its own rate limit to prevent 2FA
+        #    brute-forcing.
+        if user.has_two_factor:
+            record_login_attempt(self.request, success=True)
+            self.request.session[TWO_FACTOR_PENDING_USER_KEY] = str(user.pk)
+            self.request.session[TWO_FACTOR_PENDING_NEXT_KEY] = self._next_url()
+            self.request.session.pop(TWO_FACTOR_VERIFIED_KEY, None)
+            return redirect('two_factor_verify')
 
         record_login_attempt(self.request, success=True)
         user.last_login_ip = _client_ip(self.request)
@@ -641,3 +685,334 @@ def avatar(request, username):
         cache.set(cache_key, (content_type, image_data, updated_at), timeout=3600)
 
     return _avatar_response(image_data, content_type, 'MISS')
+
+
+# ---------------------------------------------------------------------------
+# Two-factor authentication views
+# ---------------------------------------------------------------------------
+
+def _resolve_pending_2fa_user(request):
+    """Return the User stashed in the session for the 2FA login flow, or None."""
+    user_id = request.session.get(TWO_FACTOR_PENDING_USER_KEY)
+    if not user_id:
+        return None
+    try:
+        return User.objects.get(pk=user_id)
+    except (User.DoesNotExist, ValueError):
+        return None
+
+
+def _complete_2fa_login(request, user, *, next_url=''):
+    """Finish the login flow after a successful 2FA challenge."""
+    # Setting ``auth.USER_AUTHENTICATED_SESSION`` via ``login()`` rotates
+    # the session key, which invalidates the stashed user id *after* the
+    # new session is in place. We therefore stash the timestamp on the
+    # post-login session first, then perform ``login`` and re-mark it.
+    request.session.pop(TWO_FACTOR_PENDING_USER_KEY, None)
+    next_url = next_url or request.session.pop(TWO_FACTOR_PENDING_NEXT_KEY, '') or ''
+    request.session[TWO_FACTOR_VERIFIED_KEY] = int(time.time())
+    login(request, user)
+    request.session[TWO_FACTOR_VERIFIED_KEY] = int(time.time())
+    # NOTE: login-time 2FA deliberately does NOT grant the sudo stamp
+    # (``STAFF_REAUTH_AT_KEY``). Sudo mode is single-use and must always be
+    # earned through the dedicated ``two_factor_reauth`` challenge right
+    # before a destructive operation, so every sensitive action presents an
+    # explicit TOTP prompt.
+    if not next_url or not url_has_allowed_host_and_scheme(
+        next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        next_url = ''
+    return redirect(next_url or 'home')
+
+
+@ratelimit(key='ip', rate='10/m', method='POST', block=False)
+def two_factor_verify(request):
+    """Login step 2: enter the 6-digit TOTP code (or a backup code)."""
+    user = _resolve_pending_2fa_user(request)
+    if user is None:
+        messages.error(request, '两步验证会话已过期，请重新登录。')
+        return redirect('login')
+
+    # Staff users without 2FA configured are forced through the setup flow
+    # rather than the verify flow — they cannot complete a code challenge
+    # without a configured authenticator.
+    if (user.is_staff or user.is_superuser) and not user.has_two_factor:
+        return redirect(reverse('two_factor_setup') + '?forced=1')
+
+    if request.method == 'POST' and getattr(request, 'limited', False):
+        messages.error(request, '尝试次数过多，请稍后再试。')
+        form = TwoFactorVerifyForm(user=user)
+    elif request.method == 'POST':
+        form = TwoFactorVerifyForm(request.POST, user=user)
+        if form.is_valid():
+            return _complete_2fa_login(request, user)
+    else:
+        form = TwoFactorVerifyForm(user=user)
+
+    return render(request, 'users/two_factor_verify.html', {
+        'form': form,
+        'target_user': user,
+        'has_backup_codes': bool(user.two_factor_backup_codes),
+    })
+
+
+@login_required
+def two_factor_setup(request):
+    """Generate a new TOTP secret, show a QR code, and verify the first code.
+
+    Staff users who land here without 2FA configured are forced through this
+    flow before they can reach destructive admin actions (see middleware).
+    """
+    user = request.user
+
+    # Staff users without 2FA must complete setup before they can dismiss
+    # this page and continue using admin. Standard users may cancel.
+    forced = user.is_staff or user.is_superuser or request.GET.get('forced') == '1'
+
+    # If the user already has 2FA enabled, redirect to the disable page or
+    # show a "2FA already enabled" page. We allow re-setup only after an
+    # explicit disable (so the secret rotates only when the user proves
+    # they hold the current one).
+    if user.has_two_factor:
+        messages.info(request, '您已启用两步验证。如需更换设备，请先停用后再重新设置。')
+        return redirect('two_factor_disable')
+
+    if request.method == 'POST':
+        # The plaintext secret lives in the session between the GET (which
+        # renders the QR code) and the POST (which verifies the first code).
+        secret = request.session.get(TWO_FACTOR_SETUP_SECRET_KEY) or ''
+        form = TwoFactorSetupForm(request.POST, user=user, secret=secret)
+        if form.is_valid():
+            from .two_factor import (
+                encrypt_secret, generate_backup_codes, hash_backup_codes,
+            )
+            user.two_factor_secret = encrypt_secret(secret)
+            user.two_factor_enabled = True
+            backup_codes = generate_backup_codes()
+            user.two_factor_backup_codes = hash_backup_codes(backup_codes)
+            user.two_factor_setup_required = False
+            user.save(update_fields=[
+                'two_factor_secret', 'two_factor_enabled',
+                'two_factor_backup_codes', 'two_factor_setup_required',
+            ])
+            request.session.pop(TWO_FACTOR_SETUP_SECRET_KEY, None)
+            # Mark this session as having completed 2FA so the middleware
+            # doesn't immediately bounce them back into setup. This does NOT
+            # grant the sudo stamp — destructive operations still require a
+            # dedicated ``two_factor_reauth`` TOTP challenge each time.
+            request.session[TWO_FACTOR_VERIFIED_KEY] = int(time.time())
+            return render(request, 'users/two_factor_setup.html', {
+                'form': None,
+                'setup_complete': True,
+                'backup_codes': backup_codes,
+                'forced': forced,
+            })
+        # On invalid POST, fall through with the existing secret so the user
+        # can re-attempt without scanning a new QR code.
+    else:
+        from .two_factor import generate_secret
+        secret = generate_secret()
+        request.session[TWO_FACTOR_SETUP_SECRET_KEY] = secret
+        form = TwoFactorSetupForm(user=user, secret=secret)
+
+    from .two_factor import otpauth_url
+    return render(request, 'users/two_factor_setup.html', {
+        'form': form,
+        'setup_complete': False,
+        'secret': secret,
+        'otpauth_url': otpauth_url(secret, user.username),
+        'forced': forced,
+    })
+
+
+@login_required
+@ratelimit(key='user', rate='5/m', method='POST', block=False)
+def two_factor_disable(request):
+    """Disable 2FA — requires a fresh code from the user as confirmation."""
+    user = request.user
+    if not user.has_two_factor:
+        messages.info(request, '您尚未启用两步验证。')
+        return redirect('edit_profile')
+
+    if request.method == 'POST' and getattr(request, 'limited', False):
+        messages.error(request, '尝试次数过多，请稍后再试。')
+        form = TwoFactorDisableForm(user=user)
+    elif request.method == 'POST':
+        form = TwoFactorDisableForm(request.POST, user=user)
+        if form.is_valid():
+            user.two_factor_secret = ''
+            user.two_factor_enabled = False
+            user.two_factor_backup_codes = ''
+            # Staff users who disable 2FA must re-set it up before they
+            # can resume using destructive admin actions.
+            if user.is_staff or user.is_superuser:
+                user.two_factor_setup_required = True
+            user.save(update_fields=[
+                'two_factor_secret', 'two_factor_enabled',
+                'two_factor_backup_codes', 'two_factor_setup_required',
+            ])
+            request.session.pop(TWO_FACTOR_VERIFIED_KEY, None)
+            request.session.pop(STAFF_REAUTH_AT_KEY, None)
+            request.session.pop(STAFF_REAUTH_TARGET_KEY, None)
+            messages.success(request, '两步验证已停用。')
+            return redirect('edit_profile')
+    else:
+        form = TwoFactorDisableForm(user=user)
+
+    return render(request, 'users/two_factor_disable.html', {'form': form})
+
+
+@login_required
+@ratelimit(key='user', rate='5/m', method='POST', block=False)
+def two_factor_regenerate_backup(request):
+    """Regenerate backup codes — requires a fresh TOTP / backup code."""
+    user = request.user
+    if not user.has_two_factor:
+        messages.info(request, '请先启用两步验证。')
+        return redirect('two_factor_setup')
+
+    if request.method == 'POST' and getattr(request, 'limited', False):
+        messages.error(request, '尝试次数过多，请稍后再试。')
+        return redirect('edit_profile')
+    elif request.method == 'POST':
+        form = TwoFactorDisableForm(request.POST, user=user)
+        if form.is_valid():
+            from .two_factor import generate_backup_codes, hash_backup_codes
+            backup_codes = generate_backup_codes()
+            user.two_factor_backup_codes = hash_backup_codes(backup_codes)
+            user.save(update_fields=['two_factor_backup_codes'])
+            return render(request, 'users/two_factor_setup.html', {
+                'form': None,
+                'setup_complete': True,
+                'backup_codes': backup_codes,
+                'regenerated': True,
+            })
+        # On invalid POST, fall through with errors.
+    else:
+        form = TwoFactorDisableForm(user=user)
+
+    return render(request, 'users/two_factor_disable.html', {
+        'form': form,
+        'regenerate_mode': True,
+    })
+
+
+@ratelimit(key='ip', rate='10/m', method='POST', block=False)
+def two_factor_reauth(request):
+    """Staff "sudo mode" — re-verify 2FA before destructive admin actions.
+
+    The flow is:
+      1. A view that needs sudo mode calls ``require_staff_reauth(request)``
+         which, if the session's ``staff_reauth_at`` is stale or missing,
+         redirects here with ``?next=<original_path>``.
+      2. The user submits a TOTP code; on success, ``staff_reauth_at`` is
+         refreshed and they're redirected back to ``next`` (admin-only).
+    """
+    user = request.user
+    if not user.is_authenticated:
+        return redirect('login')
+    if not user.is_staff:
+        # Non-staff users should never reach here; show a 403-style message.
+        return render(request, 'users/two_factor_reauth.html', {
+            'form': None, 'not_allowed': True,
+        }, status=403)
+
+    # Staff without 2FA configured must set it up first.
+    if not user.has_two_factor:
+        return redirect(reverse('two_factor_setup') + '?forced=1')
+
+    next_url = request.GET.get('next') or request.POST.get('next') or ''
+    # ``next`` must point inside the admin so this endpoint cannot be abused
+    # as an open redirect.
+    if next_url and not next_url.startswith('/admin') \
+            and not url_has_allowed_host_and_scheme(
+                next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+        next_url = ''
+    if not next_url:
+        next_url = reverse('admin:index')
+
+    if request.method == 'POST' and getattr(request, 'limited', False):
+        messages.error(request, '尝试次数过多，请稍后再试。')
+        form = TwoFactorReauthForm(user=user)
+    elif request.method == 'POST':
+        form = TwoFactorReauthForm(request.POST, user=user)
+        if form.is_valid():
+            request.session[STAFF_REAUTH_AT_KEY] = int(time.time())
+            # Bind the stamp to the operation that was pending: only requests
+            # to this path pass ``staff_reauth_valid`` afterwards, so
+            # verifying and then canceling leaves no blanket sudo grant.
+            request.session[STAFF_REAUTH_TARGET_KEY] = next_url
+            request.session.pop(STAFF_REAUTH_NEXT_KEY, None)
+            return redirect(next_url)
+    else:
+        form = TwoFactorReauthForm(user=user)
+
+    return render(request, 'users/two_factor_reauth.html', {
+        'form': form,
+        'next_url': next_url,
+    })
+
+
+# ---- Staff-reauth helpers (used by admin actions & devlog/admin.py) -------
+
+def staff_reauth_valid(request) -> bool:
+    """True when the current staff session has a recent 2FA reauth stamp."""
+    if not request.user.is_authenticated or not request.user.is_staff:
+        return False
+    if not request.user.has_two_factor:
+        return False
+    stamped = request.session.get(STAFF_REAUTH_AT_KEY)
+    if not stamped:
+        return False
+    try:
+        age = int(time.time()) - int(stamped)
+    except (TypeError, ValueError):
+        return False
+    if not (0 <= age <= _staff_reauth_ttl()):
+        return False
+    # The stamp authorizes only the operation it was verified for: compare
+    # the request path against the target that was pending when the TOTP
+    # challenge completed. Verifying then canceling out → any other (or
+    # later) sensitive operation needs a fresh challenge.
+    from urllib.parse import urlsplit
+    target = request.session.get(STAFF_REAUTH_TARGET_KEY) or ''
+    if not target:
+        return False
+    return request.path == urlsplit(target).path
+
+
+def require_staff_reauth(request, redirect_name='two_factor_reauth'):
+    """Return a redirect to the reauth view when sudo mode is stale, else None.
+
+    Callers (admin actions, backup/restore views) check this BEFORE mutating
+    state. The original path is preserved via ``next`` so the reauth view can
+    send the user back automatically after a successful challenge.
+    """
+    if staff_reauth_valid(request):
+        return None
+    target = reverse(redirect_name)
+    full = request.get_full_path()
+    from urllib.parse import urlencode
+    return redirect(f'{target}?{urlencode({"next": full})}')
+
+
+def consume_staff_reauth(request) -> None:
+    """Burn the single-use sudo stamp once a sensitive operation runs.
+
+    Every destructive operation (database backup/restore, bulk privilege or
+    punishment changes) must be preceded by an explicit TOTP challenge, so
+    the stamp is invalidated immediately after the operation it authorized —
+    the next sensitive action requires a fresh ``two_factor_reauth`` round.
+    Call this right before the mutation, after all permission / reauth
+    checks have passed.
+    """
+    try:
+        request.session.pop(STAFF_REAUTH_AT_KEY, None)
+        request.session.pop(STAFF_REAUTH_TARGET_KEY, None)
+    except Exception:  # pragma: no cover - defensive
+        pass

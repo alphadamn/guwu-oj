@@ -158,7 +158,7 @@ def _client_ip(request) -> str:
     1. ``HTTP_X_FORWARDED_FOR`` — this is what nginx sets by default when you
        include ``proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;``
        in the server block. nginx appends the immediate upstream's address, so
-       the *first* value is always the real client IP — this is what we use.
+       the *second* value is always the real client IP — this is what we use.
     2. ``HTTP_X_REAL_IP`` — some setups (e.g. Cloudflare) write the client IP
        into this header instead.
     3. ``REMOTE_ADDR`` — the direct TCP peer (always ``127.0.0.1`` when a
@@ -171,7 +171,7 @@ def _client_ip(request) -> str:
     # 1) X-Forwarded-For (the most common)
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
     if xff:
-        candidate = xff.split(',')[0].strip()
+        candidate = xff.split(',')[1].strip()
         if _looks_like_ip(candidate):
             return candidate
 
@@ -579,7 +579,7 @@ def generate_challenge(request) -> tuple[str, str, bytes]:
         logger.warning('Captcha cache write failed (%s); continuing', exc)
 
     # 50/50 mix of the original anti-OCR renderer and the dot-matrix renderer.
-    render_mode = 'dotmatrix' if secrets.randbelow(2) == 0 else 'original'
+    render_mode = 'original' if secrets.randbelow(3) == 0 else 'dotmatrix'
     try:
         png = _render_captcha_image(answer, render_mode)
     except Exception as exc:  # pragma: no cover - best effort

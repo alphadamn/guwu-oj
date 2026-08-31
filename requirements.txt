@@ -31,6 +31,7 @@ django-crontab
 django-simpleui
 redis
 cryptography>=50.0.0
+pyotp>=2.9.0
 
 # 验证码（ALTCHA v2 工作量证明）
 altcha>=2.0

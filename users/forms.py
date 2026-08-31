@@ -239,6 +239,16 @@ class LoginFormWithCaptcha(AuthenticationForm, CaptchaMixin):
         return cleaned_data
 
 
+class AdminLoginFormWithCaptcha(LoginFormWithCaptcha):
+    """Captcha + 2FA-aware login form used by the patched Django admin login.
+
+    Behaviour is identical to :class:`LoginFormWithCaptcha`; the subclass
+    exists so admin-specific tweaks (e.g. stricter rate limits, different
+    field ordering for the admin template) can be layered on without
+    touching the public-login form.
+    """
+
+
 class SendVerificationCodeForm(forms.Form):
     email = forms.EmailField(
         required=True,
@@ -411,3 +421,105 @@ class UserUpdateForm(forms.ModelForm):
         if commit:
             user.save()
         return user
+
+
+# ---------------------------------------------------------------------------
+# Two-factor authentication forms
+# ---------------------------------------------------------------------------
+
+class TwoFactorSetupForm(forms.Form):
+    """Verify the user can read the TOTP secret before enabling 2FA."""
+
+    code = forms.CharField(
+        label='验证码',
+        max_length=6,
+        min_length=6,
+        required=True,
+        widget=forms.TextInput(attrs={
+            'autocomplete': 'one-time-code',
+            'inputmode': 'numeric',
+            'placeholder': '请输入 Authenticator 中显示的 6 位验证码',
+        }),
+    )
+
+    def __init__(self, *args, user=None, secret=None, **kwargs):
+        self.user = user
+        self.secret = secret or ''
+        super().__init__(*args, **kwargs)
+
+    def clean_code(self):
+        code = (self.cleaned_data.get('code') or '').strip()
+        if not self.user or not self.secret:
+            raise ValidationError('会话已过期，请重新设置 2FA。')
+        from .two_factor import verify_code
+        if not verify_code(self.secret, code):
+            raise ValidationError('验证码不正确，请重试。')
+        return code
+
+
+class TwoFactorVerifyForm(forms.Form):
+    """Login step 2: enter the 6-digit code (or a backup code)."""
+
+    code = forms.CharField(
+        label='两步验证码',
+        max_length=20,
+        required=True,
+        widget=forms.TextInput(attrs={
+            'autocomplete': 'one-time-code',
+            'inputmode': 'numeric',
+            'placeholder': '请输入 6 位动态验证码',
+            'autofocus': True,
+        }),
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_code(self):
+        code = (self.cleaned_data.get('code') or '').strip()
+        if not self.user:
+            raise ValidationError('会话无效，请重新登录。')
+        # Try TOTP code first.
+        if self.user.verify_two_factor_code(code):
+            self.cleaned_data['kind'] = 'totp'
+            return code
+        # Fall back to backup codes (single use).
+        if self.user.consume_two_factor_backup_code(code):
+            self.cleaned_data['kind'] = 'backup'
+            return code
+        raise ValidationError('验证码不正确或已失效。')
+
+
+class TwoFactorReauthForm(TwoFactorVerifyForm):
+    """Re-verify 2FA for staff sudo mode (same fields, clearer wording)."""
+    pass
+
+
+class TwoFactorDisableForm(forms.Form):
+    """Confirm disabling 2FA — requires a fresh code from the user."""
+
+    code = forms.CharField(
+        label='验证码',
+        max_length=20,
+        required=True,
+        widget=forms.TextInput(attrs={
+            'autocomplete': 'one-time-code',
+            'inputmode': 'numeric',
+            'placeholder': '请输入当前 2FA 验证码以确认停用',
+            'autofocus': True,
+        }),
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_code(self):
+        code = (self.cleaned_data.get('code') or '').strip()
+        if not self.user:
+            raise ValidationError('会话无效。')
+        if not (self.user.verify_two_factor_code(code)
+                or self.user.consume_two_factor_backup_code(code)):
+            raise ValidationError('验证码不正确，无法停用 2FA。')
+        return code

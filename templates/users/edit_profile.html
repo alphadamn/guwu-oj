@@ -35,6 +35,37 @@
                 </form>
             </div>
         </div>
+
+        <div class="card mt-3">
+            <div class="card-header {% if user.has_two_factor %}bg-success{% else %}bg-secondary{% endif %} text-white">
+                <h5 class="mb-0"><i class="bi bi-shield-lock"></i> 两步验证（2FA）</h5>
+            </div>
+            <div class="card-body">
+                {% if user.has_two_factor %}
+                    <p class="text-success mb-2"><i class="bi bi-check-circle-fill"></i>
+                        两步验证已启用。登录时需要输入 Authenticator 中的动态验证码。
+                    </p>
+                    <div class="d-flex flex-wrap gap-2">
+                        <a href="{% url 'two_factor_regenerate_backup' %}" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-arrow-repeat"></i> 重新生成备用码
+                        </a>
+                        <a href="{% url 'two_factor_disable' %}" class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-shield-x"></i> 停用两步验证
+                        </a>
+                    </div>
+                {% else %}
+                    <p class="mb-2">
+                        未启用两步验证。启用后，登录时除密码外还需要输入 Authenticator 生成的动态验证码，可显著提升账号安全性。
+                        {% if user.is_staff or user.is_superuser %}
+                        <strong class="text-danger">管理员账号必须启用两步验证。</strong>
+                        {% endif %}
+                    </p>
+                    <a href="{% url 'two_factor_setup' %}" class="btn btn-primary btn-sm">
+                        <i class="bi bi-shield-lock"></i> 启用两步验证
+                    </a>
+                {% endif %}
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

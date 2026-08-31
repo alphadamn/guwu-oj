@@ -46,6 +46,23 @@ class User(AbstractUser):
         '功能禁用截止时间', blank=True, null=True
     )
 
+    # --------- Two-factor authentication (TOTP, RFC 6238) -------------------
+    # ``two_factor_secret`` stores the base32 secret encrypted at rest with
+    # Fernet (key derived from ``settings.SECRET_KEY``). The field is only
+    # populated while 2FA is enabled (or during the in-progress setup flow,
+    # in which case ``two_factor_enabled`` is still False).
+    two_factor_secret = models.TextField('2FA 密钥（加密）', blank=True, default='')
+    two_factor_enabled = models.BooleanField('已启用 2FA', default=False)
+    # Comma-separated SHA-256 hashes of one-time backup / scratch codes.
+    # Plaintext codes are only ever shown once, at setup time.
+    two_factor_backup_codes = models.TextField(
+        '2FA 备用码哈希', blank=True, default='',
+    )
+    # Set when an admin forces the user to (re-)configure 2FA on next login.
+    two_factor_setup_required = models.BooleanField(
+        '下次登录需重新设置 2FA', default=False,
+    )
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = '用户'
@@ -141,6 +158,56 @@ class User(AbstractUser):
             return data
         # No active punishment.
         return None
+
+    # --------- Two-factor authentication helpers ---------------------------
+    @property
+    def two_factor_required_for_user(self) -> bool:
+        """True when this account *must* have 2FA enabled.
+
+        Staff / superuser accounts are required to use 2FA. Standard users
+        may opt in via the profile page.
+        """
+        return bool(self.is_staff or self.is_superuser)
+
+    @property
+    def has_two_factor(self) -> bool:
+        """True when 2FA has been fully configured (secret set + enabled)."""
+        return bool(self.two_factor_enabled and self.two_factor_secret)
+
+    def two_factor_secret_plain(self) -> str:
+        """Return the decrypted base32 secret, or '' if not configured."""
+        if not self.two_factor_secret:
+            return ''
+        from .two_factor import decrypt_secret
+        return decrypt_secret(self.two_factor_secret)
+
+    def verify_two_factor_code(self, code: str) -> bool:
+        """Verify a TOTP code against the stored secret."""
+        secret = self.two_factor_secret_plain()
+        if not secret or not code:
+            return False
+        from .two_factor import verify_code
+        return verify_code(secret, code)
+
+    def verify_two_factor_backup_code(self, code: str) -> bool:
+        """Verify a one-time backup / scratch code."""
+        if not code or not self.two_factor_backup_codes:
+            return False
+        from .two_factor import verify_backup_code
+        return verify_backup_code(self.two_factor_backup_codes, code)
+
+    def consume_two_factor_backup_code(self, code: str) -> bool:
+        """If ``code`` matches a stored backup code, remove it and persist.
+        Returns True on success, False otherwise."""
+        if not code or not self.two_factor_backup_codes:
+            return False
+        from .two_factor import consume_backup_code
+        remaining = consume_backup_code(self.two_factor_backup_codes, code)
+        if remaining is None:
+            return False
+        self.two_factor_backup_codes = remaining
+        self.save(update_fields=['two_factor_backup_codes'])
+        return True
 
     @property
     def has_avatar(self) -> bool:

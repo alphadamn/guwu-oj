@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+
+{% block title %}管理员二次验证 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0"><i class="bi bi-shield-lock-fill"></i> 管理员二次验证</h5>
+            </div>
+            <div class="card-body">
+                {% if not_allowed %}
+                <div class="alert alert-danger">
+                    该操作仅限已启用两步验证的管理员。
+                </div>
+                {% else %}
+                <p class="text-muted">
+                    你即将执行敏感管理操作（数据库备份 / 导入、批量用户操作等）。
+                    出于安全考虑，<strong>每次执行此类操作都需要重新验证</strong>：
+                    请输入 Authenticator 中显示的动态验证码以确认身份。
+                </p>
+
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert {% if message.tags == 'error' %}alert-danger{% elif message.tags == 'success' %}alert-success{% else %}alert-info{% endif %} small">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+
+                <form method="post" action="{% url 'two_factor_reauth' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ next_url }}">
+                    <div class="mb-3">
+                        <label for="id_code" class="form-label">动态验证码</label>
+                        <input type="text" class="form-control form-control-lg font-monospace"
+                               name="code" id="id_code" maxlength="20" required
+                               inputmode="numeric" autocomplete="one-time-code"
+                               placeholder="请输入 6 位动态验证码或备用码" autofocus>
+                        {% if form.code.errors %}
+                            <div class="text-danger small mt-1">{{ form.code.errors|join:'; ' }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-between">
+                        <a href="{% url 'admin:index' %}" class="btn btn-outline-secondary">返回后台</a>
+                        <button type="submit" class="btn btn-warning">继续操作</button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
