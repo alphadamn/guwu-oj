@@ -177,9 +177,6 @@ def _client_ip(request) -> str:
     """
     # 1) X-Forwarded-For, trusted-proxy aware
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(xff)
     if xff:
         from django.conf import settings
         trusted = set(getattr(settings, 'TRUSTED_PROXY_IPS', None) or [])
@@ -191,7 +188,6 @@ def _client_ip(request) -> str:
         if parts:
             # Rightmost remaining entry = the original client address.
             candidate = parts[-1]
-            print(candidate)
             if _looks_like_ip(candidate):
                 return candidate
 
