@@ -125,6 +125,46 @@ def _punishment_for_view(punishment: dict, user) -> dict:
     return out
 
 
+def _login_failure_reason(form) -> str:
+    """Map a failed login form's errors to a single Chinese reason.
+
+    The login template renders neither ``form.non_field_errors()`` nor the
+    per-field error lists, so without this the page just re-renders with no
+    explanation. Django's ``AuthenticationForm`` tags credential failures
+    with ``code='invalid_login'`` and disabled accounts with
+    ``code='inactive'``; the captcha mixin raises plain (Chinese) messages.
+    We surface the most actionable error first.
+    """
+    if form is None or not getattr(form, 'errors', None):
+        return '登录失败，请重试。'
+    data = form.errors.as_data()
+    non_field = data.get('__all__') or []
+    # Captcha mistakes are the most actionable (refresh + retype) — surface
+    # their message verbatim before credential/inactive reasons.
+    for err in non_field:
+        for msg in getattr(err, 'messages', []) or []:
+            if '验证码' in str(msg):
+                return str(msg)
+    # Django auth sets explicit codes on credential / inactive errors.
+    for err in non_field:
+        code = getattr(err, 'code', '') or ''
+        if code == 'invalid_login':
+            return '用户名或密码错误，请重试。'
+        if code == 'inactive':
+            return '该账户已被停用，请联系管理员。'
+    # A field-level error on username/password usually means bad credentials
+    # (e.g. the required-field check fired before auth ran).
+    if data.get('username') or data.get('password'):
+        return '用户名或密码错误，请重试。'
+    parts = [
+        str(m)
+        for errs in data.values()
+        for err in errs
+        for m in (getattr(err, 'messages', []) or [])
+    ]
+    return ' '.join(parts) or '登录失败，请重试。'
+
+
 # ---- Views -----------------------------------------------------------------
 
 
@@ -152,6 +192,12 @@ class CustomLoginView(LoginView):
 
     def form_invalid(self, form):
         record_login_attempt(self.request, success=False)
+        # Surface *why* the login failed via the messages framework. The
+        # login template does not render form errors, so without this a bad
+        # password looks indistinguishable from a network hiccup. Capture the
+        # reason from the submitted (bound) form BEFORE we potentially
+        # rebuild it — a fresh form carries no errors.
+        messages.error(self.request, _login_failure_reason(form))
         # ``login_requires_captcha`` now reflects the incremented failure
         # count, but the *form* above was built before this failure was
         # recorded, so it may lack the captcha fields. Rebuild it so the
@@ -925,13 +971,19 @@ def two_factor_reauth(request):
 
     next_url = request.GET.get('next') or request.POST.get('next') or ''
     # ``next`` must point inside the admin so this endpoint cannot be abused
-    # as an open redirect.
+    # as an open redirect. Warn when we drop an off-site target instead of
+    # failing silently — otherwise a rejected ``next`` looks like the reauth
+    # "did nothing" and sent the user to the dashboard for no reason.
     if next_url and not next_url.startswith('/admin') \
             and not url_has_allowed_host_and_scheme(
                 next_url,
                 allowed_hosts={request.get_host()},
                 require_https=request.is_secure(),
             ):
+        messages.warning(
+            request,
+            '返回地址不在本站域内，已忽略该跳转参数并改至后台首页。'
+        )
         next_url = ''
     if not next_url:
         next_url = reverse('admin:index')
@@ -948,6 +1000,19 @@ def two_factor_reauth(request):
             # verifying and then canceling leaves no blanket sudo grant.
             request.session[STAFF_REAUTH_TARGET_KEY] = next_url
             request.session.pop(STAFF_REAUTH_NEXT_KEY, None)
+            # Last line of defense at the redirect point: never send the
+            # browser to an off-site URL even if a later code path touched
+            # ``next_url`` between the top-of-view validation and here.
+            if next_url and not url_has_allowed_host_and_scheme(
+                next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                messages.warning(
+                    request,
+                    '返回地址不在本站域内，已取消跳转并返回后台首页。'
+                )
+                next_url = reverse('admin:index')
             return redirect(next_url)
     else:
         form = TwoFactorReauthForm(user=user)

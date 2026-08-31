@@ -240,7 +240,11 @@
     <main class="container py-4">
         {% if messages %}
             {% for message in messages %}
+                {% if message.tags == 'error' %}
+                <div class="alert alert-danger alert-dismissible fade show animate-in border-0 rounded-3 shadow-sm" role="alert" style="background:rgba(220,38,38,0.10);color:#b91c1c;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">
+                {% else %}
                 <div class="alert alert-{{ message.tags }} alert-dismissible fade show animate-in" role="alert">
+                {% endif %}
                     {{ message }}
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
