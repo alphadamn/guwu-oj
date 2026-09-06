@@ -62,7 +62,15 @@ class ContestEnrollmentAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        # 报名记录为审计数据：禁止在本应用自身的 admin 页面直接删除；
+        # 但删除用户等级联删除时请求目标是其它模型（如 users_user_delete），
+        # 此时回落到默认权限判断，避免超级用户删除账号时被 perms_needed 拦截。
+        match = getattr(request, 'resolver_match', None)
+        if match is not None and match.url_name.startswith(
+            f'{self.model._meta.app_label}_'
+        ):
+            return False
+        return super().has_delete_permission(request, obj)
 
 @admin.register(ContestProblem)
 class ContestProblemAdmin(admin.ModelAdmin):

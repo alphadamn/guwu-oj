@@ -44,7 +44,17 @@ class DailyCheckInAdmin(admin.ModelAdmin):
         return request.method in ('GET', 'HEAD') and super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        # 审计记录：禁止在本应用自身的 admin 页面直接删除（列表动作、删除
+        # 按钮、删除视图）；但删除用户等级联删除时请求目标是其它模型
+        # （如 users_user_delete / users_user_changelist），此时回落到
+        # 默认权限判断——否则无条件返回 False 会让级联对象进入
+        # perms_needed，连超级用户都无法完成账号删除。
+        match = getattr(request, 'resolver_match', None)
+        if match is not None and match.url_name.startswith(
+            f'{self.model._meta.app_label}_'
+        ):
+            return False
+        return super().has_delete_permission(request, obj)
 
 
 @admin.register(PointLedgerEntry)
@@ -64,4 +74,14 @@ class PointLedgerEntryAdmin(admin.ModelAdmin):
         return request.method in ('GET', 'HEAD') and super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        # 审计记录：禁止在本应用自身的 admin 页面直接删除（列表动作、删除
+        # 按钮、删除视图）；但删除用户等级联删除时请求目标是其它模型
+        # （如 users_user_delete / users_user_changelist），此时回落到
+        # 默认权限判断——否则无条件返回 False 会让级联对象进入
+        # perms_needed，连超级用户都无法完成账号删除。
+        match = getattr(request, 'resolver_match', None)
+        if match is not None and match.url_name.startswith(
+            f'{self.model._meta.app_label}_'
+        ):
+            return False
+        return super().has_delete_permission(request, obj)
