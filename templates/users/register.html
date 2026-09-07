@@ -81,6 +81,7 @@
                              style="width:180px; height:50px; cursor:pointer;"
                              title="点击刷新">
                         <input type="hidden" id="id_captcha_id" name="captcha_id" value="{{ captcha_id }}">
+                        <input type="hidden" name="altcha" value="">
                         {% if form.captcha_answer.errors %}
                             <div class="text-danger small mt-1">{{ form.captcha_answer.errors|striptags }}</div>
                         {% endif %}

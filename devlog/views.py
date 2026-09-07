@@ -42,7 +42,14 @@ def _browser_location_rate_ok(request) -> bool:
 @csrf_protect
 @require_POST
 def record_browser_location(request):
-    """Store only a consented, one-decimal browser location point."""
+    """Store only a consented, one-decimal browser location point.
+
+    The coordinates are kept server-side in ``request.session`` (key
+    ``oj_browser_location``) instead of a client-readable cookie, so the
+    value cannot be read or forged by the browser.  The client is expected
+    to re-POST whenever the reported location changes; only a changed (or
+    absent) value increments the aggregate counter.
+    """
     if request.COOKIES.get('oj_analytics_consent') != 'accepted':
         return JsonResponse({'detail': 'Analytics consent required'}, status=403)
     from .models import SiteConfig
@@ -60,21 +67,25 @@ def record_browser_location(request):
         return JsonResponse({'detail': 'Invalid coordinates'}, status=400)
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         return JsonResponse({'detail': 'Invalid coordinates'}, status=400)
-    from django.db import IntegrityError
-    from django.db.models import F
-    today = timezone.localdate()
-    updated = TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
-    if not updated:
-        try:
-            TrafficBrowserLocationMetric.objects.create(day=today, latitude=latitude, longitude=longitude, requests=1)
-        except IntegrityError:
-            TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
-    response = JsonResponse({'ok': True})
-    response.set_cookie(
-        'oj_browser_location', f'{latitude},{longitude}', max_age=31536000,
-        samesite='Lax', secure=request.is_secure(),
-    )
-    return response
+    stored = f'{latitude},{longitude}'
+    # Only count the upload when the location actually changed; otherwise a
+    # client refreshing its session would inflate the aggregate on every
+    # re-upload of the same point.
+    previous = request.session.get('oj_browser_location')
+    if previous != stored:
+        from django.db import IntegrityError
+        from django.db.models import F
+        today = timezone.localdate()
+        updated = TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
+        if not updated:
+            try:
+                TrafficBrowserLocationMetric.objects.create(day=today, latitude=latitude, longitude=longitude, requests=1)
+            except IntegrityError:
+                TrafficBrowserLocationMetric.objects.filter(day=today, latitude=latitude, longitude=longitude).update(requests=F('requests') + 1)
+    # Authoritative server-side copy: the browser can neither read nor
+    # tamper with this value. SessionMiddleware persists it on the response.
+    request.session['oj_browser_location'] = stored
+    return JsonResponse({'ok': True, 'location': stored})
 
 
 # Cache keys written by the devlog module. ``clear_devlog_cache`` drops

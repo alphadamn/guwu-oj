@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+
+{% block title %}两步验证设置 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7 col-lg-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-shield-lock"></i> 两步验证（2FA）</h5>
+            </div>
+            <div class="card-body">
+                {% if setup_complete %}
+                    <div class="alert alert-success" role="alert">
+                        <h6 class="alert-heading">两步验证已启用</h6>
+                        <p class="mb-2">请将以下备用码保存到安全的地方。每个码仅可使用一次，用于在丢失 Authenticator 时登录账号。</p>
+                        {% if regenerated %}
+                            <p class="mb-2 text-warning"><strong>注意：</strong>旧的备用码已失效，请使用下面这批新的备用码。</p>
+                        {% endif %}
+                    </div>
+                    <div class="backup-codes-box my-3">
+                        <ul class="list-group list-group-flush">
+                            {% for code in backup_codes %}
+                            <li class="list-group-item font-monospace" style="letter-spacing: 1px;">{{ code }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="window.print()">打印备用码</button>
+                        <a href="{% url 'edit_profile' %}" class="btn btn-primary btn-sm">完成</a>
+                    </div>
+                {% else %}
+                    {% if forced %}
+                    <div class="alert alert-warning" role="alert">
+                        <strong>必须启用两步验证。</strong>管理员 / 超级用户账号必须开启两步验证后才能使用后台与执行敏感操作。
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info" role="alert">
+                        启用两步验证后，登录时除了密码还需要输入由 Authenticator 应用生成的动态验证码。
+                    </div>
+                    {% endif %}
+
+                    <ol class="mb-3">
+                        <li>在手机上安装 <strong>Google Authenticator</strong>、<strong>Microsoft Authenticator</strong>、<strong>Authy</strong> 等任一支持 TOTP 的应用。</li>
+                        <li>扫描下方二维码，或手动输入密钥。</li>
+                        <li>输入应用中显示的 6 位验证码完成绑定。</li>
+                    </ol>
+
+                    <div class="text-center mb-3">
+                        <div id="qr-target" class="d-inline-block p-2 border rounded bg-white"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">手动输入密钥（如果无法扫描二维码）</label>
+                        <div class="input-group">
+                            <input type="text" id="secret-text" class="form-control font-monospace"
+                                   value="{{ secret }}" readonly>
+                            <button class="btn btn-outline-secondary" type="button"
+                                    id="copy-secret-btn" title="复制">复制</button>
+                        </div>
+                    </div>
+
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label for="id_code" class="form-label">动态验证码</label>
+                            <input type="text" class="form-control font-monospace"
+                                   name="code" id="id_code" maxlength="6" minlength="6"
+                                   inputmode="numeric" autocomplete="one-time-code"
+                                   placeholder="请输入 6 位动态验证码" required autofocus>
+                            {% if form.code.errors %}
+                                <div class="text-danger small mt-1">{{ form.code.errors|join:'; ' }}</div>
+                            {% endif %}
+                        </div>
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-between">
+                            {% if not forced %}
+                            <a href="{% url 'edit_profile' %}" class="btn btn-outline-secondary">取消</a>
+                            {% else %}
+                            <span class="text-muted small align-self-center">设置完成后才可继续操作。</span>
+                            {% endif %}
+                            <button type="submit" class="btn btn-primary">启用两步验证</button>
+                        </div>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+(function () {
+    var target = document.getElementById('qr-target');
+    var url = '{{ otpauth_url|escapejs }}';
+    if (!target || !url || typeof QRCode === 'undefined') return;
+    new QRCode(target, {
+        text: url,
+        width: 220,
+        height: 220,
+        correctLevel: QRCode.CorrectLevel.M,
+    });
+
+    var btn = document.getElementById('copy-secret-btn');
+    if (btn) {
+        btn.addEventListener('click', function () {
+            var input = document.getElementById('secret-text');
+            if (!input) return;
+            try {
+                input.select();
+                input.setSelectionRange(0, 99999);
+                document.execCommand('copy');
+                btn.textContent = '已复制';
+                setTimeout(function () { btn.textContent = '复制'; }, 1500);
+            } catch (e) {}
+        });
+    }
+})();
+</script>
+{% endblock %}

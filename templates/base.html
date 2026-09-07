@@ -240,7 +240,11 @@
     <main class="container py-4">
         {% if messages %}
             {% for message in messages %}
+                {% if message.tags == 'error' %}
+                <div class="alert alert-danger alert-dismissible fade show animate-in border-0 rounded-3 shadow-sm" role="alert" style="background:rgba(220,38,38,0.10);color:#b91c1c;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">
+                {% else %}
                 <div class="alert alert-{{ message.tags }} alert-dismissible fade show animate-in" role="alert">
+                {% endif %}
                     {{ message }}
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
@@ -274,7 +278,8 @@
     </script>
     <script src="{{ OJ_BOOTSTRAP_JS|default:"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" }}"></script>
     <script src="{% static 'js/main.js' %}"></script>
-    <script src="{% static 'js/avatar-captcha.js' %}"></script>
+    <script src="{% static 'js/altcha-solver.js' %}?v=2"></script>
+    <script src="{% static 'js/avatar-captcha.js' %}?v=5"></script>
     <script>
     (function () {
         const form = document.querySelector('form.navbar-search-form');
@@ -474,14 +479,32 @@
         function askLocation() {
             var asked = false;
             try { asked = window.sessionStorage.getItem('oj_geo_done') === '1'; } catch (e) { asked = false; }
-            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || asked || document.cookie.indexOf('oj_browser_location=') !== -1) return;
+            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || asked) return;
             navigator.geolocation.getCurrentPosition(function (position) {
+                // The authoritative copy of the location now lives in the
+                // server-side session, so we cannot read it from a cookie.
+                // Keep the last uploaded point in localStorage and only
+                // re-POST when the reported position actually changes —
+                // this is the "定位改变是重新上传" behaviour.
+                var lat = position.coords.latitude.toFixed(1);
+                var lon = position.coords.longitude.toFixed(1);
+                var current = lat + ',' + lon;
+                var last = '';
+                try { last = window.localStorage.getItem('oj_geo_last') || ''; } catch (e) { last = ''; }
+                if (last === current) {
+                    try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
+                    return;
+                }
                 fetch('{% url "devlog:record_browser_location" %}', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken()}, body:JSON.stringify({latitude:position.coords.latitude, longitude:position.coords.longitude})})
                     .then(function (response) {
-                        // Mark the attempt before reloading: if the cookie is not
-                        // persisted we must not re-prompt and reload forever.
+                        // Mark the attempt before reloading: if the session
+                        // write does not persist we must not re-prompt and
+                        // reload forever.
                         try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
-                        if (response.ok) window.location.reload();
+                        if (response.ok) {
+                            try { window.localStorage.setItem('oj_geo_last', current); } catch (e) {}
+                            window.location.reload();
+                        }
                     })
                     .catch(function () {});
             }, function () {

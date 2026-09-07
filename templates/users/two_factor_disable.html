@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+
+{% block title %}停用两步验证 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-header {% if regenerate_mode %}bg-warning{% else %}bg-danger{% endif %} text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-shield-lock-fill"></i>
+                    {% if regenerate_mode %}重新生成备用码{% else %}停用两步验证{% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if regenerate_mode %}
+                <div class="alert alert-warning" role="alert">
+                    重新生成后，<strong>旧的备用码将立即失效</strong>。请将新备用码妥善保存。
+                </div>
+                <p>请输入当前的动态验证码或备用码以确认重新生成。</p>
+                {% else %}
+                <div class="alert alert-danger" role="alert">
+                    停用两步验证会降低账号安全等级。
+                    {% if request.user.is_staff or request.user.is_superuser %}
+                    <strong>管理员停用后将无法继续访问后台，必须重新设置 2FA 才能恢复。</strong>
+                    {% endif %}
+                </div>
+                <p>请输入当前的动态验证码或备用码以确认停用。</p>
+                {% endif %}
+
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert {% if message.tags == 'error' %}alert-danger{% elif message.tags == 'success' %}alert-success{% else %}alert-info{% endif %} small">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="id_code" class="form-label">验证码</label>
+                        <input type="text" class="form-control form-control-lg font-monospace"
+                               name="code" id="id_code" maxlength="20" required
+                               inputmode="numeric" autocomplete="one-time-code"
+                               placeholder="请输入 6 位动态验证码或 8 位备用码" autofocus>
+                        {% if form.code.errors %}
+                            <div class="text-danger small mt-1">{{ form.code.errors|join:'; ' }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-between">
+                        <a href="{% url 'edit_profile' %}" class="btn btn-outline-secondary">取消</a>
+                        <button type="submit" class="btn {% if regenerate_mode %}btn-warning{% else %}btn-danger{% endif %}">
+                            {% if regenerate_mode %}重新生成{% else %}确认停用{% endif %}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

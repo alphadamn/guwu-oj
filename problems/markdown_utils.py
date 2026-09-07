@@ -1,5 +1,6 @@
 import re
 import hashlib
+import html
 
 import markdown
 import bleach
@@ -30,11 +31,11 @@ _INLINE_MATH_RE = re.compile(
 
 
 def _protect_math(text):
-    """Replace math with placeholders so Markdown/bleach do not break LaTeX."""
     storage = []
 
     def stash(match):
-        storage.append(match.group(0))
+        # 关键修复：存储转义后的内容，而不是原始内容
+        storage.append(html.escape(match.group(0)))
         return f'[[MATH{len(storage) - 1}]]'
 
     for pattern in _DISPLAY_MATH_PATTERNS:
@@ -67,7 +68,7 @@ def render_markdown(text):
         return ''
     
     # Generate cache key based on content hash
-    content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+    content_hash = hashlib.md5(text.encode('utf-8'), usedforsecurity=False).hexdigest()
     cache_key = f'markdown_render_{content_hash}'
     
     # Try to get cached result

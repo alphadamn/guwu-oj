@@ -96,4 +96,6 @@ class PointLedgerEntry(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.user} {self.amount:+d} ({self.event_type})'
+        # amount 是 DecimalField，不能使用仅适用于整数的 '+d' 呈现类型，
+        # 否则在 admin 删除确认页渲染关联对象时会抛出 ValueError。
+        return f'{self.user} {self.amount:+} ({self.event_type})'

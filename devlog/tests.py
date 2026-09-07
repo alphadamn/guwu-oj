@@ -22,10 +22,19 @@ from submissions.models import Submission
 
 class DashboardMetricsTests(TestCase):
     def setUp(self):
-        self.staff = get_user_model().objects.create_superuser(
+        User = get_user_model()
+        self.staff = User.objects.create_superuser(
             username='dashboard-admin', email='dashboard@example.com', password='pass'
         )
-        self.author = get_user_model().objects.create_user(
+        # ``StaffTwoFactorMiddleware`` blocks admin access for staff without
+        # 2FA enabled. Give the test superuser a dummy TOTP secret so admin
+        # routes behave normally in this suite (this suite is about the
+        # dashboard aggregates, not the 2FA enforcement layer).
+        from users.two_factor import encrypt_secret, generate_secret
+        self.staff.two_factor_enabled = True
+        self.staff.two_factor_secret = encrypt_secret(generate_secret())
+        self.staff.save(update_fields=['two_factor_enabled', 'two_factor_secret'])
+        self.author = User.objects.create_user(
             username='author', email='author@example.com', password='pass'
         )
         self.problem = Problem.objects.create(
@@ -243,7 +252,9 @@ class TrafficMetricsMiddlewareTests(TestCase):
                 'latitude': 46.2, 'longitude': 2.2,
             }
             self.client.cookies['oj_analytics_consent'] = 'accepted'
-            self.client.cookies['oj_browser_location'] = '31.2,121.5'
+            session = self.client.session
+            session['oj_browser_location'] = '31.2,121.5'
+            session.save()
             self.client.get('/')
 
         metric = TrafficBrowserLocationMetric.objects.get(
@@ -259,7 +270,11 @@ class TrafficMetricsMiddlewareTests(TestCase):
                 'country_code': 'FR', 'country_name': 'France',
                 'latitude': 46.2, 'longitude': 2.2,
             }
-            self.client.cookies['oj_browser_location'] = '31.234,121.5'
+            # An out-of-range session value (e.g. a corrupt or hand-edited
+            # session store) must be ignored so the country fallback takes over.
+            session = self.client.session
+            session['oj_browser_location'] = '91,181'
+            session.save()
             self.client.get('/')
 
         self.assertTrue(TrafficCountryMetric.objects.filter(country_code='FR').exists())
@@ -282,7 +297,11 @@ class TrafficMetricsMiddlewareTests(TestCase):
         self.assertEqual(response.status_code, 200)
         metric = TrafficBrowserLocationMetric.objects.get(day=timezone.localdate())
         self.assertEqual((float(metric.latitude), float(metric.longitude)), (31.2, 121.6))
-        self.assertEqual(response.cookies['oj_browser_location'].value, '31.2,121.6')
+        # The location is stored server-side in the session, not in a cookie.
+        self.assertEqual(response.json()['location'], '31.2,121.6')
+        self.assertNotIn('oj_browser_location', response.cookies)
+        session = self.client.session
+        self.assertEqual(session['oj_browser_location'], '31.2,121.6')
 
     def test_record_browser_location_rejects_invalid_coordinates(self):
         self.client.cookies['oj_analytics_consent'] = 'accepted'

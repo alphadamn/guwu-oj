@@ -317,6 +317,92 @@ class UserAdmin(BaseUserAdmin):
         return self.solved_count(obj)
 
     # ------ Actions ---------------------------------------------------------
+    def _require_staff_reauth(self, request):
+        """Force a fresh 2FA "sudo" challenge before sensitive bulk actions.
+
+        Returns a redirect to the reauth view on failure (caller must return
+        that response immediately), or ``None`` if sudo mode is fresh. The
+        :class:`users.middleware.StaffTwoFactorMiddleware` already intercepts
+        stale-sudo sessions for the changelist ``/admin/users/user/`` paths,
+        but admin actions are dispatched *within* those paths, so the
+        per-action check is the actual enforcement point.
+        """
+        from users.views import require_staff_reauth
+        return require_staff_reauth(request)
+
+    def _consume_staff_reauth(self, request):
+        """Single-use sudo: burn the stamp once the action is authorized.
+
+        Called right before the mutation, after the permission and reauth
+        checks have passed, so the *next* sensitive action requires a fresh
+        explicit TOTP challenge.
+        """
+        from users.views import consume_staff_reauth
+        consume_staff_reauth(request)
+
+    # ------ Change-form privilege gate ---------------------------------------
+    def _post_privilege_changes(self, request, obj) -> bool:
+        """True when this change/add-form POST would alter privilege fields.
+
+        Compares submitted values against the DB values so admins can still
+        edit ordinary profile fields without a TOTP challenge. Only called
+        for superusers (non-superusers cannot change these fields at all —
+        ``save_model`` force-resets them).
+        """
+        post = request.POST
+        if obj is None:
+            # Add form: creating a staff / superuser or assigning groups.
+            return bool(
+                post.get('is_staff') or post.get('is_superuser')
+                or post.getlist('groups') or post.getlist('user_permissions')
+            )
+        # Booleans: a checked checkbox is present in POST, unchecked is not.
+        if bool(post.get('is_staff')) != bool(obj.is_staff):
+            return True
+        if bool(post.get('is_superuser')) != bool(obj.is_superuser):
+            return True
+        for field in ('groups', 'user_permissions'):
+            # M2M widgets submit nothing when empty, so always compare
+            # (absent == empty selection == "cleared" if any were set).
+            current = set(getattr(obj, field).values_list('pk', flat=True))
+            try:
+                submitted = {int(v) for v in post.getlist(field)}
+            except (TypeError, ValueError):
+                return True
+            if submitted != current:
+                return True
+        return False
+
+    def changeform_view(self, request, object_id=None, form_url='',
+                        extra_context=None):
+        """Gate the user change/add form behind 2FA sudo when privileges
+        change — this is the per-user path to "making a user admin /
+        superuser", on top of the gated bulk actions."""
+        if request.method == 'POST' and _is_superuser(request):
+            obj = self.get_object(request, object_id) if object_id else None
+            if self._post_privilege_changes(request, obj):
+                sudo_redirect = self._require_staff_reauth(request)
+                if sudo_redirect is not None:
+                    return sudo_redirect
+                # Burn the stamp only after the form actually saves (see
+                # response_change / response_add), so a validation error
+                # does not waste it.
+                request._sudo_privilege_save = True
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+    def _consume_sudo_after_privilege_save(self, request):
+        if getattr(request, '_sudo_privilege_save', False):
+            request._sudo_privilege_save = False
+            self._consume_staff_reauth(request)
+
+    def response_change(self, request, obj):
+        self._consume_sudo_after_privilege_save(request)
+        return super().response_change(request, obj)
+
+    def response_add(self, request, obj, post_url_continue=None):
+        self._consume_sudo_after_privilege_save(request)
+        return super().response_add(request, obj, post_url_continue)
+
     @admin.action(description='启用选中的用户')
     def activate_users(self, request, queryset):
         updated = queryset.update(is_active=True)
@@ -324,6 +410,10 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='禁用选中的用户')
     def deactivate_users(self, request, queryset):
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         updated = queryset.exclude(pk=request.user.pk).update(is_active=False)
         self.message_user(request, f'已禁用 {updated} 个用户。')
 
@@ -332,6 +422,11 @@ class UserAdmin(BaseUserAdmin):
         if not _is_superuser(request):
             self.message_user(request, '仅超级用户可执行此操作。', level=messages.ERROR)
             return
+        # Privilege escalation: require fresh 2FA sudo even for superusers.
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         updated = queryset.update(is_staff=True)
         self.message_user(request, f'已将 {updated} 个用户设为管理员。')
 
@@ -340,6 +435,11 @@ class UserAdmin(BaseUserAdmin):
         if not _is_superuser(request):
             self.message_user(request, '仅超级用户可执行此操作。', level=messages.ERROR)
             return
+        # Privilege de-escalation: require fresh 2FA sudo even for superusers.
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         updated = queryset.exclude(pk=request.user.pk).update(is_staff=False)
         self.message_user(request, f'已取消 {updated} 个用户的管理员权限。')
 
@@ -370,6 +470,12 @@ class UserAdmin(BaseUserAdmin):
         if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
             self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
             return
+        # Punishment actions are destructive and bulk-applied: require fresh
+        # 2FA sudo before any row is written.
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_PERMANENT_BAN, days=None, feature='',
@@ -380,6 +486,10 @@ class UserAdmin(BaseUserAdmin):
         if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
             self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
             return
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_TEMP_BAN, days=7, feature='',
@@ -390,6 +500,10 @@ class UserAdmin(BaseUserAdmin):
         if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
             self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
             return
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_TEMP_BAN, days=30, feature='',
@@ -400,6 +514,10 @@ class UserAdmin(BaseUserAdmin):
         if not (_is_superuser(request) or _has_userpunishment_perm(request, 'delete')):
             self.message_user(request, '需要用户处罚删除权限才能执行此操作。', level=messages.ERROR)
             return
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         updated = queryset.exclude(pk=request.user.pk).update(
             is_permanently_banned=False,
             banned_until=None,
@@ -414,6 +532,10 @@ class UserAdmin(BaseUserAdmin):
         if not (_is_superuser(request) or _has_userpunishment_perm(request, 'add')):
             self.message_user(request, '需要用户处罚权限才能执行此操作。', level=messages.ERROR)
             return
+        sudo_redirect = self._require_staff_reauth(request)
+        if sudo_redirect is not None:
+            return sudo_redirect
+        self._consume_staff_reauth(request)
         self._create_punishments(
             request, queryset,
             kind=UserPunishment.TYPE_FEATURE, days=7, feature='submit',

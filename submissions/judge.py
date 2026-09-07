@@ -24,6 +24,9 @@ Key performance / stability changes:
 """
 
 import os
+import os.path
+import pwd
+import grp
 import re
 import shlex
 import shutil
@@ -145,10 +148,19 @@ class SandboxRunner:
         self._global_timeout_sec = None  # loaded lazily
 
     # ── context manager ──────────────────────────────────────────────────
+    def chown_rec(self, path, user, group):
+        uid = pwd.getpwnam(user).pw_uid
+        gid = grp.getgrnam(group).gr_gid
 
+        for root, dirs, files in os.walk(path):
+            os.chown(root, uid, gid)          # 处理当前目录
+            for name in dirs + files:         # 处理所有子项（目录和文件）
+                os.chown(os.path.join(root, name), uid, gid)
+    
     def __enter__(self):
         try:
-            os.chmod(self.work_dir, 0o777)
+            self.chown_rec(self.work_dir, "nobody", "nogroup")
+            os.chmod(self.work_dir, 0o754)
         except OSError:
             pass
         self._container = JudgeContainer(
@@ -226,7 +238,7 @@ class SandboxRunner:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         # chmod via host filesystem (work_dir is bind-mounted).
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -245,7 +257,7 @@ class SandboxRunner:
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -264,7 +276,7 @@ class SandboxRunner:
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -283,7 +295,7 @@ class SandboxRunner:
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
@@ -309,14 +321,18 @@ class SandboxRunner:
         except subprocess.TimeoutExpired:
             return None, "Compile timeout"
         try:
-            os.chmod(Path(self.work_dir) / "main", 0o755)
+            os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:
             pass
         return "./main", None
 
     def compile_java(self, code):
         class_name = extract_java_class_name(code)
-        src = Path(self.work_dir) / f"{class_name}.java"
+        #src = Path(self.work_dir) / f"{class_name}.java"
+        src = os.path.realpath(os.path.join(self.work_dir, f"{class_name}.java"))
+        if not src.startswith(self.work_dir):
+            return None, "Invalid file path"
+        src = Path(src)
         src.write_text(code, encoding="utf-8")
         try:
             res = self._run(

@@ -38,6 +38,8 @@ CSRF_TRUSTED_ORIGINS = sorted({
             'http://guwu.camluni.cn:3001',
             'https://guwu.camluni.cn',
             'https://guwu.camluni.cn:3001',
+            'https://guwu.camluni.cn:8445',
+            'http://guwu.camluni.cn:8445',
         ]
     )
     if origin.strip()
@@ -77,6 +79,9 @@ if not TEST_MODE:
 MIDDLEWARE = [
     'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Reject oversize uploads as early as possible (before the request body
+    # is buffered) so a memory-exhausting upload cannot tie up a worker.
+    'users.middleware.UploadCapMiddleware',
     # StaticCacheHeaders MUST wrap WhiteNoise so it can reapply
     # Cache-Control on WhiteNoise's short-circuited static responses.
     'devlog.middleware.StaticCacheHeaders',
@@ -85,6 +90,9 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # Staff 2FA + sudo-mode enforcement: must run after
+    # AuthenticationMiddleware so request.user is populated.
+    'users.middleware.StaffTwoFactorMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'users.middleware.EnforcementMiddleware',
@@ -530,6 +538,12 @@ if _spsh:
 if not (TEST_MODE or DEBUG):
    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
    CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
+   # SameSite cookies: 'Lax' prevents top-level cross-site POSTs from carrying
+   # the session / CSRF cookies, which is the cookie-level counterpart of the
+   # same-site Origin/Referer check enforced in devlog/admin.py for the
+   # database-restore view. Override with SESSION_COOKIE_SAMESITE / CSRF_COOKIE_SAMESITE.
+   SESSION_COOKIE_SAMESITE = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
+   CSRF_COOKIE_SAMESITE = os.environ.get('CSRF_COOKIE_SAMESITE', 'Lax')
    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'true').lower() in ('1', 'true', 'yes')
    try:
        SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '31536000'))
@@ -539,6 +553,71 @@ if not (TEST_MODE or DEBUG):
    SECURE_HSTS_PRELOAD = os.environ.get('SECURE_HSTS_PRELOAD', 'true').lower() in ('1', 'true', 'yes')
    SECURE_BROWSER_XSS_FILTER = os.environ.get('SECURE_BROWSER_XSS_FILTER', 'true').lower() in ('1', 'true', 'yes')
    SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get('SECURE_CONTENT_TYPE_NOSNIFF', 'true').lower() in ('1', 'true', 'yes')
+
+# ---------------------------------------------------------------------------
+# Two-factor authentication (TOTP) + staff re-authentication ("sudo mode")
+# ---------------------------------------------------------------------------
+# Standard users may enable 2FA voluntarily (profile page). Staff / superusers
+# are forced to enable it by ``users.middleware.StaffTwoFactorMiddleware`` and
+# must re-verify with a fresh TOTP code before destructive admin operations
+# (database backup/restore, bulk privilege/punishment actions).
+#
+# Sudo mode is SINGLE-USE: the ``staff_reauth_at`` stamp is burned by
+# ``users.views.consume_staff_reauth`` the moment an authorized operation
+# runs, so every sensitive operation presents an explicit TOTP prompt.
+# Login-time 2FA deliberately does NOT grant the stamp. The TTL below only
+# bounds retries of the same operation (e.g. a mistyped confirmation word)
+# before a fresh ``/users/2fa/reauth/`` challenge is required again.
+try:
+    STAFF_REAUTH_TTL_SECONDS = int(os.environ.get('STAFF_REAUTH_TTL_SECONDS', str(30 * 60)))
+except ValueError:
+    STAFF_REAUTH_TTL_SECONDS = 30 * 60
+
+# How many backup / scratch codes a user is issued when enabling 2FA. The
+# value is also hard-coded in ``users.two_factor``; this setting only governs
+# the *display* count for the regenerate-backup-codes view.
+TWO_FACTOR_BACKUP_CODE_COUNT = 10
+
+# ---------------------------------------------------------------------------
+# Per-module upload size caps
+# ---------------------------------------------------------------------------
+# ``users.middleware.UploadCapMiddleware`` rejects POST/PUT/PATCH requests
+# whose advertised Content-Length exceeds the first matching prefix's cap.
+# Keys are URL path prefixes; values are either an int (bytes) or a
+# ``(max_bytes, human_label)`` tuple. Longest-prefix-first matching is used,
+# so more specific rules win over general ones. A 0 / negative value skips
+# that prefix. Defaults are conservative; tune via env or here.
+def _parse_upload_limit(raw: str):
+    """Parse "<MB>" or "<bytes>" into bytes; returns 0 on invalid input."""
+    raw = (raw or '').strip().lower()
+    if not raw:
+        return 0
+    try:
+        if raw.endswith('mb'):
+            return int(float(raw[:-2].strip()) * 1024 * 1024)
+        if raw.endswith('kb'):
+            return int(float(raw[:-2].strip()) * 1024)
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+# Default per-area caps (in bytes). 0 means "no per-prefix cap; fall back to
+# Django's DATA_UPLOAD_MAX_MEMORY_SIZE / FILE_UPLOAD_MAX_MEMORY_SIZE".
+_AVATAR_CAP = _parse_upload_limit(os.environ.get('UPLOAD_AVATAR_MAX', '2mb'))
+_SUBMISSION_CAP = _parse_upload_limit(os.environ.get('UPLOAD_SUBMISSION_MAX', '256kb'))
+_BACKUP_RESTORE_CAP = _parse_upload_limit(os.environ.get('UPLOAD_DB_RESTORE_MAX', '256mb'))
+
+MODULE_UPLOAD_LIMITS = {
+    # Avatar upload — small images only.
+    '/users/profile/edit': (_AVATAR_CAP, '头像上传'),
+    '/users/avatar': (_AVATAR_CAP, '头像上传'),
+    # Code submission body — keep source small; large inputs are almost
+    # always an abuse vector rather than legitimate code.
+    '/submissions/submit': (_SUBMISSION_CAP, '代码提交'),
+    # Database restore (admin) — allow large backups, but still cap them so a
+    # multi-GB upload cannot exhaust the worker pool.
+    '/admin/devlog/siteconfig/database-restore/': (_BACKUP_RESTORE_CAP, '数据库备份导入'),
+}
 
 # A tiny helper used by ``users/captcha.py::_client_ip`` and by
 # ``users/middleware.py::EnforcementMiddleware`` to detect internal proxy

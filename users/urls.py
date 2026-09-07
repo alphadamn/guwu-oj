@@ -12,8 +12,14 @@ from .views import (
     password_reset_request,
     password_reset_confirm,
     captcha_image,
+    captcha_altcha,
     verify_avatar_captcha_view,
     clear_punishment_notice,
+    two_factor_verify,
+    two_factor_setup,
+    two_factor_disable,
+    two_factor_regenerate_backup,
+    two_factor_reauth,
 )
 
 urlpatterns = [
@@ -22,6 +28,7 @@ urlpatterns = [
     path('register/', register, name='register'),
     path('send-verification-code/', send_verification_code, name='send_verification_code'),
     path('captcha/image/', captcha_image, name='captcha_image'),
+    path('captcha/altcha/', captcha_altcha, name='captcha_altcha'),
     path('avatar-captcha/verify/', verify_avatar_captcha_view, name='verify_avatar_captcha'),
     path('clear-punishment-notice/', clear_punishment_notice, name='clear_punishment_notice'),
     path('password-reset/', password_reset_request, name='password_reset'),
@@ -31,4 +38,10 @@ urlpatterns = [
     path('daily-check-in/', daily_check_in, name='daily_check_in'),
     path('edit/', edit_profile, name='edit_profile'),
     path('avatar/<str:username>/', avatar, name='avatar'),
+    # Two-factor authentication -------------------------------------------------
+    path('2fa/verify/', two_factor_verify, name='two_factor_verify'),
+    path('2fa/setup/', two_factor_setup, name='two_factor_setup'),
+    path('2fa/disable/', two_factor_disable, name='two_factor_disable'),
+    path('2fa/regenerate-backup/', two_factor_regenerate_backup, name='two_factor_regenerate_backup'),
+    path('2fa/reauth/', two_factor_reauth, name='two_factor_reauth'),
 ]

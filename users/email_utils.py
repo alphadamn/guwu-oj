@@ -1,4 +1,3 @@
-import random
 import secrets
 from datetime import timedelta
 
@@ -91,7 +90,7 @@ def _generate_verification_code(length: int = None) -> str:
     """
     if length is None:
         length = _config_code_length()
-    return ''.join(str(random.randint(0, 9)) for _ in range(length))
+    return ''.join(str(secrets.randbelow(10)) for _ in range(length))
 
 
 def _make_context(user_context: dict) -> dict:
