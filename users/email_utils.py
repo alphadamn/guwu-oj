@@ -200,50 +200,48 @@ PASSWORD_RESET_CODE_TTL = 10 * 60
 
 VERIFY_PREFIX = 'verify_code:'
 PASSWORD_RESET_PREFIX = 'password_reset_code:'
-SEND_RATE_PREFIX = 'send_rate:'
-SEND_RATE_TTL = 60  # 1 email per minute per email address — 1 min threshold
-SEND_RATE_HOURLY_PREFIX = 'send_rate_hour:'
+# Sliding-window rate limits (see users.sliding_window): at most one email
+# per trailing 60s, and at most the admin-configured number per trailing 3600s.
+SEND_RATE_MIN_WINDOW = 60
+SEND_RATE_HOUR_WINDOW = 3600
 
 
 def _make_cache_key(prefix: str, email: str) -> str:
     return f'{prefix}{email.lower().strip()}'
 
 
+def _send_minute_key(email: str) -> str:
+    return _make_cache_key('verify_code:sl:send_min:', email)
+
+
+def _send_hour_key(email: str) -> str:
+    return _make_cache_key('verify_code:sl:send_hour:', email)
+
+
 def can_send_code(email: str) -> bool:
     """Check that the email address has not hit the per-minute or
-    per-hour rate limit.
+    per-hour sliding-window rate limit.
 
     The per-hour limit is read from ``RegistrationConfig`` (admin-editable).
     """
-    if cache.get(_make_cache_key(SEND_RATE_PREFIX, email)) is not None:
-        return False
-    # Per-hour sliding-window count.
-    hour_key = _make_cache_key(SEND_RATE_HOURLY_PREFIX, email)
-    hour_count = cache.get(hour_key)
-    if hour_count is not None:
-        try:
-            if int(hour_count) >= _config_rate_limit_per_hour():
-                return False
-        except (TypeError, ValueError):
-            pass
+    from .sliding_window import sliding_count
+    try:
+        if sliding_count(_send_minute_key(email), SEND_RATE_MIN_WINDOW) >= 1:
+            return False
+        if sliding_count(_send_hour_key(email), SEND_RATE_HOUR_WINDOW) >= _config_rate_limit_per_hour():
+            return False
+    except Exception:
+        # Cache outage: fail open so mail delivery keeps working.
+        return True
     return True
 
 
 def _bump_rate_limit(email: str):
-    """Increment the per-hour send counter for ``email``.
-
-    We use Redis' INCR semantics through Django's cache layer — if
-    the key doesn't exist, ``incr`` would throw on some backends, so
-    we initialise it with ``add`` first.
-    """
-    hour_key = _make_cache_key(SEND_RATE_HOURLY_PREFIX, email)
+    """Record a sent email against both sliding-window counters."""
+    from .sliding_window import sliding_add
     try:
-        # add() returns True when the key was newly created.
-        if not cache.add(hour_key, 1, timeout=3600):
-            try:
-                cache.incr(hour_key)
-            except Exception:
-                pass
+        sliding_add(_send_minute_key(email), SEND_RATE_MIN_WINDOW)
+        sliding_add(_send_hour_key(email), SEND_RATE_HOUR_WINDOW)
     except Exception:
         pass
 
@@ -255,11 +253,6 @@ def issue_verification_code(email: str) -> str:
         code,
         timeout=_config_ttl_seconds(),
     )
-    cache.set(
-        _make_cache_key(SEND_RATE_PREFIX, email),
-        '1',
-        timeout=SEND_RATE_TTL,
-    )
     _bump_rate_limit(email)
     return code
 
@@ -270,11 +263,6 @@ def issue_password_reset_code(email: str) -> str:
         _make_cache_key(PASSWORD_RESET_PREFIX, email),
         code,
         timeout=_config_ttl_seconds(),
-    )
-    cache.set(
-        _make_cache_key(SEND_RATE_PREFIX, email),
-        '1',
-        timeout=SEND_RATE_TTL,
     )
     _bump_rate_limit(email)
     return code

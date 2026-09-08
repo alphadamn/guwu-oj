@@ -7,7 +7,7 @@ from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from django_ratelimit.decorators import ratelimit
+from users.sliding_window import sliding_ratelimit as ratelimit
 
 from submissions.models import Submission
 from .models import Contest, ContestEnrollment, ContestProblem

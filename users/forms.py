@@ -1,6 +1,5 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, SetPasswordForm, AuthenticationForm
-from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from PIL import Image
 
@@ -324,7 +323,8 @@ class PasswordResetForm(SetPasswordForm, CaptchaMixin):
 
     @classmethod
     def _invalid_code_attempt_key(cls, email):
-        return f'password_reset_invalid_code_attempts:{email.strip().lower()}'
+        # Sliding-window log (see users.sliding_window).
+        return f'sl:password_reset:badcode:{email.strip().lower()}'
 
     def clean_email(self):
         email = self.cleaned_data['email'].strip().lower()
@@ -336,23 +336,23 @@ class PasswordResetForm(SetPasswordForm, CaptchaMixin):
         return email
 
     def clean_verification_code(self):
+        from .sliding_window import sliding_add, sliding_clear, sliding_count
         email = (self.cleaned_data.get('email') or self.data.get('email', '')).strip().lower()
         code = self.cleaned_data['verification_code'].strip()
         attempt_key = self._invalid_code_attempt_key(email)
-        try:
-            attempts = int(cache.get(attempt_key) or 0)
-        except (TypeError, ValueError):
-            attempts = 0
+        # Sliding 5-minute window: MAX_INVALID_CODE_ATTEMPTS wrong codes in
+        # the trailing 5 minutes locks further attempts until the oldest
+        # failure ages out.
+        attempts = sliding_count(attempt_key, self.INVALID_CODE_ATTEMPT_TTL)
         if attempts >= self.MAX_INVALID_CODE_ATTEMPTS:
             raise ValidationError('验证码尝试次数过多，请 5 分钟后再试。')
         if not check_password_reset_code(email, code):
             try:
-                if not cache.add(attempt_key, 1, timeout=self.INVALID_CODE_ATTEMPT_TTL):
-                    cache.incr(attempt_key)
+                sliding_add(attempt_key, self.INVALID_CODE_ATTEMPT_TTL)
             except Exception:
                 pass
             raise ValidationError('验证码无效或已过期。')
-        cache.delete(attempt_key)
+        sliding_clear(attempt_key)
         return code
 
     def save(self, commit=True):

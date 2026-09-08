@@ -6,7 +6,7 @@ from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
-from django_ratelimit.decorators import ratelimit
+from users.sliding_window import sliding_ratelimit as ratelimit
 
 from problems.models import Problem
 

@@ -88,7 +88,11 @@ class PasswordResetRateLimitTests(TestCase):
         )
 
         self.assertFormError(response.context['form'], 'verification_code', '验证码尝试次数过多，请 5 分钟后再试。')
-        self.assertEqual(cache.get(attempt_key), PasswordResetForm.MAX_INVALID_CODE_ATTEMPTS)
+        from users.sliding_window import sliding_count
+        self.assertEqual(
+            sliding_count(attempt_key, PasswordResetForm.INVALID_CODE_ATTEMPT_TTL),
+            PasswordResetForm.MAX_INVALID_CODE_ATTEMPTS,
+        )
 
     def test_confirm_endpoint_is_limited_per_ip(self):
         for _ in range(5):
@@ -98,3 +102,50 @@ class PasswordResetRateLimitTests(TestCase):
         response = self.client.post(self.url, self._payload('000000'), REMOTE_ADDR='203.0.113.9')
 
         self.assertContains(response, '密码重置尝试过于频繁，请稍后再试。')
+
+
+class SlidingWindowRateLimitTests(TestCase):
+    """The sliding window counts events in the *trailing* window rather
+    than resetting on a clock boundary."""
+
+    def test_allows_up_to_limit_then_denies(self):
+        from users.sliding_window import sliding_allow, sliding_clear
+        key = 'test:sliding:allow-deny'
+        sliding_clear(key)
+        try:
+            for _ in range(3):
+                self.assertTrue(sliding_allow(key, 3, 60))
+            self.assertFalse(sliding_allow(key, 3, 60))
+        finally:
+            sliding_clear(key)
+
+    def test_window_slides(self):
+        import time
+        from users.sliding_window import sliding_allow, sliding_clear
+        key = 'test:sliding:slides'
+        sliding_clear(key)
+        try:
+            # Fill a 1-second window.
+            self.assertTrue(sliding_allow(key, 1, 1))
+            self.assertFalse(sliding_allow(key, 1, 1))
+            # After the window elapses the budget returns (a fixed bucket
+            # keyed by wall-clock seconds would behave the same here; the
+            # key assertion is that the *old event* has aged out).
+            time.sleep(1.1)
+            self.assertTrue(sliding_allow(key, 1, 1))
+        finally:
+            sliding_clear(key)
+
+    def test_clear_forgets_history(self):
+        from users.sliding_window import sliding_allow, sliding_clear, sliding_count
+        key = 'test:sliding:clear'
+        sliding_clear(key)
+        try:
+            sliding_allow(key, 2, 60)
+            sliding_allow(key, 2, 60)
+            self.assertEqual(sliding_count(key, 60), 2)
+            sliding_clear(key)
+            self.assertEqual(sliding_count(key, 60), 0)
+            self.assertTrue(sliding_allow(key, 2, 60))
+        finally:
+            sliding_clear(key)

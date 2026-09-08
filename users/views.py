@@ -9,7 +9,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib import messages
 
 from django.utils.http import http_date
-from django_ratelimit.decorators import ratelimit
+from .sliding_window import sliding_ratelimit as ratelimit
 from django.core.cache import cache
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_protect

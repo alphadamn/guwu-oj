@@ -10,9 +10,12 @@ Design goals
 2. **Not guessable.** 5 random chars from a set with ambiguous glyphs
    (I, O, 0, 1) removed, rendered on a noisy background with interference
    lines and random jitter.
-3. **Rate-limited per IP.** :func:`can_generate_challenge` refuses to
-   hand out more than a configurable number of new challenges per IP
-   per minute so an attacker can't brute-force the space of answers.
+3. **Rate-limited per IP.** :func:`generate_challenge` refuses to hand
+   out more than a configurable number of new challenges per IP inside
+   sliding time windows (see :mod:`users.sliding_window`) so an attacker
+   can't brute-force the space of answers. Unlike fixed minute buckets,
+   the limit always reflects the *trailing* window — there is no clock
+   boundary where the budget resets and doubles the allowed rate.
 4. **One-shot consumption.** After a single :func:`check_challenge`
    call (success *or* failure) the cache entry is deleted. Submitting
    the same captcha twice therefore always fails — prevents replay.
@@ -46,7 +49,6 @@ import os
 import random
 import secrets
 import string
-import time
 import uuid
 
 from django.core.cache import cache
@@ -54,6 +56,12 @@ from django.http import HttpResponse
 from django.utils import timezone
 
 from .altcha import verify_solution as verify_altcha_solution
+from .sliding_window import (
+    sliding_add,
+    sliding_allow,
+    sliding_clear,
+    sliding_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,13 +149,13 @@ def _challenge_used_key(challenge_id: str) -> str:
     return f'{CACHE_PREFIX}:used:{challenge_id}'
 
 
-def _ip_rate_key(ip: str, window: int) -> str:
-    # `window` is a coarse time-bucket index, so the key rotates.
-    return f'{CACHE_PREFIX}:rate:ip:{ip}:{window}'
+def _challenge_rate_key(ip: str, window_seconds: int) -> str:
+    # Sliding-window log (Redis sorted set); one stable key per IP/window.
+    return f'{CACHE_PREFIX}:sl:challenge:ip:{ip}:{int(window_seconds)}'
 
 
 def _login_failure_key(ip: str) -> str:
-    return f'{CACHE_PREFIX}:failures:ip:{ip}'
+    return f'{CACHE_PREFIX}:sl:failures:ip:{ip}'
 
 
 def _client_ip(request) -> str:
@@ -542,27 +550,6 @@ def _render_captcha_image(answer: str, mode: str = 'original') -> bytes:
 # Challenge issuing / verification
 # ---------------------------------------------------------------------------
 
-def _increment_rate_counter(key: str, limit: int, ttl: int) -> bool:
-    """Increment a cache counter; return True if still under ``limit``.
-
-    Returns True when the caller is within their rate budget.
-    """
-    try:
-        count = cache.get_or_set(key, 0, timeout=ttl)
-        if count is None:
-            count = 0
-        # Use incr when possible; fall back to set for backends without it.
-        try:
-            new_count = cache.incr(key)
-        except (ValueError, TypeError):
-            new_count = count + 1
-            cache.set(key, new_count, timeout=ttl)
-        return int(new_count) <= limit
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.warning('Captcha rate counter raised %s; allowing', exc)
-        return True
-
-
 def generate_challenge(request) -> tuple[str, str, bytes]:
     """Create a new captcha challenge for the current user session.
 
@@ -576,12 +563,14 @@ def generate_challenge(request) -> tuple[str, str, bytes]:
     deterministically on the server side.
     """
     ip = _client_ip(request)
-    if not (_increment_rate_counter(
-        _ip_rate_key(ip, int(time.time() // 60)),
+    # Sliding windows: at most N challenges in the trailing 60s and M
+    # challenge attempts (issue + verify) in the trailing 10 minutes.
+    if not (sliding_allow(
+        _challenge_rate_key(ip, 60),
         int(CHALLENGES_PER_IP_PER_MINUTE()),
-        90,
-    ) and _increment_rate_counter(
-        _ip_rate_key(ip, int(time.time() // 600)),
+        60,
+    ) and sliding_allow(
+        _challenge_rate_key(ip, 600),
         int(CAPTCHA_ATTEMPTS_PER_IP_PER_10_MINUTES()),
         600,
     )):
@@ -637,10 +626,10 @@ def check_challenge(request, challenge_id: str, submitted_answer: str,
         return False
 
     ip = _client_ip(request)
-    # Per-IP attempt rate-limit.
-    window = int(time.time() // 600)
-    if not _increment_rate_counter(
-        _ip_rate_key(ip, window),
+    # Per-IP attempt rate-limit (sliding 10-minute window, shared with
+    # challenge issuance).
+    if not sliding_allow(
+        _challenge_rate_key(ip, 600),
         int(CAPTCHA_ATTEMPTS_PER_IP_PER_10_MINUTES()),
         600,
     ):
@@ -686,23 +675,22 @@ def check_challenge(request, challenge_id: str, submitted_answer: str,
 # ---------------------------------------------------------------------------
 
 def record_login_attempt(request, *, success: bool) -> None:
-    """Track per-IP failed-logins so we can require a captcha on retry."""
+    """Track per-IP failed-logins so we can require a captcha on retry.
+
+    Failures are kept in a sliding window of
+    :data:`FAILED_LOGIN_RECORD_TTL_SECONDS`; a successful login clears
+    the history immediately.
+    """
+    key = _login_failure_key(_client_ip(request))
     if success:
         try:
-            cache.delete(_login_failure_key(_client_ip(request)))
+            sliding_clear(key)
         except Exception:
             pass
         return
 
     try:
-        key = _login_failure_key(_client_ip(request))
-        count = cache.get_or_set(key, 0, timeout=FAILED_LOGIN_RECORD_TTL_SECONDS)
-        if count is None:
-            count = 0
-        try:
-            cache.incr(key)
-        except (ValueError, TypeError):
-            cache.set(key, count + 1, timeout=FAILED_LOGIN_RECORD_TTL_SECONDS)
+        sliding_add(key, FAILED_LOGIN_RECORD_TTL_SECONDS)
     except Exception:
         pass
 
@@ -710,7 +698,10 @@ def record_login_attempt(request, *, success: bool) -> None:
 def login_requires_captcha(request) -> bool:
     """True when the current IP has reached the configured number of recent failed logins."""
     try:
-        failures = cache.get(_login_failure_key(_client_ip(request))) or 0
+        failures = sliding_count(
+            _login_failure_key(_client_ip(request)),
+            FAILED_LOGIN_RECORD_TTL_SECONDS,
+        )
         return int(failures) >= int(FAILED_LOGINS_BEFORE_CAPTCHA())
     except Exception:
         return False
@@ -732,11 +723,9 @@ class TooManyChallenges(CaptchaError):
 # Submission rate-limit → captcha escalation
 # ---------------------------------------------------------------------------
 
-def _submission_rate_key(user_id, *, bucket_seconds: int) -> str:
-    """Cache key that counts submission attempts for a given user in a
-    time window."""
-    window_index = int(time.time()) // int(bucket_seconds or 1)
-    return f'{CACHE_PREFIX}:rate:submissions:user:{user_id}:{window_index}'
+def _submission_rate_key(user_id) -> str:
+    """Sliding-window key counting submission attempts for a given user."""
+    return f'{CACHE_PREFIX}:sl:submissions:user:{user_id}'
 
 
 def _submission_captcha_config() -> dict:
@@ -761,40 +750,23 @@ def _submission_captcha_config() -> dict:
 
 def count_recent_submissions(user_id) -> int:
     """Return the number of submissions ``user_id`` has made inside the
-    currently configured sliding window. 0 on error."""
+    trailing (admin-configured) sliding window. 0 on error."""
     try:
         cfg = _submission_captcha_config()
-        key = _submission_rate_key(user_id, bucket_seconds=cfg['window_seconds'])
-        value = cache.get(key) or 0
-        return int(value)
+        return sliding_count(_submission_rate_key(user_id), cfg['window_seconds'])
     except Exception:
         return 0
 
 
 def record_submission_attempt(user_id, *, success: bool = True) -> None:
-    """Increment the per-user submission counter used by the captcha
-    escalation logic.  ``success`` is currently ignored but kept for
-    consistency with :func:`record_login_attempt`."""
+    """Record a submission in the per-user sliding window used by the
+    captcha escalation logic.  ``success`` is currently ignored but kept
+    for consistency with :func:`record_login_attempt`."""
     if not user_id:
         return
     try:
         cfg = _submission_captcha_config()
-        key = _submission_rate_key(user_id, bucket_seconds=cfg['window_seconds'])
-        # Use a soft cache.incr; initialize if missing.
-        count = cache.get(key)
-        if count is None:
-            try:
-                cache.set(key, 1, timeout=cfg['window_seconds'] + 10)
-            except Exception:
-                pass
-            return
-        try:
-            cache.incr(key)
-        except (ValueError, TypeError):
-            try:
-                cache.set(key, int(count or 0) + 1, timeout=cfg['window_seconds'] + 10)
-            except Exception:
-                pass
+        sliding_add(_submission_rate_key(user_id), cfg['window_seconds'])
     except Exception:
         pass
 
@@ -871,33 +843,40 @@ def _avatar_ip_digest(request) -> str:
     return hashlib.sha256(_client_ip(request).encode('utf-8')).hexdigest()[:32]
 
 
-def _avatar_rate_key(request, window_seconds: int) -> str:
-    bucket = int(time.time()) // max(1, int(window_seconds))
-    return f'{CACHE_PREFIX}:rate:avatar:{_avatar_ip_digest(request)}:{bucket}'
+def _avatar_rate_key(request) -> str:
+    return f'{CACHE_PREFIX}:sl:avatar:{_avatar_ip_digest(request)}'
 
 
 def _avatar_proof_key(request, proof: str) -> str:
     return f'{CACHE_PREFIX}:proof:avatar:{_avatar_ip_digest(request)}:{proof}'
 
 
+def _avatar_has_valid_proof(request) -> bool:
+    """True when the request carries a non-expired CAPTCHA proof."""
+    proof = (request.headers.get('X-Avatar-Captcha-Proof') or '').strip()
+    if not proof:
+        return False
+    try:
+        return bool(cache.get(_avatar_proof_key(request, proof)))
+    except Exception:
+        return False
+
+
 def record_avatar_request(request) -> int | None:
-    """Record an avatar request and return its current count.
+    """Record an avatar request and return the trailing-window count.
+
+    Requests backed by a valid CAPTCHA proof are not counted: the visitor
+    has already proven humanity, so browsing with a proof does not push
+    them back over the threshold when the proof expires.
 
     ``None`` means the cache backend was unavailable. Callers should allow the
     request in that case so a Redis outage does not take down avatar serving.
     """
     cfg = _avatar_captcha_config()
-    key = _avatar_rate_key(request, cfg['window_seconds'])
-    ttl = cfg['window_seconds'] + 10
+    if _avatar_has_valid_proof(request):
+        return None
     try:
-        if cache.add(key, 1, timeout=ttl):
-            return 1
-        try:
-            return int(cache.incr(key))
-        except (ValueError, TypeError, AttributeError):
-            current = int(cache.get(key) or 0) + 1
-            cache.set(key, current, timeout=ttl)
-            return current
+        return sliding_add(_avatar_rate_key(request), cfg['window_seconds'])
     except Exception as exc:
         logger.warning('avatar rate counter failed (%s); allowing', exc)
         return None
@@ -906,21 +885,21 @@ def record_avatar_request(request) -> int | None:
 def avatar_requires_captcha(request) -> bool:
     """Return whether this avatar request needs CAPTCHA verification.
 
-    Request counts are shared by IP. A successful CAPTCHA yields a random proof
-    token that is bound to the same IP but is held only in the current page's
-    JavaScript memory, so reloading the page does not keep a CAPTCHA bypass.
+    Request counts are shared by IP inside a sliding window. A successful
+    CAPTCHA yields a random proof token that is bound to the same IP but is
+    held only in the current page's JavaScript memory, so reloading the
+    page does not keep a CAPTCHA bypass.
     """
     cfg = _avatar_captcha_config()
     if not cfg['enabled']:
         return False
     try:
-        proof = (request.headers.get('X-Avatar-Captcha-Proof') or '').strip()
-        if proof and cache.get(_avatar_proof_key(request, proof)):
+        if _avatar_has_valid_proof(request):
             return False
-        count = cache.get(_avatar_rate_key(request, cfg['window_seconds']))
+        count = sliding_count(_avatar_rate_key(request), cfg['window_seconds'])
         # The request that reaches the configured limit remains available;
         # subsequent requests require verification.
-        return count is not None and int(count) > cfg['limit']
+        return int(count) > cfg['limit']
     except Exception as exc:
         logger.warning('avatar rate check failed (%s); allowing', exc)
         return False

@@ -30,11 +30,12 @@ BROWSER_LOCATION_POSTS_PER_IP_PER_DAY = 20
 
 
 def _browser_location_rate_ok(request) -> bool:
-    """Cap browser-location submissions per client IP per day."""
+    """Cap browser-location submissions per client IP per sliding 24h window."""
     try:
-        from users.captcha import _client_ip, _increment_rate_counter
-        key = f'oj:browser-location:{_client_ip(request)}:{timezone.localdate().isoformat()}'
-        return _increment_rate_counter(key, BROWSER_LOCATION_POSTS_PER_IP_PER_DAY, 86400)
+        from users.captcha import _client_ip
+        from users.sliding_window import sliding_allow
+        key = f'sl:oj:browser-location:{_client_ip(request)}'
+        return sliding_allow(key, BROWSER_LOCATION_POSTS_PER_IP_PER_DAY, 86400)
     except Exception:
         return True
 
