@@ -79,6 +79,10 @@ if not TEST_MODE:
 MIDDLEWARE = [
     'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Rewrite REMOTE_ADDR to the verified visitor IP when the direct peer
+    # is a trusted local proxy (nginx behind Cloudflare). Must run before
+    # anything that buckets requests by IP (ratelimit, IP bans, metrics).
+    'users.middleware.RealIPMiddleware',
     # Reject oversize uploads as early as possible (before the request body
     # is buffered) so a memory-exhausting upload cannot tie up a worker.
     'users.middleware.UploadCapMiddleware',

@@ -26,6 +26,7 @@ from .captcha import (
     check_challenge as _captcha_check,
     CAPTCHA_ON_ALL_POST as _captcha_all_post_cfg,
     _client_ip as _client_ip,  # reuse shared logic
+    _looks_like_ip as _looks_like_ip,
 )
 from .altcha import verify_solution as _altcha_check
 
@@ -128,6 +129,36 @@ def _wants_html(request) -> bool:
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+
+class RealIPMiddleware(MiddlewareMixin):
+    """Promote the real visitor IP into ``REMOTE_ADDR`` behind trusted proxies.
+
+    Gunicorn (26.x) keeps ``REMOTE_ADDR`` as the direct TCP peer — here
+    127.0.0.1 (local nginx) — so anything reading ``REMOTE_ADDR`` directly
+    (notably ``django-ratelimit`` with ``key='ip'``) would bucket *every*
+    visitor together as a single client.
+
+    nginx (``ngx_http_realip_module`` with ``CF-Connecting-IP`` for
+    Cloudflare peers) rewrites ``$remote_addr`` to the verified visitor
+    address and appends it to ``X-Forwarded-For``. ``_client_ip`` parses
+    that chain, trusting only hops in ``settings.TRUSTED_PROXY_IPS``. When
+    the direct peer is itself a trusted local proxy, adopt the parsed
+    address as ``REMOTE_ADDR``. Requests whose direct peer is not trusted
+    (e.g. someone hitting the origin directly) are left untouched, which
+    prevents spoofed forwarding headers from taking effect.
+    """
+
+    def process_request(self, request):
+        from django.conf import settings
+        peer = request.META.get('REMOTE_ADDR') or ''
+        trusted = set(getattr(settings, 'TRUSTED_PROXY_IPS', None) or [])
+        if peer not in trusted:
+            return None
+        real_ip = _client_ip(request)
+        if real_ip and real_ip != peer and _looks_like_ip(real_ip):
+            request.META['REMOTE_ADDR'] = real_ip
+        return None
+
 
 class EnforcementMiddleware(MiddlewareMixin):
     """Checks IP / user bans before normal Django handling runs."""

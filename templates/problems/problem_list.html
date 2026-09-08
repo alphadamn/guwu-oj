@@ -11,7 +11,7 @@
         <form method="get" class="mb-4">
             <div class="row g-3">
                 <div class="col-md-4">
-                    <input type="text" class="form-control" name="search" placeholder="搜索题目或题号" value="{{ request.GET.search }}">
+                    <input type="text" class="form-control" name="search" placeholder="搜索标题、题号或标签（多个关键词用空格分隔）" value="{{ request.GET.search }}">
                 </div>
                 <div class="col-md-3">
                     <select class="form-select" name="difficulty">
@@ -28,7 +28,7 @@
                     </select>
                 </div>
                 <div class="col-md-3">
-                    <input type="text" class="form-control" name="tags" placeholder="标签" value="{{ request.GET.tags }}">
+                    <input type="text" class="form-control" name="tags" placeholder="标签（多个标签用空格分隔）" value="{{ request.GET.tags }}">
                 </div>
                 <div class="col-md-2">
                     <button type="submit" class="btn btn-primary w-100">搜索</button>
@@ -55,11 +55,9 @@
                         <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
                         <td><span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span></td>
                         <td>
-                            {% if problem.tags %}
-                                {% for tag in problem.tags.split|slice:":3" %}
-                                    <span class="badge bg-light text-dark me-1">{{ tag }}</span>
-                                {% endfor %}
-                            {% endif %}
+                            {% for tag in problem.tag_list|slice:":3" %}
+                                <span class="badge bg-light text-dark me-1">{{ tag }}</span>
+                            {% endfor %}
                         </td>
                         <td>{{ problem.pass_rate }}%</td>
                         <td>{{ problem.submissions.count }}</td>
@@ -71,6 +69,37 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mt-3">
+            <small class="text-muted">共 {{ total_count }} 道题目</small>
+            {% if is_paginated %}
+            <nav aria-label="题库分页">
+                <ul class="pagination justify-content-center mb-0">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if query_string %}&{{ query_string }}{% endif %}">上一页</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">上一页</span></li>
+                    {% endif %}
+
+                    <li class="page-item active">
+                        <span class="page-link">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span>
+                    </li>
+
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if query_string %}&{{ query_string }}{% endif %}">下一页</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">下一页</span></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% else %}
+            <span></span>
+            {% endif %}
         </div>
     </div>
 </div>

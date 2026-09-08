@@ -1,8 +1,13 @@
+import re
+
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 
 User = get_user_model()
+
+# Tags are free text separated by spaces and/or commas ("," / "，").
+_TAG_SPLIT_RE = re.compile(r'[\s,，、;；]+')
 
 
 class Problem(models.Model):
@@ -71,6 +76,16 @@ class Problem(models.Model):
     def delete(self, *args, **kwargs):
         self._invalidate_caches()
         super().delete(*args, **kwargs)
+
+    @property
+    def tag_list(self):
+        """Tags normalized to a list.
+
+        Historical data uses both separators: ``"洛谷,P1231"`` (comma) and
+        ``"洛谷 P9755 CSP-S 2024"`` (spaces). Splitting on both keeps badge
+        rendering and tag filtering consistent.
+        """
+        return [tag for tag in _TAG_SPLIT_RE.split(self.tags or '') if tag]
 
     @property
     def difficulty_slug(self):

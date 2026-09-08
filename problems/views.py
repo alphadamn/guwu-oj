@@ -1,8 +1,11 @@
+import re
+
 from django.db.models.functions import Cast, RowNumber
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q, Count, When, Case, Value, F, FloatField, Window
+from django.core.paginator import Paginator
 from django.views.decorators.http import require_POST
 from django.views.decorators.cache import cache_page
 from django.core.cache import cache
@@ -10,6 +13,17 @@ from .models import Problem, Solution
 from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
 from users.models import User
 from submissions.models import Submission
+
+PROBLEMS_PER_PAGE = 20
+
+# Tags are stored as free text, separated by spaces and/or commas
+# (ASCII "," and Chinese "，"); user input may also use "、" or ";".
+_TERM_SPLIT_RE = re.compile(r'[\s,，、;；]+')
+
+
+def _split_search_terms(text):
+    """Split a search/filter string into fuzzy-match terms."""
+    return [term for term in _TERM_SPLIT_RE.split(text or '') if term]
 
 
 def home(request):
@@ -46,47 +60,69 @@ def home(request):
 def problem_list(request):
     # Version list caches rather than deleting arbitrary query-derived keys.
     cache_version = cache.get('problem_list_version', 1)
-    cache_key = f'problem_list:v{cache_version}:{request.GET.urlencode()}'
-    cached_response = cache.get(cache_key)
 
+    difficulty = (request.GET.get('difficulty') or '').strip()
+    search = (request.GET.get('search') or '').strip()
+    tags_query = (request.GET.get('tags') or '').strip()
+    page_number = request.GET.get('page') or 1
+
+    # The page number only affects slicing, not the filtered result set, so
+    # the query cache key is derived from filters only.
+    filter_key = f'd={difficulty}&s={search}&t={tags_query}'
+
+    cache_key = f'problem_list:v{cache_version}:{filter_key}:p{page_number}'
+    cached_response = cache.get(cache_key)
     if cached_response:
         return cached_response
 
-    # Cache the query result separately
-    query_cache_key = f'problem_list_query:v{cache_version}:{request.GET.urlencode()}'
-    cached_problems = cache.get(query_cache_key)
+    query_cache_key = f'problem_list_query:v{cache_version}:{filter_key}'
+    problems = cache.get(query_cache_key)
 
-    if cached_problems is not None:
-        problems = cached_problems
-    else:
+    if problems is None:
         problems = Problem.objects.filter(is_public=True)
 
         # Filter by difficulty
-        difficulty = request.GET.get('difficulty')
         if difficulty:
             problems = problems.filter(difficulty=difficulty)
 
-        # Search by title or an exact numeric problem ID. Django's ORM
-        # parameterizes both variants, but avoiding an implicit text cast on
-        # the primary key keeps this indexed and rejects malformed IDs.
-        search = (request.GET.get('search') or '').strip()
+        # Fuzzy search: every whitespace/comma-separated term must appear in
+        # the title OR the tags (AND across terms, OR across fields). An
+        # all-numeric query also matches the exact problem ID. The ORM
+        # parameterizes every term; matching tags fuzzily means "csp 2024"
+        # finds problems tagged "CSP-S 2024" and "dp" finds "DP / 动态规划".
         if search:
-            filters = Q(title__icontains=search)
+            filters = Q()
+            for term in _split_search_terms(search):
+                filters &= (Q(title__icontains=term) | Q(tags__icontains=term))
             if search.isdecimal():
                 filters |= Q(id=int(search))
             problems = problems.filter(filters)
 
-        # Filter by tags
-        tags = request.GET.get('tags')
-        if tags:
-            problems = problems.filter(tags__icontains=tags)
+        # Dedicated tag filter: every term must match a tag (AND across
+        # terms), so "动态规划 贪心" narrows to problems carrying both tags.
+        for term in _split_search_terms(tags_query):
+            problems = problems.filter(tags__icontains=term)
 
         problems = problems.order_by('-created_at')
-        # Cache the queryset evaluation for 5 minutes
+        # Cache the evaluated result set for 5 minutes
         problems = list(problems)  # Force evaluation
         cache.set(query_cache_key, problems, 60 * 5)
 
-    response = render(request, 'problems/problem_list.html', {'problems': problems})
+    paginator = Paginator(problems, PROBLEMS_PER_PAGE)
+    page_obj = paginator.get_page(page_number)
+
+    # Preserve filter query string across pagination links
+    query_params = request.GET.copy()
+    query_params.pop('page', None)
+    query_string = query_params.urlencode()
+
+    response = render(request, 'problems/problem_list.html', {
+        'problems': page_obj,  # Iterable over the current page's problems
+        'page_obj': page_obj,
+        'is_paginated': page_obj.has_other_pages(),
+        'query_string': query_string,
+        'total_count': paginator.count,
+    })
     cache.set(cache_key, response, 60 * 10)  # Cache for 10 minutes
     return response
 

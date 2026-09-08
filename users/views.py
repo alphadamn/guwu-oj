@@ -652,9 +652,14 @@ def edit_profile(request):
     return render(request, 'users/edit_profile.html', {'form': form})
 
 
-@login_required
 def verify_avatar_captcha_view(request):
-    """Verify the CAPTCHA used to unlock high-frequency avatar requests."""
+    """Verify the CAPTCHA used to unlock high-frequency avatar requests.
+
+    Open to anonymous users on purpose: avatar rate limiting is keyed by
+    requester IP (not by login), and the issued proof is IP-bound. The
+    image-captcha answer plus the ALTCHA proof-of-work gate the endpoint,
+    and :func:`check_challenge` enforces per-IP attempt limits.
+    """
     if request.method != 'POST':
         return JsonResponse({'ok': False, 'message': '请使用 POST 请求。'}, status=405)
     challenge_id = (request.POST.get('captcha_id') or '').strip()
