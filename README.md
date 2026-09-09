@@ -66,7 +66,8 @@
 ### 1. 克隆项目
 
 ```bash
-cd /Users/oscar.liu/Desktop/oj/CascadeProjects/windsurf-project
+git clone https://github.com/alphadamn/guwu-oj
+cd guwu-oj
 ```
 
 ### 2. 创建虚拟环境
@@ -244,7 +245,7 @@ python manage.py test
 ## 项目结构
 
 ```
-windsurf-project/
+guwu-oj/
 ├── manage.py                 # Django 管理脚本
 ├── requirements.txt          # 项目依赖
 ├── README.md                # 项目说明
