@@ -245,7 +245,7 @@ python manage.py test
 ## 项目结构
 
 ```
-windsurf-project/
+guwu-oj/
 ├── manage.py                 # Django 管理脚本
 ├── requirements.txt          # 项目依赖
 ├── README.md                # 项目说明
