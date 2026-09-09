@@ -85,3 +85,7 @@ class ContestProblemAdmin(admin.ModelAdmin):
 class ContestTestCaseAdmin(admin.ModelAdmin):
     list_display = ['id', 'contest_problem', 'order', 'is_sample']
     list_filter = ['contest_problem__contest']
+    search_fields = ['id', 'contest_problem__title']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).defer('input_data', 'expected_output')

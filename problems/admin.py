@@ -87,6 +87,12 @@ class ProblemAdmin(admin.ModelAdmin):
 class TestCaseAdmin(admin.ModelAdmin):
     list_display = ['id', 'problem', 'order', 'is_sample']
     list_filter = ['problem']
+    search_fields = ['id', 'problem__title']
+
+    # The big text columns are not shown anywhere in the admin list/autocomplete;
+    # loading them for the whole table costs ~1.2 GB per page render.
+    def get_queryset(self, request):
+        return super().get_queryset(request).defer('input_data', 'expected_output')
 
 
 @admin.register(Solution)

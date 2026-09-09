@@ -46,6 +46,12 @@ class SubmissionTestResultInline(admin.TabularInline):
         'case_index', 'status', 'runtime', 'actual_output', 'expected_output',
         'error_message',
     ]
+    # Render the test-case FKs as AJAX autocomplete widgets. A plain <select>
+    # would evaluate TestCase.objects.all() and materialize every row's
+    # input_data/expected_output (~1.2 GB across all cases) once per inline
+    # form, which is why this change page used to be extremely slow and could
+    # OOM the app server.
+    autocomplete_fields = ['test_case', 'contest_test_case']
 
 
 @admin.register(Submission)
