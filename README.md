@@ -66,7 +66,8 @@
 ### 1. 克隆项目
 
 ```bash
-cd /Users/oscar.liu/Desktop/oj/CascadeProjects/windsurf-project
+git clone https://github.com/alphadamn/guwu-oj
+cd guwu-oj
 ```
 
 ### 2. 创建虚拟环境
