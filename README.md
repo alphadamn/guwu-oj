@@ -115,6 +115,62 @@ python manage.py runserver
 gunicorn oj_project.wsgi --bind 0.0.0.0:8000
 ```
 访问 http://127.0.0.1:8000 查看网站。
+#### 或使用systemd
+```
+[Unit]
+Description=Guwu Online Judge (Hypercorn ASGI, HTTP/3)
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=xxx
+Group=xxx
+WorkingDirectory=/www/wwwroot/guwu-oj
+Environment="PATH=/www/wwwroot/guwu-oj/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DJANGO_SETTINGS_MODULE=oj_project.settings"
+
+# Hypercorn serves the ASGI app over TLS+HTTP/1.1/2 on 127.0.0.1:4449 (TCP)
+# and HTTP/3 (QUIC/UDP) on the same port. 
+#
+# --workers 1: Hypercorn's master creates the UDP/QUIC listening socket and
+# dup's it to each spawned worker; with >1 worker, UDP datagrams of a single
+# QUIC connection scatter across workers (shared socket, no per-worker socket
+# migration), corrupting h3 state ("pseudo header in trailer", request
+# duplication). A single asyncio worker still runs sync Django views in a
+# ~40-thread pool (This is a hypercorn limitation).
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/hypercorn \
+    --bind 127.0.0.1:8000 \
+    --quic-bind 127.0.0.1:8000 \
+    --workers 1 \
+    --graceful-timeout 30 \
+    --max-requests 1000 \
+    --max-requests-jitter 200 \
+    --access-logfile /www/wwwroot/guwu-oj/logs/hypercorn.access.log \
+    --error-logfile /www/wwwroot/guwu-oj/logs/hypercorn.error.log \
+    --log-level info \
+    oj_project.asgi:application
+
+# Clean shutdown: SIGTERM gives in-flight requests 30s (graceful-timeout).
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=3
+
+# Auto-restart worker processes that crash or get OOM-killed.
+RestartPreventExitStatus=0
+
+MemoryHigh=700M
+MemoryMax=1000M
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+systemctl enable guwu-oj
+systemctl start guwu-oj
+```
 
 ### 8. 启动 Redis 服务
 
