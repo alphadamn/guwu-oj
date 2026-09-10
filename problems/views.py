@@ -257,8 +257,23 @@ def solution_list(request, problem_id):
     # for i in range(len(solutions), 0, -1):
     #     if solutions[i-1] not in s:
     #         s.append(solutions[i-1])
-    
+
     # solutions = s
+
+    # Avoid per-row queries when rendering the list: fetch the author with
+    # the row (select_related) and resolve like counts with one aggregate
+    # query instead of the M2M ``like_count`` property (1 query per row).
+    solutions = list(solutions.select_related('author'))
+    if solutions:
+        like_counts = dict(
+            Solution.likes.through.objects
+            .filter(solution_id__in=[s.pk for s in solutions])
+            .values_list('solution_id')
+            .annotate(n=Count('id'))
+            .values_list('solution_id', 'n')
+        )
+        for solution in solutions:
+            solution.like_total = like_counts.get(solution.pk, 0)
 
     return render(request, 'problems/solution_list.html', {
         'problem': problem,

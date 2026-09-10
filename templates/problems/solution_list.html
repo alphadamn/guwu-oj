@@ -32,7 +32,7 @@
                                 <span class="mx-2">|</span>
                                 <i class="bi bi-clock"></i> {{ solution.created_at|date:"Y-m-d H:i" }}
                                 <span class="mx-2">|</span>
-                                <i class="bi bi-heart"></i> {{ solution.like_count }}
+                                <i class="bi bi-heart"></i> {{ solution.like_total|default:0 }}
                             </p>
                             <p class="card-text">{{ solution.content|truncatewords:30 }}</p>
                             <a href="{% url 'solution_detail' problem.id solution.id %}" class="btn btn-primary btn-sm">
