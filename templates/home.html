@@ -1,160 +1,190 @@
 {% extends 'base.html' %}
 {% load feature_bans %}
+{% load static %}
 
 {% block title %}首页 - 谷物 OJ{% endblock %}
 
+{% block extra_css %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
+<div class="home-page">
+
 <section class="home-hero animate-in visible">
-    <div class="hero-content">
-        <h1 class="hero-title">欢迎来到 <span>谷物 OJ</span></h1>
-        <p class="hero-subtitle">
-            在线算法评测平台 — 刷题、提交、即时反馈。在简洁流畅的体验中提升编程与算法能力。
-        </p>
-        <div class="hero-actions d-flex flex-wrap gap-2">
-            <a href="{% url 'problem_list' %}" class="btn btn-hero-primary btn-lg">
-                <i class="bi bi-book me-1"></i> 开始刷题
-            </a>
-            {% if user.is_authenticated %}
-                <a href="{% url 'leaderboard' %}" class="btn btn-hero-accent btn-lg">
-                    <i class="bi bi-trophy me-1"></i> 排行榜
-                </a>
-            {% else %}
-                <a href="{% url 'register' %}" class="btn btn-hero-accent btn-lg">
-                    <i class="bi bi-person-plus me-1"></i> 免费注册
-                </a>
-                <a href="{% url 'login' %}" class="btn btn-outline-light btn-lg">
-                    <i class="bi bi-box-arrow-in-right me-1"></i> 登录
-                </a>
-            {% endif %}
-        </div>
-    </div>
-</section>
-
-<div class="stats-row">
-    <div class="stat-card animate-in delay-1">
-        <div class="stat-value" data-count="{{ stats.problem_count }}">0</div>
-        <div class="stat-label"><i class="bi bi-journal-code me-1"></i> 公开题目</div>
-    </div>
-    <div class="stat-card animate-in delay-2">
-        <div class="stat-value" data-count="{{ stats.submission_count }}">0</div>
-        <div class="stat-label"><i class="bi bi-send me-1"></i> 总提交数</div>
-    </div>
-    <div class="stat-card animate-in delay-3">
-        <div class="stat-value" data-count="{{ stats.user_count }}">0</div>
-        <div class="stat-label"><i class="bi bi-people me-1"></i> 注册用户</div>
-    </div>
-</div>
-
-<div class="feature-grid">
-    <div class="feature-card animate-in delay-1">
-        <div class="feature-icon blue"><i class="bi bi-collection"></i></div>
-        <h5>丰富题库</h5>
-        <p class="text-muted mb-0 small">涵盖多种难度，支持 Markdown 与 LaTeX 题面</p>
-    </div>
-    <div class="feature-card animate-in delay-2">
-        <div class="feature-icon amber"><i class="bi bi-lightning-charge"></i></div>
-        <h5>沙箱评测</h5>
-        <p class="text-muted mb-0 small">语言均支持自动评测，逐点反馈结果</p>
-    </div>
-    <div class="feature-card animate-in delay-3">
-        <div class="feature-icon rose"><i class="bi bi-trophy"></i></div>
-        <h5>排行榜</h5>
-        <p class="text-muted mb-0 small">记录通过题目，与其他选手一同进步</p>
-    </div>
-</div>
-
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card animate-in delay-4">
-            <div class="card-header card-header-gradient">
-                <h5 class="mb-0 section-header">
-                    <i class="bi bi-clock-history text-primary"></i> 最新题目
-                </h5>
-            </div>
-            <div class="card-body p-0">
-                {% if recent_problems %}
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0 recent-table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th class="ps-4">题号</th>
-                                    <th>标题</th>
-                                    <th class="pe-4">难度</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for problem in recent_problems %}
-                                <tr>
-                                    <td class="ps-4"><span class="badge bg-secondary">P{{ problem.id }}</span></td>
-                                    <td><a href="{% url 'problem_detail' problem.id %}">{{ problem.title }}</a></td>
-                                    <td class="pe-4">
-                                        <span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="p-3 border-top text-end">
-                        <a href="{% url 'problem_list' %}" class="btn btn-sm btn-outline-primary">
-                            查看全部 <i class="bi bi-arrow-right"></i>
-                        </a>
-                    </div>
+    <div class="hero-layout">
+        <div class="hero-content">
+            <p class="hero-brand">谷物 OJ</p>
+            <h1 class="hero-title">青少年自己写出来的评测场</h1>
+            <p class="hero-subtitle">
+                不是别人做好扔给我们用的黑盒，而是几个中学生边学边做、一路踩坑修到能跑的 OJ。
+                从题库、提交到沙箱判题，都由我们亲手搭起来——写给同龄人刷题，也写给自己练工程。
+            </p>
+            <div class="hero-actions">
+                <a href="{% url 'problem_list' %}" class="btn btn-hero-primary btn-lg">开始刷题</a>
+                {% if user.is_authenticated %}
+                    <a href="{% url 'leaderboard' %}" class="btn btn-hero-accent btn-lg">排行榜</a>
                 {% else %}
-                    <p class="text-muted p-4 mb-0">暂无题目，成为第一个上传者吧。</p>
+                    <a href="{% url 'register' %}" class="btn btn-hero-accent btn-lg">加入我们</a>
+                    <a href="{% url 'login' %}" class="btn btn-hero-ghost btn-lg">登录</a>
                 {% endif %}
             </div>
         </div>
+        <figure class="hero-media">
+            <img
+                src="{% static 'img/hero-photo.jpg' %}?v=2"
+                alt="谷物 OJ：麦田与代码窗口交织的插画"
+                class="hero-photo"
+                width="1600"
+                height="900"
+            >
+            <figcaption class="hero-caption">教室里长出来的工程 · Discovery Studio</figcaption>
+        </figure>
     </div>
+</section>
 
-    <div class="col-lg-4">
-        <div class="card animate-in delay-4">
-            <div class="card-header card-header-gradient">
-                <h5 class="mb-0 section-header"><i class="bi bi-link-45deg text-primary"></i> 快速链接</h5>
-            </div>
-            <div class="card-body py-2">
-                <ul class="list-group list-group-flush">
-                    <li class="list-group-item quick-link-item">
-                        <a href="{% url 'problem_list' %}"><i class="bi bi-book"></i> 题库</a>
-                    </li>
-                    <li class="list-group-item quick-link-item">
-                        <a href="{% url 'all_submissions' %}"><i class="bi bi-list-check"></i> 提交记录</a>
-                    </li>
-                    <li class="list-group-item quick-link-item">
-                        <a href="{% url 'leaderboard' %}"><i class="bi bi-trophy"></i> 排行榜</a>
-                    </li>
-                    <li class="list-group-item quick-link-item">
-                        <a href="{% url 'handbook_index' %}"><i class="bi bi-journal-bookmark"></i> OIer 手册</a>
-                    </li>
-                    {% if user.is_authenticated %}
-                    <li class="list-group-item quick-link-item">
-                        <a href="{% url 'my_submissions' %}"><i class="bi bi-person"></i> 我的提交</a>
-                    </li>
-                    <li class="list-group-item quick-link-item">
-                        {% if user|feature_disabled:"create_problem" %}
-                        <span class="text-muted" title="上传题目功能已被管理员禁用"><i class="bi bi-cloud-upload"></i> 上传题目</span>
-                        {% else %}
-                        <a href="{% url 'create_problem' %}"><i class="bi bi-cloud-upload"></i> 上传题目</a>
-                        {% endif %}
-                    </li>
-                    {% endif %}
-                </ul>
-            </div>
-        </div>
-
-        <div class="card animate-in delay-5">
-            <div class="card-header card-header-gradient">
-                <h5 class="mb-0 section-header"><i class="bi bi-lightbulb text-warning"></i> 使用说明</h5>
-            </div>
-            <div class="card-body">
-                <ol class="steps-list">
-                    <li>浏览题库，选择感兴趣的题目</li>
-                    <li>阅读题面，理解输入输出要求</li>
-                    <li>在 IDE 中编写代码并提交</li>
-                    <li>查看评测结果，根据反馈改进</li>
-                </ol>
-            </div>
-        </div>
+<section class="home-stats" aria-label="平台数据">
+    <div class="stat-item animate-in delay-1">
+        <div class="stat-value" data-count="{{ stats.problem_count }}">0</div>
+        <div class="stat-label">公开题目</div>
     </div>
+    <div class="stat-item animate-in delay-2">
+        <div class="stat-value" data-count="{{ stats.submission_count }}">0</div>
+        <div class="stat-label">累计提交</div>
+    </div>
+    <div class="stat-item animate-in delay-3">
+        <div class="stat-value" data-count="{{ stats.user_count }}">0</div>
+        <div class="stat-label">注册同学</div>
+    </div>
+</section>
+
+<section class="home-story animate-in delay-1">
+    <div class="story-copy">
+        <h2 class="section-title">为什么自己做一套 OJ</h2>
+        <p>
+            刷题网站很多，真正完整走一遍「需求 → 部署 → 判题 → 修 bug」的机会很少。
+            谷物 OJ 是我们在课程与兴趣驱动下搭起来的练兵场：要懂算法，更要懂系统怎么活着。
+        </p>
+    </div>
+    <ul class="story-points">
+        <li>
+            <strong>同龄人视角</strong>
+            <span>题面、反馈与手册按学生真实学习路径来写，而不是照搬成人竞赛站的语气。</span>
+        </li>
+        <li>
+            <strong>真系统，真判题</strong>
+            <span>Django + 沙箱评测 + 队列，提交后能看到逐点结果，工程链路看得见。</span>
+        </li>
+        <li>
+            <strong>公开共建</strong>
+            <span>代码在 GitHub 开源，课堂里改、线上跑，错误与进步都留在仓库里。</span>
+        </li>
+    </ul>
+</section>
+
+<section class="home-features" aria-label="平台特点">
+    <article class="feature-block animate-in delay-1">
+        <h3>题库与标签</h3>
+        <p>按知识点、算法与竞赛来源筛选，方便针对性练习。</p>
+    </article>
+    <article class="feature-block animate-in delay-2">
+        <h3>沙箱即时反馈</h3>
+        <p>多语言自动评测，把「交上去会发生什么」变成可复盘的结果。</p>
+    </article>
+    <article class="feature-block animate-in delay-3">
+        <h3>一起变强</h3>
+        <p>排行榜、手册与开发日志，记录刷题进度，也记录我们怎么把站修好。</p>
+    </article>
+</section>
+
+<section class="home-board">
+    <div class="board-main animate-in delay-2">
+        <div class="board-head">
+            <h2 class="section-title">最新题目</h2>
+            <a href="{% url 'problem_list' %}" class="board-link">查看全部</a>
+        </div>
+        {% if recent_problems %}
+            <ul class="problem-rail">
+                {% for problem in recent_problems %}
+                <li>
+                    <a href="{% url 'problem_detail' problem.id %}">
+                        <span class="pid">P{{ problem.id }}</span>
+                        <span class="ptitle">{{ problem.title }}</span>
+                        <span class="badge difficulty-badge difficulty-{{ problem.difficulty_slug }}">{{ problem.difficulty }}</span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="text-muted mb-0">暂无题目，欢迎成为第一位上传者。</p>
+        {% endif %}
+    </div>
+    <aside class="board-side animate-in delay-3">
+        <h2 class="section-title">快速入口</h2>
+        <nav class="quick-rail" aria-label="快速入口">
+            <a href="{% url 'problem_list' %}">题库</a>
+            <a href="{% url 'all_submissions' %}">提交记录</a>
+            <a href="{% url 'leaderboard' %}">排行榜</a>
+            <a href="{% url 'handbook_index' %}">OIer 手册</a>
+            <a href="{% url 'devlog:status' %}">开发者日志</a>
+            {% if user.is_authenticated %}
+                <a href="{% url 'my_submissions' %}">我的提交</a>
+                {% if not user|feature_disabled:"create_problem" %}
+                <a href="{% url 'create_problem' %}">上传题目</a>
+                {% endif %}
+            {% endif %}
+        </nav>
+    </aside>
+</section>
+
+<section class="home-team animate-in delay-2" id="team">
+    <div class="team-intro">
+        <h2 class="section-title">项目成员</h2>
+        <p>
+            谷物 OJ 由三位初中同学主导开发与测试，并在导师指导下把课堂想法做成能真正跑起来的评测系统。
+        </p>
+    </div>
+    <ul class="team-grid">
+        <li class="team-member">
+            <div class="team-avatar" aria-hidden="true">O</div>
+            <div class="team-meta">
+                <h3>Oscar Liu</h3>
+                <p class="team-role">核心开发者</p>
+                <p class="team-bio">北京某国际学校初中 · 架构、判题链路与仓库主线迭代的主要推动者。</p>
+            </div>
+        </li>
+        <li class="team-member">
+            <div class="team-avatar" aria-hidden="true">J</div>
+            <div class="team-meta">
+                <h3>James Wen</h3>
+                <p class="team-role">核心开发者</p>
+                <p class="team-bio">北京某国际学校初中 · 网站架构与部署，核心功能开发者。</p>
+            </div>
+        </li>
+        <li class="team-member">
+            <div class="team-avatar" aria-hidden="true">J</div>
+            <div class="team-meta">
+                <h3>Jason Qin</h3>
+                <p class="team-role">核心功能测试</p>
+                <p class="team-bio">北京某公立学校初中 · 持续体验改进与关键功能测试。</p>
+            </div>
+        </li>
+        <li class="team-member team-member--mentor">
+            <div class="team-avatar" aria-hidden="true">N</div>
+            <div class="team-meta">
+                <h3>Nick Niu <span class="team-handle">@CAMLUNI</span></h3>
+                <p class="team-role">项目导师</p>
+                <p class="team-bio">指导项目方向、工程实践与上线落地，陪伴团队把 OJ 做完整。</p>
+            </div>
+        </li>
+    </ul>
+    <p class="team-note">
+        Discovery Studio 课堂项目 ·
+        <a href="https://github.com/alphadamn/guwu-oj" target="_blank" rel="noopener">GitHub 仓库</a>
+    </p>
+</section>
+
 </div>
 {% endblock %}

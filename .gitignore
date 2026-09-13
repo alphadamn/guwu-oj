@@ -22,3 +22,6 @@ tls
 .codebase-memory
 aiwaf
 .trae
+
+# SSL certs / private keys (do not commit)
+certs/
