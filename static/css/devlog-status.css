@@ -1,0 +1,20 @@
+/* Extracted from templates/devlog/status.html (2026-09-13) */
+.devlog-hero {
+    background: linear-gradient(135deg, #0d6efd 0%, #6610f2 100%);
+    color: #fff; border-radius: 1rem; padding: 1.75rem 2rem; margin-bottom: 1.5rem;
+}
+.status-banner { border-radius: .75rem; padding: 1rem 1.25rem; font-weight: 600; }
+.status-dot { width: .8rem; height: .8rem; border-radius: 50%; display: inline-block; }
+.dot-success { background:#198754;} .dot-warning{background:#ffc107;}
+.dot-danger{background:#dc3545;} .dot-info{background:#0dcaf0;} .dot-secondary{background:#6c757d;}
+.component-row { display:flex; align-items:center; justify-content:space-between; padding:.75rem 0; border-bottom:1px solid #f0f0f0; }
+.component-row:last-child { border-bottom:none; }
+.uptime-bar { height:8px; border-radius:4px; background:#e9ecef; overflow:hidden; min-width:140px; width:160px; max-width:160px; }
+.uptime-fill { height:100%; background:linear-gradient(90deg,#198754,#20c997); transition: width .4s ease; }
+.commit-item { padding:.6rem 0; border-bottom:1px solid #f0f0f0; }
+.commit-item:last-child { border-bottom:none; }
+.commit-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.78rem; }
+.devlog-entry { border-left:3px solid #0d6efd; padding-left:1rem; margin-bottom:1.25rem; }
+.devlog-entry .entry-body :is(h1,h2,h3){ font-size:1.05rem; margin:.6rem 0 .35rem; }
+.change-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.82rem; word-break:break-all; }
+.sticky-side { position: sticky; top: 84px; }

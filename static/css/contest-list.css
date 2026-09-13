@@ -1,0 +1,6 @@
+/* Extracted from templates/contests/list.html (2026-09-13) */
+.contest-list-header { background: linear-gradient(135deg, #2563eb, #4f46e5); color: #fff; border-radius: 1rem; padding: 2rem; }
+.contest-list-card { border: 0; border-radius: 1rem; box-shadow: 0 .5rem 1.5rem rgba(15, 23, 42, .08); overflow: hidden; }
+.contest-row { border-left: 4px solid #94a3b8; transition: transform .15s ease, box-shadow .15s ease; }
+.contest-row:hover { transform: translateY(-2px); box-shadow: 0 .4rem 1rem rgba(15, 23, 42, .08); }
+.contest-row.live { border-left-color: #22c55e; } .contest-row.upcoming { border-left-color: #f59e0b; } .contest-row.finished { border-left-color: #64748b; }

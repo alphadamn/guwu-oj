@@ -1,0 +1,7 @@
+/* Extracted from templates/admin/base_site.html (2026-09-13) */
+/* 顶层日历/时钟弹窗宿主：position:fixed + transform:none，绕开 SimpleUI 的 transform 祖先 */
+#__guwu_popup_root{position:fixed !important;top:0 !important;left:0 !important;width:0 !important;height:0 !important;overflow:visible !important;z-index:2147483000 !important;pointer-events:none !important;transform:none !important;-webkit-transform:none !important;will-change:auto !important;contain:none !important;}
+#__guwu_popup_root .calendarbox,
+#__guwu_popup_root .clockbox{position:absolute !important;pointer-events:auto !important;z-index:2147483000 !important;}
+/* 防止 .form-row overflow: hidden 把弹窗裁掉 */
+.form-row, .form-row > div, .form-row .datetime, .datetime{overflow:visible !important;}

@@ -1,0 +1,50 @@
+/* Extracted from search/templates/search/search.html inline <style> (2026-09-13). */
+
+#search-loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(2px);
+    z-index: 1080;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 1rem;
+}
+#search-loading-overlay.is-visible {
+    display: flex;
+}
+.search-spinner {
+    width: 64px;
+    height: 64px;
+    border: 6px solid #e2e6ea;
+    border-top-color: #0d6efd;
+    border-radius: 50%;
+    animation: search-spin 0.9s linear infinite;
+}
+.search-dots {
+    display: inline-flex;
+    gap: 6px;
+}
+.search-dots span {
+    width: 10px;
+    height: 10px;
+    background: #0d6efd;
+    border-radius: 50%;
+    animation: search-bounce 1.2s ease-in-out infinite;
+}
+.search-dots span:nth-child(2) { animation-delay: 0.15s; }
+.search-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes search-spin {
+    to { transform: rotate(360deg); }
+}
+@keyframes search-bounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+.search-error {
+    background: #fff5f5;
+    color: #a94442;
+    border: 1px solid #f5c2c2;
+}

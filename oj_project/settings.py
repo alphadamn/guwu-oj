@@ -379,6 +379,8 @@ if not DEMO_MODE:
         'default': _rq_queue_entry(default_rq_machine),
         'high': _rq_queue_entry(default_rq_machine),
         'low': _rq_queue_entry(default_rq_machine),
+        # Lowest-priority lane for AI-explanation judge-tool verification runs.
+        'ai': _rq_queue_entry(default_rq_machine),
     }
 
     default_judge_machines = [
