@@ -412,16 +412,24 @@ if not DEMO_MODE:
     # How many submissions one judge worker process runs in parallel (threads).
     OJ_JUDGE_CONCURRENCY = int(os.environ.get('OJ_JUDGE_CONCURRENCY', '4'))
 
+    # Judge-priority lanes consumed by the rqworker command, in drain order:
+    # {base}-pro > {base}-plus > {base} (free users) > {base}-ai. django-rq
+    # resolves every CLI queue name through RQ_QUEUES and raises KeyError for
+    # an unregistered name, so all four variants must exist on the worker.
+    JUDGE_PRIORITY_SUFFIXES = ('-pro', '-plus', '', '-ai')
+
     # A judge host normally has credentials only for its own local Redis endpoint.
-    # Register that queue even when its web-side JUDGE_MACHINES_JSON lives solely
-    # on the web host.
+    # Register that queue and its priority lanes even when its web-side
+    # JUDGE_MACHINES_JSON lives solely on the web host.
     if OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE:
-        RQ_QUEUES[OJ_JUDGE_QUEUE] = _rq_queue_entry(default_rq_machine)
+        for _suffix in JUDGE_PRIORITY_SUFFIXES:
+            RQ_QUEUES[f'{OJ_JUDGE_QUEUE}{_suffix}'] = _rq_queue_entry(default_rq_machine)
 
     if not (OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE):
         for machine in JUDGE_MACHINES:
             if machine.get('enabled', True):
-                RQ_QUEUES[machine['queue']] = _rq_queue_entry(machine)
+                for _suffix in JUDGE_PRIORITY_SUFFIXES:
+                    RQ_QUEUES[f'{machine["queue"]}{_suffix}'] = _rq_queue_entry(machine)
 
     RQ = {
         # Pin enqueue timing explicitly rather than relying on the default,

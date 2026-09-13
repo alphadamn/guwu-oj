@@ -153,7 +153,9 @@ class JudgeLoadBalancer:
         The free tier keeps the bare queue name (empty suffix) so the load
         counter and the existing worker command both keep working.
         """
-        return ('-pro', '-plus', '', '-ai')
+        return getattr(
+            settings, 'JUDGE_PRIORITY_SUFFIXES', ('-pro', '-plus', '', '-ai'),
+        )
 
     def _get_queue_length(self, machine):
         """Total queued jobs across all priority tiers of one machine."""
