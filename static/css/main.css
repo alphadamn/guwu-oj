@@ -53,7 +53,7 @@ main.container {
 /* Navbar */
 .oj-navbar {
     background: var(--oj-nav-bg) !important;
-    backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(140%);
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
     transition: box-shadow var(--oj-transition);
 }
@@ -174,9 +174,9 @@ main.container {
     content: "";
     position: absolute;
     border-radius: 50%;
-    filter: blur(60px);
-    opacity: 0.5;
-    animation: hero-float 10s ease-in-out infinite;
+    filter: blur(48px);
+    opacity: 0.45;
+    pointer-events: none;
 }
 
 .home-hero::before {
@@ -193,12 +193,18 @@ main.container {
     background: #f59e0b;
     bottom: -60px;
     left: 10%;
-    animation-delay: -4s;
 }
 
-@keyframes hero-float {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    50% { transform: translate(20px, -15px) scale(1.05); }
+@media (prefers-reduced-motion: no-preference) {
+    .home-hero::before,
+    .home-hero::after {
+        will-change: transform;
+        animation: hero-float 12s ease-in-out infinite;
+    }
+    @keyframes hero-float {
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        50% { transform: translate(12px, -8px) scale(1.03); }
+    }
 }
 
 .hero-content {
@@ -272,8 +278,7 @@ main.container {
 }
 
 .stat-card {
-    background: var(--oj-surface-glass);
-    backdrop-filter: blur(18px) saturate(130%);
+    background: var(--oj-surface);
     border: 1px solid var(--oj-border);
     border-radius: var(--oj-radius);
     padding: 1.25rem 1.5rem;
@@ -313,8 +318,7 @@ main.container {
 }
 
 .feature-card {
-    background: var(--oj-surface-glass);
-    backdrop-filter: blur(18px) saturate(130%);
+    background: var(--oj-surface);
     border-radius: var(--oj-radius);
     padding: 1.75rem 1.5rem;
     text-align: center;
@@ -380,7 +384,6 @@ main.container {
 .home-hero .btn-outline-light {
     border-color: rgba(255, 255, 255, 0.38);
     background: rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(12px);
 }
 
 .home-hero .btn-outline-light:hover {
@@ -412,12 +415,9 @@ main.container {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-    .oj-navbar, .stat-card, .feature-card, .home-hero .btn-outline-light {
+    .oj-navbar {
         backdrop-filter: none;
-    }
-
-    .stat-card, .feature-card {
-        background: var(--oj-surface);
+        background: #0f172a !important;
     }
 }
 
@@ -484,8 +484,7 @@ main.container {
 .problem-sidebar-card,
 .submission-sidebar-card,
 .problem-actions-card {
-    background: var(--oj-surface-glass);
-    backdrop-filter: blur(18px) saturate(130%);
+    background: var(--oj-surface);
 }
 
 .problem-sidebar-card + .problem-sidebar-card,
@@ -556,15 +555,6 @@ main.container {
         overflow: visible;
         padding: 0;
         margin: 0;
-    }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-    .problem-sidebar-card,
-    .submission-sidebar-card,
-    .problem-actions-card {
-        backdrop-filter: none;
-        background: var(--oj-surface);
     }
 }
 

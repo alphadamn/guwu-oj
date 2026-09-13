@@ -6,8 +6,43 @@ from django.core.cache import cache
 
 User = get_user_model()
 
-# Tags are free text separated by spaces and/or commas ("," / "，").
-_TAG_SPLIT_RE = re.compile(r'[\s,，、;；]+')
+# Tags are free text. Historical rows mix comma lists ("dp,data structures")
+# and space lists ("洛谷 P9755"). Prefer punctuation separators when present
+# so multi-word algorithm tags stay intact.
+_TAG_PUNCT_RE = re.compile(r'[,，、;；]+')
+_TAG_SPACE_RE = re.compile(r'\s+')
+_TAG_SPLIT_RE = re.compile(r'[\s,，、;；]+')  # kept for callers / search helpers
+
+
+def split_stored_tags(raw: str) -> list[str]:
+    """Split a stored ``tags`` string into individual labels."""
+    text = (raw or '').strip()
+    if not text:
+        return []
+    splitter = _TAG_PUNCT_RE if _TAG_PUNCT_RE.search(text) else _TAG_SPACE_RE
+    return [tag for tag in splitter.split(text) if tag.strip()]
+
+
+def public_tag_list(raw: str) -> list[str]:
+    """Tags shown on the site: Chinese algorithm labels plus 中文来源."""
+    from .tag_labels import CANONICAL_ZH_TAGS, has_cjk, is_provenance_tag, to_zh_algorithm_tag
+
+    canonical = set(CANONICAL_ZH_TAGS)
+    seen: list[str] = []
+    for tag in split_stored_tags(raw):
+        if is_provenance_tag(tag):
+            if not has_cjk(tag):
+                continue
+            label = tag
+        elif tag in canonical:
+            label = tag
+        else:
+            label = to_zh_algorithm_tag(tag)
+            if not label:
+                continue
+        if label not in seen:
+            seen.append(label)
+    return seen
 
 
 class Problem(models.Model):
@@ -85,7 +120,7 @@ class Problem(models.Model):
         ``"洛谷 P9755 CSP-S 2024"`` (spaces). Splitting on both keeps badge
         rendering and tag filtering consistent.
         """
-        return [tag for tag in _TAG_SPLIT_RE.split(self.tags or '') if tag]
+        return public_tag_list(self.tags)
 
     @property
     def difficulty_slug(self):

@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}两步验证设置 - 谷物 OJ{% endblock %}
 
@@ -48,7 +49,8 @@
                     </ol>
 
                     <div class="text-center mb-3">
-                        <div id="qr-target" class="d-inline-block p-2 border rounded bg-white"></div>
+                        <div id="qr-target" class="d-inline-block p-2 border rounded bg-white"
+                             data-otpauth-url="{{ otpauth_url|escapejs }}"></div>
                     </div>
 
                     <div class="mb-3">
@@ -91,32 +93,5 @@
 
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<script>
-(function () {
-    var target = document.getElementById('qr-target');
-    var url = '{{ otpauth_url|escapejs }}';
-    if (!target || !url || typeof QRCode === 'undefined') return;
-    new QRCode(target, {
-        text: url,
-        width: 220,
-        height: 220,
-        correctLevel: QRCode.CorrectLevel.M,
-    });
-
-    var btn = document.getElementById('copy-secret-btn');
-    if (btn) {
-        btn.addEventListener('click', function () {
-            var input = document.getElementById('secret-text');
-            if (!input) return;
-            try {
-                input.select();
-                input.setSelectionRange(0, 99999);
-                document.execCommand('copy');
-                btn.textContent = '已复制';
-                setTimeout(function () { btn.textContent = '复制'; }, 1500);
-            } catch (e) {}
-        });
-    }
-})();
-</script>
+<script src="{% static 'js/two-factor-setup.js' %}?v=20260913"></script>
 {% endblock %}

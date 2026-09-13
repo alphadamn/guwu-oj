@@ -6,16 +6,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/problem-markdown.css' %}">
-<style>
-    .code-block {
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 5px;
-        font-family: 'Courier New', monospace;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-    }
-</style>
+<link rel="stylesheet" href="{% static 'css/problem-detail.css' %}?v=20260913">
 {% endblock %}
 
 {% block content %}
@@ -118,7 +109,7 @@
             </div>
             <div class="card-body">
                 {% if problem.tags %}
-                    {% for tag in problem.tags.split %}
+                    {% for tag in problem.tag_list %}
                         <span class="badge bg-light text-dark me-1 mb-1">{{ tag }}</span>
                     {% endfor %}
                 {% else %}
@@ -129,6 +120,15 @@
         
         <div class="card problem-actions-card">
             <div class="card-body">
+                {% if user.is_authenticated %}
+                <a href="{% url 'ai_assistant:ask' problem.id %}" class="btn btn-success w-100 mb-2">
+                    <i class="bi bi-robot"></i> AI 解题
+                </a>
+                {% else %}
+                <a href="{% url 'login' %}" class="btn btn-success w-100 mb-2">
+                    <i class="bi bi-robot"></i> 登录后 AI 解题
+                </a>
+                {% endif %}
                 <a href="{% url 'solution_list' problem.id %}" class="btn btn-info w-100 mb-2">
                     <i class="bi bi-book"></i> 查看题解
                 </a>

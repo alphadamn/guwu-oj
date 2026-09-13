@@ -4,66 +4,7 @@
 {% block title %}提交 #{{ submission.id }} - 谷物 OJ{% endblock %}
 
 {% block extra_css %}
-<style>
-    .code-block {
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 5px;
-        font-family: 'Courier New', monospace;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        max-height: 500px;
-        overflow-y: auto;
-    }
-    .case-overview {
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        padding: 24px 20px;
-    }
-    .case-badge {
-        min-width: 4.5rem;
-        font-weight: 700;
-        font-size: 1.25rem;
-        padding: 14px 18px !important;
-        border-radius: 8px !important;
-    }
-    .case-Accepted { background-color: #2ecc71; color: #fff; }
-    .case-Wrong { background-color: #e74c3c; color: #fff; }
-    .case-Time { background-color: #f39c12; color: #fff; }
-    .case-Runtime { background-color: #9b59b6; color: #fff; }
-    .case-Memory { background-color: #34495e; color: #fff; }
-    .case-Skipped { background-color: #95a5a6; color: #fff; }
-    .case-points {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 20px;
-        justify-content: flex-start;
-    }
-    .case-point {
-        text-align: center;
-        min-width: 88px;
-    }
-    .case-point .case-label {
-        display: block;
-        font-size: 0.85rem;
-        color: #6c757d;
-        margin-top: 8px;
-        font-weight: 500;
-    }
-    .case-point .case-runtime {
-        display: block;
-        font-size: 1rem;
-        color: #495057;
-        margin-top: 6px;
-        font-weight: 600;
-    }
-    .status-Accepted { color: #2ecc71; font-weight: bold; }
-    .status-Wrong { color: #e74c3c; font-weight: bold; }
-    .status-Time { color: #f39c12; font-weight: bold; }
-    .status-Runtime { color: #9b59b6; font-weight: bold; }
-    .status-Pending { color: #f39c12; font-weight: bold; }
-    .status-Error { color: #c0392b; font-weight: bold; }
-</style>
+<link rel="stylesheet" href="{% static 'css/submission-detail.css' %}?v=20260913">
 {% endblock %}
 
 {% block content %}

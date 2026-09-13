@@ -5,30 +5,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/code-editor.css' %}">
-<style>
-    .submission-captcha-card {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 6px 20px -10px rgba(15, 23, 42, 0.25);
-    }
-    .submission-captcha-header {
-        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
-        letter-spacing: 0.02em;
-    }
-    #captcha-img {
-        transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.2s ease;
-    }
-    #captcha-img:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
-        cursor: pointer;
-    }
-    #captcha-img.refreshing {
-        filter: blur(2px) opacity(0.6);
-    }
-</style>
+<link rel="stylesheet" href="{% static 'css/submission-submit.css' %}?v=20260913">
 {% endblock %}
 
 {% block content %}
@@ -46,10 +23,12 @@
                     <i class="bi bi-exclamation-triangle-fill"></i>
                     当前账号的提交功能已被管理员禁用，暂时无法提交解答。如需申诉请联系管理员。
                 </div>
-                <form method="post" id="submit-form" onsubmit="return false;" novalidate>
+                <form method="post" id="submit-form" onsubmit="return false;" novalidate
+                      data-problem-id="{{ problem.id }}" data-captcha-url="{% url 'captcha_image' %}">
                     {% csrf_token %}
                 {% else %}
-                <form method="post" id="submit-form">
+                <form method="post" id="submit-form"
+                      data-problem-id="{{ problem.id }}" data-captcha-url="{% url 'captcha_image' %}">
                     {% csrf_token %}
                 {% endif %}
                     <div class="mb-3 submission-language-field">
@@ -199,75 +178,5 @@
 
 {% block extra_js %}
 <script src="{% static 'js/code-editor.js' %}"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    var statusEl = document.getElementById('code-editor-status');
-    function setStatus(text, cls) {
-        if (!statusEl) return;
-        statusEl.textContent = text;
-        statusEl.className = 'badge ' + (cls || 'text-muted');
-    }
-    setStatus('正在加载代码编辑器 (' + (window.OJ_MONACO_BASE || '') + ')', 'text-muted');
-    initOJCodeEditor({
-        containerId: 'monaco-editor',
-        textareaId: 'code',
-        languageSelectId: 'language',
-        problemId: {{ problem.id }},
-        initialLanguage: document.getElementById('language').value,
-        onProgress: setStatus,
-    }).then(function () {
-        setStatus('已就绪', 'text-success');
-    }).catch(function (err) {
-        console.error(err);
-        var ta = document.getElementById('code');
-        ta.classList.remove('d-none');
-        ta.classList.add('form-control', 'code-editor');
-        ta.style.minHeight = '400px';
-        ta.rows = 20;
-        document.getElementById('monaco-editor').style.display = 'none';
-        alert('代码编辑器加载失败，已回退为普通文本框。请检查网络后刷新页面。');
-        setStatus('编辑器加载失败', 'text-danger');
-    });
-
-    // Captcha widget: refresh on demand, and keep the hidden captcha_id
-    // field in sync with the image response header. Also auto-focus the
-    // answer input so the flow is faster.
-    var img = document.getElementById('captcha-img');
-    var idEl = document.getElementById('captcha-id');
-    var answerEl = document.getElementById('captcha-answer');
-    if (img && idEl) {
-        function refreshCaptcha() {
-            img.classList.add('refreshing');
-            var ts = Date.now();
-            var src = '{% url 'captcha_image' %}?_=' + ts;
-            fetch(src, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
-                .then(function (resp) {
-                    var newId = (resp.headers.get('X-Captcha-Id') || '').trim();
-                    if (newId) idEl.value = newId;
-                    return resp.blob();
-                })
-                .then(function (blob) {
-                    var reader = new FileReader();
-                    reader.onload = function () {
-                        img.src = reader.result;
-                        img.classList.remove('refreshing');
-                    };
-                    reader.readAsDataURL(blob);
-                })
-                .catch(function () {
-                    img.src = src;
-                    img.classList.remove('refreshing');
-                });
-        }
-        img.addEventListener('click', refreshCaptcha);
-        var btn = document.getElementById('captcha-refresh');
-        if (btn) btn.addEventListener('click', refreshCaptcha);
-        // Auto-load an initial challenge on pageload; focus the answer input.
-        refreshCaptcha();
-        if (answerEl) {
-            setTimeout(function () { try { answerEl.focus({ preventScroll: false }); } catch (e) {} }, 250);
-        }
-    }
-});
-</script>
+<script src="{% static 'js/submission-submit.js' %}?v=20260913"></script>
 {% endblock %}

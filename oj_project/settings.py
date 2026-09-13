@@ -40,6 +40,8 @@ CSRF_TRUSTED_ORIGINS = sorted({
             'https://guwu.camluni.cn:3001',
             'https://guwu.camluni.cn:8445',
             'http://guwu.camluni.cn:8445',
+            'http://guwu.camluni.com',
+            'https://guwu.camluni.com',
         ]
     )
     if origin.strip()
@@ -71,6 +73,7 @@ INSTALLED_APPS = [
     'django_prometheus',
     'health',
     'devlog',
+    'ai_assistant',
 ]
 
 if not TEST_MODE:
@@ -92,6 +95,10 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    # Drop the unchanged csrftoken re-send (Cloudflare refuses to cache
+    # responses carrying Set-Cookie). Response phase must run AFTER the CSRF
+    # middleware, hence it is registered before it in the list.
+    'users.middleware.CsrfCookieDedupMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     # Staff 2FA + sudo-mode enforcement: must run after
@@ -400,6 +407,8 @@ if not DEMO_MODE:
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
     OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
     OJ_JUDGE_QUEUE = os.environ.get('OJ_JUDGE_QUEUE', '')
+    # How many submissions one judge worker process runs in parallel (threads).
+    OJ_JUDGE_CONCURRENCY = int(os.environ.get('OJ_JUDGE_CONCURRENCY', '4'))
 
     # A judge host normally has credentials only for its own local Redis endpoint.
     # Register that queue even when its web-side JUDGE_MACHINES_JSON lives solely
@@ -626,7 +635,10 @@ MODULE_UPLOAD_LIMITS = {
 # A tiny helper used by ``users/captcha.py::_client_ip`` and by
 # ``users/middleware.py::EnforcementMiddleware`` to detect internal proxy
 # "noise" IPs (e.g. SimpleUI iframe requests) when computing rate limits.
-TRUSTED_PROXY_IPS = [h.strip() for h in os.environ.get('TRUSTED_PROXY_IPS', '127.0.0.1,::1').split(',') if h.strip()]
+# "" is the peer address of a Unix-domain-socket upstream (the local
+# reverse proxy); it must count as trusted so the real visitor IP is
+# promoted into REMOTE_ADDR.
+TRUSTED_PROXY_IPS = [''] + [h.strip() for h in os.environ.get('TRUSTED_PROXY_IPS', '127.0.0.1,::1').split(',') if h.strip()]
 
 # Optional local MaxMind GeoLite2 country database for anonymous dashboard aggregation.
 GEOIP2_COUNTRY_DB = os.environ.get('GEOIP2_COUNTRY_DB', str(BASE_DIR / 'data' / 'GeoLite2-Country.mmdb'))
@@ -717,6 +729,40 @@ ADMINS = tuple(_parse_admin_csv(os.environ.get('ADMINS_CSV', ''))) or (
 MANAGERS = ADMINS
 
 
+# ---------------------------------------------------------------------------
+# AI 解题（DeepSeek，OpenAI 兼容接口）+ Stripe 订阅
+# ---------------------------------------------------------------------------
+# 密钥统一从环境 / .env 读取，不要写进版本库。
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+DEEPSEEK_BASE_URL = os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com').rstrip('/')
+DEEPSEEK_MODEL = os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash')
+# Admin tag-completion uses the official chat model unless overridden.
+DEEPSEEK_TAG_MODEL = os.environ.get('DEEPSEEK_TAG_MODEL', 'deepseek-chat')
+try:
+    DEEPSEEK_TIMEOUT = float(os.environ.get('DEEPSEEK_TIMEOUT', '90'))
+except ValueError:
+    DEEPSEEK_TIMEOUT = 90.0
+
+# AI 讲解的「调用判题系统验证思路」工具使用的专用账号（不可登录、无后台权限）。
+# AI 提交的代码都挂在该账号下，与真实用户的提交记录隔离。
+AI_JUDGE_BOT_USERNAME = os.environ.get('AI_JUDGE_BOT_USERNAME', '__ai_judge_bot__')
+AI_JUDGE_BOT_NICKNAME = os.environ.get('AI_JUDGE_BOT_NICKNAME', 'AI 判题助手')
+try:
+    AI_JUDGE_TOOL_TIMEOUT_SEC = float(os.environ.get('AI_JUDGE_TOOL_TIMEOUT_SEC', '120'))
+except ValueError:
+    AI_JUDGE_TOOL_TIMEOUT_SEC = 120.0
+try:
+    AI_JUDGE_TOOL_POLL_INTERVAL_SEC = float(os.environ.get('AI_JUDGE_TOOL_POLL_INTERVAL_SEC', '1.5'))
+except ValueError:
+    AI_JUDGE_TOOL_POLL_INTERVAL_SEC = 1.5
+
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+# 在 Stripe 后台 / CLI 创建 webhook 后填入签名密钥；为空时 webhook 不校验签名（仅建议测试）。
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+# 对外可访问的站点根地址，用于需要绝对地址但 request 不可用的场景（Checkout 用 request 构建）。
+STRIPE_CURRENCY = os.environ.get('STRIPE_CURRENCY', 'cny')
+
+
 CRONJOBS = [
     # 第一个参数是 cron 时间表达式，第二个参数是任务函数的 Python 路径
     ('*/30 * * * *', 'devlog.views._refresh_auto_components', [], {'force_refresh': True}),
@@ -774,6 +820,8 @@ SIMPLEUI_CONFIG = {
             'models': [
                 {'name': '题目', 'icon': 'fas fa-file-alt',
                  'url': '/admin/problems/problem/'},
+                {'name': 'AI 完善标签', 'icon': 'fas fa-tags',
+                 'url': '/admin/problems/problem/complete-tags/'},
                 {'name': '测试用例', 'icon': 'fas fa-file-code',
                  'url': '/admin/problems/testcase/'},
                 {'name': '官方题解', 'icon': 'fas fa-lightbulb',
@@ -828,6 +876,22 @@ SIMPLEUI_CONFIG = {
                  'url': '/admin/devlog/filechange/'},
                 {'name': '文件快照', 'icon': 'fas fa-archive',
                  'url': '/admin/devlog/filesnapshot/'},
+            ],
+        },
+        {
+            'name': 'AI 与订阅',
+            'icon': 'fas fa-robot',
+            'models': [
+                {'name': 'AI 订阅', 'icon': 'fas fa-gem',
+                 'url': '/admin/ai_assistant/subscription/'},
+                {'name': 'AI 解题会话', 'icon': 'fas fa-comments',
+                 'url': '/admin/ai_assistant/aisession/'},
+                {'name': 'AI 生成记录', 'icon': 'fas fa-list',
+                 'url': '/admin/ai_assistant/aigeneration/'},
+                {'name': 'AI 判题验证', 'icon': 'fas fa-cpu',
+                 'url': '/admin/ai_assistant/aitoolcall/'},
+                {'name': '订阅计费配置', 'icon': 'fas fa-credit-card',
+                 'url': '/admin/ai_assistant/billingconfig/'},
             ],
         },
         {

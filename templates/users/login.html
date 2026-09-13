@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}登录 - 谷物 OJ{% endblock %}
 
@@ -38,6 +39,7 @@
                         </div>
                         <img id="captcha-img"
                              src="{{ captcha_url }}"
+                             data-captcha-url="{{ captcha_url }}"
                              alt="图形验证码"
                              class="mt-2 rounded border"
                              style="width:180px; height:50px; cursor:pointer;"
@@ -66,36 +68,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-(function () {
-    const captchaImg = document.getElementById('captcha-img');
-    const captchaId = document.getElementById('id_captcha_id');
-    const captchaUrl = '{{ captcha_url }}';
-    if (!captchaImg) return;
-
-    function refreshCaptcha() {
-        fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
-            .then(function (resp) {
-                const newId = resp.headers.get('X-Captcha-Id') || '';
-                if (newId && captchaId) captchaId.value = newId;
-                return resp.blob();
-            })
-            .then(function (blob) { captchaImg.src = URL.createObjectURL(blob); })
-            .catch(function () { captchaImg.src = captchaUrl + '?_=' + Date.now(); });
-    }
-
-    captchaImg.addEventListener('click', refreshCaptcha);
-    document.querySelectorAll('.captcha-refresh').forEach(function (el) {
-        el.addEventListener('click', refreshCaptcha);
-    });
-
-    fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
-        .then(function (resp) {
-            const newId = resp.headers.get('X-Captcha-Id') || '';
-            if (newId && captchaId) captchaId.value = newId;
-            return resp.blob();
-        })
-        .then(function (blob) { captchaImg.src = URL.createObjectURL(blob); });
-})();
-</script>
+<script src="{% static 'js/captcha-widget.js' %}?v=20260913"></script>
 {% endblock %}
