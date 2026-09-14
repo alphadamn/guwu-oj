@@ -221,38 +221,6 @@ main.container {
     grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.85fr);
     gap: clamp(1.25rem, 3vw, 2rem);
     align-items: center;
-    border-radius: 50%;
-    filter: blur(48px);
-    opacity: 0.45;
-    pointer-events: none;
-}
-
-.home-hero::before {
-    width: min(70vw, 280px);
-    height: min(70vw, 280px);
-    background: #3b82f6;
-    top: -80px;
-    right: -40px;
-}
-
-.home-hero::after {
-    width: min(50vw, 200px);
-    height: min(50vw, 200px);
-    background: #f59e0b;
-    bottom: -60px;
-    left: 10%;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-    .home-hero::before,
-    .home-hero::after {
-        will-change: transform;
-        animation: hero-float 12s ease-in-out infinite;
-    }
-    @keyframes hero-float {
-        0%, 100% { transform: translate(0, 0) scale(1); }
-        50% { transform: translate(12px, -8px) scale(1.03); }
-    }
 }
 
 .hero-content {
@@ -441,14 +409,6 @@ main.container {
     background:
         linear-gradient(180deg, #f8fafc, #eef3f7),
         radial-gradient(ellipse 80% 60% at 100% 0%, rgba(201, 146, 42, 0.12), transparent 55%);
-.stat-card {
-    background: var(--oj-surface);
-    border: 1px solid var(--oj-border);
-    border-radius: var(--oj-radius);
-    padding: 1.25rem 1.5rem;
-    text-align: center;
-    box-shadow: var(--oj-shadow);
-    transition: transform var(--oj-transition), box-shadow var(--oj-transition);
 }
 
 .story-copy p {
@@ -506,14 +466,6 @@ main.container {
     font-size: 1.05rem;
     font-weight: 600;
     letter-spacing: -0.02em;
-.feature-card {
-    background: var(--oj-surface);
-    border-radius: var(--oj-radius);
-    padding: 1.75rem 1.5rem;
-    text-align: center;
-    box-shadow: var(--oj-shadow);
-    transition: transform var(--oj-transition), box-shadow var(--oj-transition);
-    border: 1px solid rgba(59, 130, 246, 0.08);
 }
 
 .feature-block p {
@@ -600,9 +552,6 @@ main.container {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-.home-hero .btn-outline-light {
-    border-color: rgba(255, 255, 255, 0.38);
-    background: rgba(255, 255, 255, 0.08);
 }
 
 .quick-rail {
@@ -647,11 +596,6 @@ main.container {
     max-width: 40rem;
     line-height: 1.75;
     color: rgba(232, 238, 244, 0.78);
-@media (prefers-reduced-transparency: reduce) {
-    .oj-navbar {
-        backdrop-filter: none;
-        background: #0f172a !important;
-    }
 }
 
 .team-grid {
@@ -822,6 +766,34 @@ main.container {
     margin-top: 1rem;
 }
 
+/* Floating problem sidebar: sticks and follows the statement while scrolling */
+.problem-detail-float {
+    align-items: stretch; /* stretch columns so the sticky sidebar has room to travel */
+}
+
+.problem-detail-float .problem-sidebar-float {
+    z-index: 5;
+    max-height: calc(100vh - 6.5rem);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    padding: 0.5rem 0.5rem 1rem;
+    margin: -0.5rem 0 0;
+}
+
+.problem-detail-float .problem-sidebar-float::-webkit-scrollbar {
+    width: 6px;
+}
+
+.problem-detail-float .problem-sidebar-float::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.5);
+    border-radius: 999px;
+}
+
+.problem-detail-float .problem-sidebar-card,
+.problem-detail-float .problem-actions-card {
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
 
 
 .submission-actions {
@@ -845,6 +817,13 @@ main.container {
     .problem-sidebar-stack,
     .submission-sidebar-stack {
         position: static;
+    }
+
+    .problem-detail-float .problem-sidebar-float {
+        max-height: none;
+        overflow: visible;
+        padding: 0;
+        margin: 0;
     }
 }
 
