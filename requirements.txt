@@ -39,4 +39,4 @@ argon2-cffi>=23.0.0
 
 # AI 解题 + Stripe 订阅支付
 openai>=2.0.0
-stripe>=15.0.0
+stripe>=15.6.1
