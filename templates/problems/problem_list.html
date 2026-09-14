@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}题库 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/problem-list.css' %}?v=20260914c">
+{% endblock %}
 
 {% block content %}
 <div class="card">
@@ -8,8 +13,8 @@
         <h5 class="mb-0"><i class="bi bi-book"></i> 题库</h5>
     </div>
     <div class="card-body">
-        <form method="get" class="mb-4">
-            <div class="row g-3">
+        <form method="get" id="problem-filter-form">
+            <div class="row g-3 mb-3">
                 <div class="col-md-4">
                     <input type="text" class="form-control" name="search" placeholder="搜索标题、题号或标签（多个关键词用空格分隔）" value="{{ request.GET.search }}">
                 </div>
@@ -27,16 +32,81 @@
                         <option value="NOI" {% if request.GET.difficulty == 'NOI' %}selected{% endif %}>NOI</option>
                     </select>
                 </div>
-                <div class="col-md-3">
-                    <input type="text" class="form-control" name="tags" placeholder="标签（多个标签用空格分隔）" value="{{ request.GET.tags }}">
+                <div class="col-md-5">
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary flex-grow-1"
+                                data-bs-toggle="modal" data-bs-target="#tag-modal">
+                            <i class="bi bi-tags"></i> 标签筛选
+                            {% if selected_tag_chips %}
+                            <span class="badge bg-primary ms-1">{{ selected_tag_chips|length }}</span>
+                            {% endif %}
+                        </button>
+                        <button type="submit" class="btn btn-primary flex-grow-1">
+                            <i class="bi bi-search"></i> 搜索
+                        </button>
+                    </div>
                 </div>
-                <div class="col-md-2">
-                    <button type="submit" class="btn btn-primary w-100">搜索</button>
+            </div>
+
+            {# Luogu-style tag filter popup, opened by the "标签筛选" button. #}
+            {# The modal lives inside the form so its checkboxes submit with it. #}
+            <div class="modal fade" id="tag-modal" tabindex="-1" aria-labelledby="tag-modal-label" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="tag-modal-label">
+                                <i class="bi bi-tags"></i> 标签筛选
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="tag-panel-inner">
+                                {% for group in tag_groups %}
+                                <div class="tag-group">
+                                    <span class="tag-group-title">{{ group.name }}</span>
+                                    <div class="tag-group-items">
+                                        {% for t in group.tags %}
+                                        <label class="tag-btn{% if t.name in selected_tag_set %} is-active{% endif %}{% if t.count == 0 %} is-disabled{% endif %}"
+                                               title="{% if t.count == 0 %}暂无此类题目{% else %}约 {{ t.count }} 题{% endif %}">
+                                            <input type="checkbox" name="tags" value="{{ t.name }}"
+                                                   autocomplete="off"
+                                                   {% if t.name in selected_tag_set %}checked{% endif %}
+                                                   {% if t.count == 0 %}disabled{% endif %}>
+                                            <span class="tag-btn-name">{{ t.name }}</span>
+                                            <span class="tag-btn-count">{{ t.count }}</span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" id="tag-clear">
+                                <i class="bi bi-x-circle"></i> 清空
+                            </button>
+                            <span class="tag-panel-status text-muted me-auto" id="tag-panel-status">已选 0 个标签</span>
+                            <button type="submit" class="btn btn-primary" id="tag-apply">
+                                <i class="bi bi-check2"></i> 确认筛选
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </form>
-        
-        <div class="table-responsive">
+
+        {% if selected_tag_chips %}
+        <div class="tag-selected-row mt-3">
+            <span class="tag-selected-label">已选标签：</span>
+            {% for chip in selected_tag_chips %}
+            <a class="tag-selected-chip" href="?{{ chip.query_string }}">
+                {{ chip.name }} <i class="bi bi-x-lg"></i>
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="table-responsive mt-3">
             <table class="table table-hover">
                 <thead>
                     <tr>
@@ -103,4 +173,41 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var modal = document.getElementById('tag-modal');
+    if (!modal) return;
+    var checkboxes = modal.querySelectorAll('input[name="tags"]');
+    var statusEl = document.getElementById('tag-panel-status');
+    var clearBtn = document.getElementById('tag-clear');
+
+    function refresh() {
+        var count = 0;
+        checkboxes.forEach(function (input) {
+            var label = input.closest('.tag-btn');
+            if (!label) return;
+            label.classList.toggle('is-active', input.checked && !input.disabled);
+            if (input.checked) count++;
+        });
+        if (statusEl) statusEl.textContent = '已选 ' + count + ' 个标签';
+    }
+
+    // Toggling a tag only updates visuals -- no auto-submit.
+    modal.addEventListener('change', function (e) {
+        if (e.target.matches('input[name="tags"]')) refresh();
+    });
+
+    clearBtn.addEventListener('click', function () {
+        checkboxes.forEach(function (input) {
+            if (!input.disabled) input.checked = false;
+        });
+        refresh();
+    });
+
+    refresh();
+})();
+</script>
 {% endblock %}

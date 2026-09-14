@@ -10,9 +10,17 @@ from django.core.paginator import Paginator
 from django.views.decorators.http import require_POST
 from django.views.decorators.cache import never_cache
 from django.core.cache import cache
-from .models import Problem, Solution
+from .models import Problem, Solution, split_stored_tags
 from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
-from .tag_labels import search_aliases
+from .tag_labels import (
+    TAG_GROUPS,
+    SOURCE_TAGS,
+    canonical_tag_name,
+    filter_aliases,
+    is_provenance_tag,
+    search_aliases,
+    to_zh_algorithm_tag,
+)
 from users.models import User
 from submissions.models import Submission
 
@@ -22,10 +30,131 @@ PROBLEMS_PER_PAGE = 20
 # (ASCII "," and Chinese "，"); user input may also use "、" or ";".
 _TERM_SPLIT_RE = re.compile(r'[\s,，、;；]+')
 
+# Whole-token boundaries for exact tag regex matching.
+_TAG_TOKEN_SEP = r' ,、;；，\s'
+
+# Tags below this per-tag problem count are not added to the picker's
+# auto-discovered "其他" group (the curated groups always stay visible).
+_EXTRA_TAG_MIN_COUNT = 5
+
+TAG_CATALOG_CACHE_KEY = 'problem_tag_catalog'
+TAG_CATALOG_CACHE_SECONDS = 60 * 10
+
 
 def _split_search_terms(text):
     """Split a search/filter string into fuzzy-match terms."""
     return [term for term in _TERM_SPLIT_RE.split(text or '') if term]
+
+
+def _tag_token_q(alias):
+    """Q matching ``alias`` as one whole stored tag token (case-insensitive).
+
+    Boundaries are the same separators ``split_stored_tags`` understands.
+    Case-insensitivity is required for legacy rows storing uppercase aliases
+    (e.g. ``DP``); CJK labels are unaffected.
+    """
+    pattern = (
+        r'(?:^|[' + _TAG_TOKEN_SEP + r'])'
+        + re.escape(alias)
+        + r'(?:[' + _TAG_TOKEN_SEP + r']|$)'
+    )
+    return Q(tags__iregex=pattern)
+
+
+def _build_tag_catalog():
+    """All selectable tags grouped, with public-problem counts.
+
+    One scan over the tags column (only field pulled); each problem counts
+    at most once per tag. Algorithm labels are normalized through the same
+    Chinese mapping used for badge display; source tags are counted on
+    their exact stored token.
+    """
+    algorithm_counts = {}
+    source_counts = {name: 0 for name in SOURCE_TAGS}
+    source_names = set(SOURCE_TAGS)
+
+    for raw in Problem.objects.filter(is_public=True).values_list('tags', flat=True).iterator():
+        alg_hits = set()
+        source_hits = set()
+        for token in split_stored_tags(raw):
+            if token in source_names:
+                source_hits.add(token)
+            elif not is_provenance_tag(token):
+                zh = to_zh_algorithm_tag(token)
+                if zh:
+                    alg_hits.add(zh)
+        for name in alg_hits:
+            algorithm_counts[name] = algorithm_counts.get(name, 0) + 1
+        for name in source_hits:
+            source_counts[name] += 1
+
+    grouped_names = set()
+    groups = []
+    other_group = None
+    for group_name, tag_names in TAG_GROUPS.items():
+        group = {
+            'name': group_name,
+            'tags': [
+                {'name': name, 'count': algorithm_counts.get(name, 0)}
+                for name in tag_names
+            ],
+        }
+        grouped_names.update(tag_names)
+        groups.append(group)
+        if group_name == '其他':
+            other_group = group
+
+    # Auto-discovered Chinese tags not curated above (e.g. future labels)
+    # join the "其他" group, most frequent first.
+    extras = sorted(
+        ((name, count) for name, count in algorithm_counts.items()
+         if name not in grouped_names and count >= _EXTRA_TAG_MIN_COUNT),
+        key=lambda item: (-item[1], item[0]),
+    )
+    if extras:
+        if other_group is None:
+            other_group = {'name': '其他', 'tags': []}
+            groups.append(other_group)
+        other_group['tags'].extend(
+            {'name': name, 'count': count} for name, count in extras
+        )
+
+    groups.append({
+        'name': '题源',
+        'tags': [
+            {'name': name, 'count': source_counts.get(name, 0)}
+            for name in SOURCE_TAGS
+        ],
+    })
+
+    selectable = set(grouped_names) | {name for name, _ in extras} | source_names
+    return {'groups': groups, 'names': selectable}
+
+
+def _get_tag_catalog():
+    catalog = cache.get(TAG_CATALOG_CACHE_KEY)
+    if catalog is None:
+        catalog = _build_tag_catalog()
+        cache.set(TAG_CATALOG_CACHE_KEY, catalog, TAG_CATALOG_CACHE_SECONDS)
+    return catalog
+
+
+def _parse_selected_tags(raw_values, selectable):
+    """Normalize GET tag params to canonical selectable names (deduped).
+
+    Accepts both repeated params (``?tags=dp&tags=greedy``) and legacy
+    space/comma-separated text (``?tags=dp greedy``); English aliases are
+    mapped to their canonical Chinese label.
+    """
+    selected = []
+    seen = set()
+    for raw in raw_values:
+        for term in _split_search_terms(raw):
+            name = canonical_tag_name(term)
+            if name and name in selectable and name not in seen:
+                seen.add(name)
+                selected.append(name)
+    return selected
 
 
 def home(request):
@@ -79,12 +208,17 @@ def problem_list(request):
 
     difficulty = (request.GET.get('difficulty') or '').strip()
     search = (request.GET.get('search') or '').strip()
-    tags_query = (request.GET.get('tags') or '').strip()
     page_number = request.GET.get('page') or 1
+
+    tag_catalog = _get_tag_catalog()
+    selected_tags = _parse_selected_tags(
+        request.GET.getlist('tags'), tag_catalog['names']
+    )
+    selected_tag_set = set(selected_tags)
 
     # The page number only affects slicing, not the filtered result set, so
     # the count cache key is derived from filters only.
-    filter_key = f'd={difficulty}&s={search}&t={tags_query}'
+    filter_key = f'd={difficulty}&s={search}&t={"|".join(selected_tags)}'
 
     problems = Problem.objects.filter(is_public=True).only(
         'id', 'title', 'difficulty', 'tags', 'created_at',
@@ -110,12 +244,14 @@ def problem_list(request):
             filters |= Q(id=int(search))
         problems = problems.filter(filters)
 
-    # Dedicated tag filter: every term must match a tag (AND across
-    # terms), so "动态规划 贪心" narrows to problems carrying both tags.
-    for term in _split_search_terms(tags_query):
+    # Luogu-style tag selection: every picked tag must be present as a
+    # whole stored token (AND across tags). Algorithm tags also match their
+    # safe English aliases (e.g. 动态规划 matches "dp"); source tags match
+    # their exact stored token.
+    for name in selected_tags:
         tag_q = Q()
-        for alias in search_aliases(term):
-            tag_q |= Q(tags__icontains=alias)
+        for alias in filter_aliases(name):
+            tag_q |= _tag_token_q(alias)
         problems = problems.filter(tag_q)
 
     # Aggregate submission stats in the same page query instead of firing a
@@ -153,12 +289,30 @@ def problem_list(request):
     query_params.pop('page', None)
     query_string = query_params.urlencode()
 
+    # Per-chip removal links: current filters minus that one tag.
+    selected_tag_chips = []
+    for name in selected_tags:
+        chip_params = request.GET.copy()
+        chip_params.pop('page', None)
+        remaining = [t for t in selected_tags if t != name]
+        if remaining:
+            chip_params.setlist('tags', remaining)
+        else:
+            chip_params.pop('tags', None)
+        selected_tag_chips.append({
+            'name': name,
+            'query_string': chip_params.urlencode(),
+        })
+
     return render(request, 'problems/problem_list.html', {
         'problems': page_obj,  # Iterable over the current page's problems
         'page_obj': page_obj,
         'is_paginated': page_obj.has_other_pages(),
         'query_string': query_string,
         'total_count': paginator.count,
+        'tag_groups': tag_catalog['groups'],
+        'selected_tag_set': selected_tag_set,
+        'selected_tag_chips': selected_tag_chips,
     })
 
 

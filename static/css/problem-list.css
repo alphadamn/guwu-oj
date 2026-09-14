@@ -1,0 +1,165 @@
+/* Luogu-style tag filter panel for the problem list.
+   Renders inside a Bootstrap modal (.modal-body). */
+
+.tag-panel-inner {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+/* ---- A single group row: title + tag pills ---- */
+.tag-group {
+    display: flex;
+    align-items: flex-start;
+    gap: .85rem;
+    padding: .4rem 0;
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.3);
+}
+
+.tag-group:last-of-type {
+    border-bottom: none;
+}
+
+.tag-group-title {
+    flex: 0 0 5.5rem;
+    font-size: .82rem;
+    font-weight: 600;
+    color: #64748b;
+    padding-top: .25rem;
+}
+
+.tag-group-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+}
+
+/* ---- Tag pill button ---- */
+.tag-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .22rem .65rem;
+    font-size: .82rem;
+    line-height: 1.45;
+    color: #1e293b;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+}
+
+.tag-btn input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.tag-btn:hover {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #2563eb;
+}
+
+.tag-btn:focus-within {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+/* Active (checked) state */
+.tag-btn.is-active {
+    color: #fff;
+    background: #3b82f6;
+    border-color: #3b82f6;
+}
+
+.tag-btn.is-active .tag-btn-count {
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.tag-btn.is-active:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+}
+
+/* Disabled (zero-count) state */
+.tag-btn.is-disabled {
+    color: #cbd5e1;
+    background: #f8fafc;
+    border-color: #f1f5f9;
+    cursor: not-allowed;
+}
+
+.tag-btn.is-disabled:hover {
+    background: #f8fafc;
+    border-color: #f1f5f9;
+    color: #cbd5e1;
+}
+
+.tag-btn-count {
+    font-size: .72rem;
+    color: #94a3b8;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- Panel footer status (inside modal-footer) ---- */
+.tag-panel-status {
+    font-size: .82rem;
+}
+
+/* ---- Selected tag chips ---- */
+.tag-selected-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .4rem;
+}
+
+.tag-selected-label {
+    font-size: .82rem;
+    color: #64748b;
+}
+
+.tag-selected-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .2rem .65rem;
+    font-size: .8rem;
+    color: #fff;
+    background: #3b82f6;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: background-color .12s ease;
+}
+
+.tag-selected-chip:hover {
+    color: #fff;
+    background: #2563eb;
+}
+
+.tag-selected-chip .bi {
+    font-size: .68rem;
+    opacity: .85;
+}
+
+@media (max-width: 575.98px) {
+    .tag-group {
+        flex-direction: column;
+        gap: .3rem;
+    }
+    .tag-group-title {
+        flex: none;
+        padding-top: 0;
+    }
+}

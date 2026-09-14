@@ -67,7 +67,7 @@ def _quota_context(user) -> dict:
             continue
         used = data['used'][window]
         # Cap at 100 so the bar never overflows visually.
-        percent = min(100, int(round(used / limit * 100))) if limit else 0
+        percent = min(100, int(round(100 - (used / limit * 100)))) if limit else 0
         display.append({
             'window': window,
             'label': _WINDOW_LABELS[window],
