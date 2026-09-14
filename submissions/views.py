@@ -180,7 +180,10 @@ def submission_list(request):
 @never_cache
 @login_required
 def all_submissions(request):
-    submissions = Submission.objects.filter(problem__isnull=False).select_related(
+    submissions = Submission.objects.filter(problem__isnull=False).exclude(
+        # AI 判题验证的专用服务账号提交，不进入公开评测记录。
+        user__username=getattr(settings, 'AI_JUDGE_BOT_USERNAME', '__ai_judge_bot__'),
+    ).select_related(
         'user', 'problem', 'contest_problem__contest'
     ).all()
 

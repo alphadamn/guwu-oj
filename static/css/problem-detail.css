@@ -1,0 +1,9 @@
+/* Extracted from templates/problems/problem_detail.html (2026-09-13) */
+.code-block {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}

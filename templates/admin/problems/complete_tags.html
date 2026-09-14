@@ -1,0 +1,88 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}AI 完善题目标签{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">首页</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:problems_problem_changelist' %}">题目</a>
+    &rsaquo; AI 完善标签
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>AI 完善题目标签</h1>
+<p>
+    当前约有 <strong>{{ incomplete_count }}</strong> 道题只有来源信息，没有算法/知识点标签。
+    本工具调用 <strong>DeepSeek 官方 API</strong>，只从
+    <strong>{{ vocab_size }}</strong> 个<strong>中文</strong>标签里选题（不会写入 dp、greedy 等英文标签）。
+    前台展示也会把已有英文算法标签翻译成中文。
+</p>
+<p class="help">
+    API Key 只保存在当前登录会话，不会写入数据库或日志。
+    提示词会保存到站点缓存，下次打开本页仍在。每次最多完善 {{ max_batch }} 道。
+    密钥请到
+    <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">DeepSeek 开放平台</a>
+    自行创建。
+</p>
+
+{% if vocab_preview %}
+<p>中文词表示例：
+    {% for tag in vocab_preview %}
+        <code>{{ tag }}</code>{% if not forloop.last %}, {% endif %}
+    {% endfor %}
+    {% if vocab_size > vocab_preview|length %}…{% endif %}
+</p>
+{% endif %}
+
+<form id="tag-complete-form" style="max-width: 820px; margin-top: 1.5rem;"
+      data-start-url="{% url 'admin:problems_problem_complete_tags_start' %}"
+      data-step-url="{% url 'admin:problems_problem_complete_tags_step' %}">
+    {% csrf_token %}
+    {{ default_system_prompt|json_script:"default-system-prompt" }}
+    {{ default_user_prompt|json_script:"default-user-prompt" }}
+    <div style="margin-bottom: 1rem;">
+        <label for="api_key" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">DeepSeek API Key</label>
+        <input type="password" name="api_key" id="api_key" autocomplete="off"
+               placeholder="sk-…" required
+               style="width: 100%; padding: 8px; font-size: 1rem;">
+    </div>
+    <div style="margin-bottom: 1rem;">
+        <label for="count" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">本次完善数量</label>
+        <input type="number" name="count" id="count" min="1" max="{{ max_batch }}"
+               value="{{ default_count }}" required
+               style="width: 8rem; padding: 8px; font-size: 1rem;">
+        <span class="help" style="margin-left: 8px;">1～{{ max_batch }}，优先处理题号较小、尚无算法标签的题目。</span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+        <label for="system_prompt" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">
+            系统提示词
+            <button type="button" id="reset-system" class="button" style="margin-left: 8px; padding: 2px 8px;">恢复默认</button>
+        </label>
+        <textarea name="system_prompt" id="system_prompt" rows="10"
+                  style="width: 100%; padding: 8px; font-family: monospace; font-size: 13px;">{{ system_prompt }}</textarea>
+        <p class="help">发给模型的角色说明。必须包含英文单词 <code>json</code>（DeepSeek 的 JSON 模式要求）；若漏写，系统会自动补上一句。</p>
+    </div>
+    <div style="margin-bottom: 1rem;">
+        <label for="user_prompt" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">
+            用户提示词模板
+            <button type="button" id="reset-user" class="button" style="margin-left: 8px; padding: 2px 8px;">恢复默认</button>
+        </label>
+        <textarea name="user_prompt" id="user_prompt" rows="10"
+                  style="width: 100%; padding: 8px; font-family: monospace; font-size: 13px;">{{ user_prompt }}</textarea>
+        <p class="help">可用占位符：<code>{id}</code> 题号、<code>{title}</code> 标题、<code>{difficulty}</code> 难度、<code>{vocab}</code> 中文词表、<code>{statement}</code> 题面。</p>
+    </div>
+    <div>
+        <input type="submit" id="start-btn" value="开始完善" class="default" style="padding: 8px 20px;">
+        <button type="button" id="stop-btn" class="button" style="padding: 8px 20px; display: none;">停止</button>
+        <a href="{% url 'admin:problems_problem_changelist' %}" style="margin-left: 12px;">返回题目列表</a>
+    </div>
+</form>
+
+<p id="progress" style="margin-top: 1.5rem; font-weight: bold;"></p>
+<ul id="log" style="max-width: 820px; line-height: 1.6;"></ul>
+
+<script src="{% static 'admin/js/complete-tags.js' %}?v=20260913"></script>
+{% endblock %}

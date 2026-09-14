@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load crispy_forms_tags %}
+{% load static crispy_forms_tags %}
 
 {% block title %}注册 - 谷物 OJ{% endblock %}
 
@@ -47,10 +47,6 @@
                         {{ form.nickname|as_crispy_field }}
                     </div>
                     <div class="mb-3">
-                        <!--<label for="id_referral_code" class="form-label">邀请码（可选）</label>-->
-                        {{ form.referral_code|as_crispy_field }}
-                    </div>
-                    <div class="mb-3">
                         <!--<label for="id_password1" class="form-label">密码</label>-->
                         {{ form.password1|as_crispy_field }}
                     </div>
@@ -77,6 +73,7 @@
                         </div>
                         <img id="captcha-img"
                              alt="正在加载图形验证码"
+                             data-captcha-url="{{ captcha_url }}"
                              class="mt-2 rounded border"
                              style="width:180px; height:50px; cursor:pointer;"
                              title="点击刷新">
@@ -101,106 +98,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-(function () {
-    const btn = document.getElementById('send-code-btn');
-    const hint = document.getElementById('send-code-hint');
-    const emailInput = document.getElementById('id_email');
-
-    // ---- Captcha refresh support ----
-    const captchaImg = document.getElementById('captcha-img');
-    const captchaId = document.getElementById('id_captcha_id');
-    const captchaUrl = '{{ captcha_url }}';
-
-    function refreshCaptcha() {
-        if (!captchaImg) return;
-        captchaImg.alt = '正在加载图形验证码';
-        fetch(captchaUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
-            .then(function (resp) {
-                const newId = resp.headers.get('X-Captcha-Id') || '';
-                if (!newId) throw new Error('captcha challenge unavailable');
-                if (captchaId) captchaId.value = newId;
-                return resp.blob();
-            })
-            .then(function (blob) {
-                captchaImg.src = URL.createObjectURL(blob);
-                captchaImg.alt = '图形验证码';
-            })
-            .catch(function () {
-                if (captchaId) captchaId.value = '';
-                captchaImg.removeAttribute('src');
-                captchaImg.alt = '图形验证码加载失败，请点击刷新后重试';
-            });
-    }
-    if (captchaImg) {
-        captchaImg.addEventListener('click', refreshCaptcha);
-        refreshCaptcha();
-    }
-    document.querySelectorAll('.captcha-refresh').forEach(function (el) {
-        el.addEventListener('click', refreshCaptcha);
-    });
-
-    if (!btn || !emailInput) return;
-
-    const originalLabel = btn.innerText;
-    let timerId = null;
-    let remaining = 0;
-
-    function setCooldown(seconds) {
-        remaining = seconds;
-        btn.disabled = true;
-        btn.classList.remove('btn-outline-primary');
-        btn.classList.add('btn-outline-secondary');
-        btn.innerText = remaining + 's 后重发';
-        clearInterval(timerId);
-        timerId = setInterval(function () {
-            remaining -= 1;
-            if (remaining <= 0) {
-                clearInterval(timerId);
-                btn.disabled = false;
-                btn.classList.remove('btn-outline-secondary');
-                btn.classList.add('btn-outline-primary');
-                btn.innerText = originalLabel;
-            } else {
-                btn.innerText = remaining + 's 后重发';
-            }
-        }, 1000);
-    }
-
-    btn.addEventListener('click', function () {
-        const email = emailInput.value.trim();
-        if (!email) {
-            hint.innerText = '请先填写邮箱后再获取验证码。';
-            hint.classList.remove('text-muted');
-            hint.classList.add('text-danger');
-            emailInput.focus();
-            return;
-        }
-        btn.disabled = true;
-        btn.innerText = '发送中…';
-        const body = new FormData();
-        body.append('email', email);
-        const csrfToken = document.querySelector('#register-form [name=csrfmiddlewaretoken]');
-        if (csrfToken) body.append('csrfmiddlewaretoken', csrfToken.value);
-
-        fetch(btn.dataset.url, { method: 'POST', body: body, credentials: 'same-origin' })
-            .then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
-            .then(function (result) {
-                const data = result.data || {};
-                hint.innerText = data.message || (result.ok ? '已发送，请查收。' : '发送失败。');
-                hint.classList.remove('text-danger', 'text-success');
-                hint.classList.add(result.ok ? 'text-success' : 'text-danger');
-                if (result.ok) setCooldown(60);
-                else { btn.disabled = false; btn.innerText = originalLabel; }
-            })
-            .catch(function () {
-                hint.innerText = '网络错误，请稍后再试。';
-                hint.classList.remove('text-muted', 'text-success');
-                hint.classList.add('text-danger');
-                btn.disabled = false;
-                btn.innerText = originalLabel;
-            });
-    });
-})();
-</script>
+<script src="{% static 'js/captcha-widget.js' %}?v=20260913"></script>
+<script src="{% static 'js/register-page.js' %}?v=20260913"></script>
 {% endblock %}

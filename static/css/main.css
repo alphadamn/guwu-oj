@@ -53,7 +53,7 @@ main.container {
 /* Navbar */
 .oj-navbar {
     background: var(--oj-nav-bg) !important;
-    backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(140%);
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
     transition: box-shadow var(--oj-transition);
 }
@@ -221,6 +221,38 @@ main.container {
     grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.85fr);
     gap: clamp(1.25rem, 3vw, 2rem);
     align-items: center;
+    border-radius: 50%;
+    filter: blur(48px);
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.home-hero::before {
+    width: min(70vw, 280px);
+    height: min(70vw, 280px);
+    background: #3b82f6;
+    top: -80px;
+    right: -40px;
+}
+
+.home-hero::after {
+    width: min(50vw, 200px);
+    height: min(50vw, 200px);
+    background: #f59e0b;
+    bottom: -60px;
+    left: 10%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .home-hero::before,
+    .home-hero::after {
+        will-change: transform;
+        animation: hero-float 12s ease-in-out infinite;
+    }
+    @keyframes hero-float {
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        50% { transform: translate(12px, -8px) scale(1.03); }
+    }
 }
 
 .hero-content {
@@ -409,6 +441,14 @@ main.container {
     background:
         linear-gradient(180deg, #f8fafc, #eef3f7),
         radial-gradient(ellipse 80% 60% at 100% 0%, rgba(201, 146, 42, 0.12), transparent 55%);
+.stat-card {
+    background: var(--oj-surface);
+    border: 1px solid var(--oj-border);
+    border-radius: var(--oj-radius);
+    padding: 1.25rem 1.5rem;
+    text-align: center;
+    box-shadow: var(--oj-shadow);
+    transition: transform var(--oj-transition), box-shadow var(--oj-transition);
 }
 
 .story-copy p {
@@ -466,6 +506,14 @@ main.container {
     font-size: 1.05rem;
     font-weight: 600;
     letter-spacing: -0.02em;
+.feature-card {
+    background: var(--oj-surface);
+    border-radius: var(--oj-radius);
+    padding: 1.75rem 1.5rem;
+    text-align: center;
+    box-shadow: var(--oj-shadow);
+    transition: transform var(--oj-transition), box-shadow var(--oj-transition);
+    border: 1px solid rgba(59, 130, 246, 0.08);
 }
 
 .feature-block p {
@@ -552,6 +600,9 @@ main.container {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+.home-hero .btn-outline-light {
+    border-color: rgba(255, 255, 255, 0.38);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .quick-rail {
@@ -596,6 +647,11 @@ main.container {
     max-width: 40rem;
     line-height: 1.75;
     color: rgba(232, 238, 244, 0.78);
+@media (prefers-reduced-transparency: reduce) {
+    .oj-navbar {
+        backdrop-filter: none;
+        background: #0f172a !important;
+    }
 }
 
 .team-grid {
@@ -753,8 +809,7 @@ main.container {
 .problem-sidebar-card,
 .submission-sidebar-card,
 .problem-actions-card {
-    background: var(--oj-surface-glass);
-    backdrop-filter: blur(18px) saturate(130%);
+    background: var(--oj-surface);
 }
 
 .problem-sidebar-card + .problem-sidebar-card,
@@ -790,15 +845,6 @@ main.container {
     .problem-sidebar-stack,
     .submission-sidebar-stack {
         position: static;
-    }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-    .problem-sidebar-card,
-    .submission-sidebar-card,
-    .problem-actions-card {
-        backdrop-filter: none;
-        background: var(--oj-surface);
     }
 }
 

@@ -1,20 +1,10 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}积分中心 - 谷物 OJ{% endblock %}
 
 {% block extra_css %}
-<style>
-    .points-hero {
-        background: linear-gradient(135deg, #f59e0b, #ea580c);
-        color: #fff;
-        border-radius: 1rem;
-        box-shadow: 0 .75rem 2rem rgba(234, 88, 12, .2);
-    }
-    .points-balance { font-size: clamp(2.5rem, 7vw, 4.5rem); font-weight: 800; line-height: 1; }
-    .points-copy-input { background: #f8fafc; }
-    .points-amount-positive { color: #198754; font-weight: 700; }
-    .points-amount-negative { color: #dc3545; font-weight: 700; }
-</style>
+<link rel="stylesheet" href="{% static 'css/points-center.css' %}?v=20260913">
 {% endblock %}
 
 {% block content %}
@@ -91,31 +81,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-(function () {
-    const input = document.getElementById('referral-link');
-    const button = document.getElementById('copy-referral-link');
-    if (!input || !button) return;
-    function fallbackCopy() {
-        input.focus();
-        input.select();
-        const copied = document.execCommand('copy');
-        if (copied) {
-            button.innerHTML = '<i class="bi bi-check2 me-1"></i>已复制';
-            setTimeout(function () { button.innerHTML = '<i class="bi bi-copy me-1"></i>复制'; }, 1800);
-        }
-    }
-
-    button.addEventListener('click', function () {
-        if (!navigator.clipboard || !navigator.clipboard.writeText) {
-            fallbackCopy();
-            return;
-        }
-        navigator.clipboard.writeText(input.value).then(function () {
-            button.innerHTML = '<i class="bi bi-check2 me-1"></i>已复制';
-            setTimeout(function () { button.innerHTML = '<i class="bi bi-copy me-1"></i>复制'; }, 1800);
-        }).catch(fallbackCopy);
-    });
-})();
-</script>
+<script src="{% static 'js/points-center.js' %}?v=20260913"></script>
 {% endblock %}

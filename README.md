@@ -118,51 +118,75 @@ gunicorn oj_project.wsgi --bind 0.0.0.0:8000
 #### 或使用systemd
 ```
 [Unit]
-Description=Guwu Online Judge (Hypercorn ASGI, HTTP/3)
+Description=Guwu Online Judge (Granian WSGI over Unix domain socket)
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 
 [Service]
 Type=simple
-User=xxx
-Group=xxx
+User=root
+Group=root
 WorkingDirectory=/www/wwwroot/guwu-oj
 Environment="PATH=/www/wwwroot/guwu-oj/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DJANGO_SETTINGS_MODULE=oj_project.settings"
+# The upstream hop (Caddy -> Granian) is plain HTTP/1.1, so request.is_secure()
+# must follow Caddy's X-Forwarded-Proto; without this, the production
+# SECURE_SSL_REDIRECT=true setting would redirect-loop every request.
+Environment="SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https"
+# With multiple workers, django_prometheus needs multiprocess mode for
+# correct /metrics aggregation.
+Environment="PROMETHEUS_MULTIPROC_DIR=/run/guwu-oj/prom"
 
-# Hypercorn serves the ASGI app over TLS+HTTP/1.1/2 on 127.0.0.1:4449 (TCP)
-# and HTTP/3 (QUIC/UDP) on the same port. 
+RuntimeDirectory=guwu-oj
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/bin/mkdir -p /run/guwu-oj/prom
+ExecStartPre=/usr/bin/rm -f /run/guwu-oj/guwu-oj.sock
+
+# Granian serves the Django WSGI app on a Unix domain socket (loopback-only,
+# no TLS/HTTP-3 needed for a local hop); nginx proxies to it over HTTP/1.1
+# keep-alive. Granian binds the socket root:root 660; nginx workers run as
+# www, so hand the socket's group to www after startup.
 #
-# --workers 1: Hypercorn's master creates the UDP/QUIC listening socket and
-# dup's it to each spawned worker; with >1 worker, UDP datagrams of a single
-# QUIC connection scatter across workers (shared socket, no per-worker socket
-# migration), corrupting h3 state ("pseudo header in trailer", request
-# duplication). A single asyncio worker still runs sync Django views in a
-# ~40-thread pool (This is a hypercorn limitation).
-ExecStart=/www/wwwroot/guwu-oj/venv/bin/hypercorn \
-    --bind 127.0.0.1:8000 \
-    --quic-bind 127.0.0.1:8000 \
-    --workers 1 \
-    --graceful-timeout 30 \
-    --max-requests 1000 \
-    --max-requests-jitter 200 \
-    --access-logfile /www/wwwroot/guwu-oj/logs/hypercorn.access.log \
-    --error-logfile /www/wwwroot/guwu-oj/logs/hypercorn.error.log \
+# Race fix: with Type=simple, ExecStartPost runs immediately after fork,
+# before granian has created the socket file. The wait loop polls for the
+# socket up to ~6s before chgrp, so the service no longer fails on a fast
+# system where granian takes 50-200ms to bind.
+ExecStartPost=/bin/bash -c 'for i in $(seq 1 60); do [ -S /run/guwu-oj/guwu-oj.sock ] && chgrp www /run/guwu-oj/guwu-oj.sock && exit 0; sleep 0.1; done; exit 1'
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/granian \
+    --uds /run/guwu-oj/guwu-oj.sock \
+    --uds-permissions 660 \
+    --interface wsgi \
+    --http 1 \
+    --workers 12 \
+    --blocking-threads 2 \
+    --backpressure 30 \
+    --loop auto \
+    --access-log \
     --log-level info \
-    oj_project.asgi:application
+    --log-config /www/wwwroot/guwu-oj/deploy/granian_log_config.json \
+    --workers-lifetime 12h \
+    --workers-max-rss 500 \
+    --rss-samples 3 \
+    --respawn-failed-workers \
+    oj_project.wsgi:application
 
-# Clean shutdown: SIGTERM gives in-flight requests 30s (graceful-timeout).
+# Clean shutdown: SIGTERM gives in-flight requests 30s.
 KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=30
 Restart=on-failure
-RestartSec=3
+RestartSec=1
 
 # Auto-restart worker processes that crash or get OOM-killed.
 RestartPreventExitStatus=0
 
-MemoryHigh=700M
-MemoryMax=1000M
+# Memory safety: 12 workers x ~150 MB normal RSS (~1.8 GB total). A cgroup
+# ceiling turns any runaway allocation into a deterministic, automatic service
+# restart instead of a global OOM that kills other services on the box.
+# MemoryHigh throttles softly (per-worker --workers-max-rss 500 recycles
+# bloated workers first), MemoryMax cgroup-OOMs -> Restart=on-failure.
+MemoryHigh=2200M
+MemoryMax=3200M
 
 [Install]
 WantedBy=multi-user.target
@@ -260,6 +284,8 @@ OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-1 --work
 # 判题机 2
 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-2 --worker-class oj_project.customrq.AutoReconnectWorker
 ```
+
+每个 worker 进程内部以线程池并行评测多个提交，单机并行度由 `OJ_JUDGE_CONCURRENCY` 控制（默认 4，即 m 台机器 × 4 = m×n 的并行评测能力）。
 
 **4. 检查判题机健康状态**
 

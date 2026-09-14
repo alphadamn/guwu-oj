@@ -1,5 +1,6 @@
 import re
 
+from django.conf import settings
 from django.db.models.functions import Cast, RowNumber
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
@@ -7,10 +8,11 @@ from django.contrib import messages
 from django.db.models import Q, Count, When, Case, Value, F, FloatField, Window
 from django.core.paginator import Paginator
 from django.views.decorators.http import require_POST
-from django.views.decorators.cache import cache_page
+from django.views.decorators.cache import never_cache
 from django.core.cache import cache
 from .models import Problem, Solution
 from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
+from .tag_labels import search_aliases
 from users.models import User
 from submissions.models import Submission
 
@@ -44,10 +46,12 @@ def home(request):
         stats = cached_stats
     else:
         public_problems = Problem.objects.filter(is_public=True)
+        # AI 判题验证专用账号不计入公开统计（与排行榜口径一致）。
+        bot_username = getattr(settings, 'AI_JUDGE_BOT_USERNAME', '__ai_judge_bot__')
         stats = {
             'problem_count': public_problems.count(),
-            'submission_count': Submission.objects.count(),
-            'user_count': User.objects.count(),
+            'submission_count': Submission.objects.exclude(user__username=bot_username).count(),
+            'user_count': User.objects.exclude(username=bot_username).count(),
         }
         cache.set(stats_cache_key, stats, 60 * 5)  # Cache for 5 minutes
 
@@ -57,8 +61,20 @@ def home(request):
     })
 
 
+@never_cache  # base.html navbar is user-specific — the rendered page must never be shared
 def problem_list(request):
-    # Version list caches rather than deleting arbitrary query-derived keys.
+    # NOTE: only the user-independent total COUNT is cached. The full
+    # rendered HttpResponse must never be cached: the page extends base.html,
+    # whose navbar embeds the current visitor's username / profile link /
+    # logout CSRF / messages. A shared response cache would serve one
+    # visitor's account chrome to everyone else.
+    #
+    # Never materialize/cache the whole result set: with 20k+ rows, each
+    # Problem carries multi-KB statement TextFields (description, I/O format,
+    # samples, hint). list()ing all rows and pickling them into Redis spiked
+    # every web worker by hundreds of MB (and an even bigger blob sat in
+    # Redis per filter combination). Pagination stays in SQL via LIMIT/OFFSET
+    # and only the 20 lightweight rows of the current page are fetched.
     cache_version = cache.get('problem_list_version', 1)
 
     difficulty = (request.GET.get('difficulty') or '').strip()
@@ -67,64 +83,83 @@ def problem_list(request):
     page_number = request.GET.get('page') or 1
 
     # The page number only affects slicing, not the filtered result set, so
-    # the query cache key is derived from filters only.
+    # the count cache key is derived from filters only.
     filter_key = f'd={difficulty}&s={search}&t={tags_query}'
 
-    cache_key = f'problem_list:v{cache_version}:{filter_key}:p{page_number}'
-    cached_response = cache.get(cache_key)
-    if cached_response:
-        return cached_response
+    problems = Problem.objects.filter(is_public=True).only(
+        'id', 'title', 'difficulty', 'tags', 'created_at',
+    )
 
-    query_cache_key = f'problem_list_query:v{cache_version}:{filter_key}'
-    problems = cache.get(query_cache_key)
+    # Filter by difficulty
+    if difficulty:
+        problems = problems.filter(difficulty=difficulty)
 
-    if problems is None:
-        problems = Problem.objects.filter(is_public=True)
+    # Fuzzy search: every whitespace/comma-separated term must appear in
+    # the title OR the tags (AND across terms, OR across fields). An
+    # all-numeric query also matches the exact problem ID. The ORM
+    # parameterizes every term; matching tags fuzzily means "csp 2024"
+    # finds problems tagged "CSP-S 2024" and "dp" finds "DP / 动态规划".
+    if search:
+        filters = Q()
+        for term in _split_search_terms(search):
+            term_q = Q()
+            for alias in search_aliases(term):
+                term_q |= Q(title__icontains=alias) | Q(tags__icontains=alias)
+            filters &= term_q
+        if search.isdecimal():
+            filters |= Q(id=int(search))
+        problems = problems.filter(filters)
 
-        # Filter by difficulty
-        if difficulty:
-            problems = problems.filter(difficulty=difficulty)
+    # Dedicated tag filter: every term must match a tag (AND across
+    # terms), so "动态规划 贪心" narrows to problems carrying both tags.
+    for term in _split_search_terms(tags_query):
+        tag_q = Q()
+        for alias in search_aliases(term):
+            tag_q |= Q(tags__icontains=alias)
+        problems = problems.filter(tag_q)
 
-        # Fuzzy search: every whitespace/comma-separated term must appear in
-        # the title OR the tags (AND across terms, OR across fields). An
-        # all-numeric query also matches the exact problem ID. The ORM
-        # parameterizes every term; matching tags fuzzily means "csp 2024"
-        # finds problems tagged "CSP-S 2024" and "dp" finds "DP / 动态规划".
-        if search:
-            filters = Q()
-            for term in _split_search_terms(search):
-                filters &= (Q(title__icontains=term) | Q(tags__icontains=term))
-            if search.isdecimal():
-                filters |= Q(id=int(search))
-            problems = problems.filter(filters)
+    # Aggregate submission stats in the same page query instead of firing a
+    # COUNT per table row (and bypassing Problem.pass_rate's per-row cache
+    # round-trips).
+    problems = problems.annotate(
+        total_subs=Count('submissions'),
+        accepted_subs=Count('submissions', filter=Q(submissions__status='Accepted')),
+    ).order_by('-created_at')
 
-        # Dedicated tag filter: every term must match a tag (AND across
-        # terms), so "动态规划 贪心" narrows to problems carrying both tags.
-        for term in _split_search_terms(tags_query):
-            problems = problems.filter(tags__icontains=term)
-
-        problems = problems.order_by('-created_at')
-        # Cache the evaluated result set for 5 minutes
-        problems = list(problems)  # Force evaluation
-        cache.set(query_cache_key, problems, 60 * 5)
+    # Cache only the integer total per filter (tiny, cheap to pickle).
+    count_cache_key = f'problem_list_count:v{cache_version}:{filter_key}'
+    total_count = cache.get(count_cache_key)
+    if total_count is None:
+        total_count = problems.count()
+        cache.set(count_cache_key, total_count, 60 * 5)
 
     paginator = Paginator(problems, PROBLEMS_PER_PAGE)
+    # Paginator.count is a cached_property backed by queryset.count(); reuse
+    # the cached integer so a page request doesn't run COUNT twice.
+    paginator.__dict__['count'] = total_count
     page_obj = paginator.get_page(page_number)
+
+    # Only the <=20 rows on this page are in memory; derive the display rate
+    # here (Problem.pass_rate is a data-descriptor property, so it can't be
+    # shadowed by an ORM annotation of the same name).
+    for problem in page_obj:
+        total = problem.total_subs
+        problem.list_pass_rate = round(
+            problem.accepted_subs * 100.0 / total, 1
+        ) if total else 0.0
 
     # Preserve filter query string across pagination links
     query_params = request.GET.copy()
     query_params.pop('page', None)
     query_string = query_params.urlencode()
 
-    response = render(request, 'problems/problem_list.html', {
+    return render(request, 'problems/problem_list.html', {
         'problems': page_obj,  # Iterable over the current page's problems
         'page_obj': page_obj,
         'is_paginated': page_obj.has_other_pages(),
         'query_string': query_string,
         'total_count': paginator.count,
     })
-    cache.set(cache_key, response, 60 * 10)  # Cache for 10 minutes
-    return response
 
 
 # Intentionally NOT cached — the page exposes user-specific state
@@ -202,7 +237,13 @@ def create_problem(request):
     return render(request, 'problems/create_problem.html', {'form': form})
 
 
-@cache_page(60 * 30)  # Cache for 30 minutes (complex query)
+# The expensive aggregate query is cached below, but the rendered page is
+# not: it extends base.html with the visitor-specific navbar. cache_page
+# keys on URL + Vary headers only, so without a per-user (Cookie) variant
+# every visitor shared one cached page and could see another account's
+# chrome. @never_cache also keeps the personalized HTML out of shared
+# caches/CDNs.
+@never_cache
 def leaderboard(request):
     # Cache the complex query result separately
     query_cache_key = 'leaderboard_users'
@@ -211,7 +252,12 @@ def leaderboard(request):
     if cached_users is not None:
         users = cached_users
     else:
-        users = User.objects.annotate(
+        users = User.objects.exclude(
+            # Dedicated service account for AI judge verifications — it only
+            # runs model-authored reference programs and must not compete in
+            # the human leaderboard.
+            username=getattr(settings, 'AI_JUDGE_BOT_USERNAME', '__ai_judge_bot__')
+        ).annotate(
             solved_count=Count('solved_problems', distinct=True),
             submission_count=Count('submissions', distinct=True)
         ).annotate(

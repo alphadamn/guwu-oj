@@ -1,0 +1,41 @@
+/* Extracted from templates/admin/login.html inline <style> (2026-09-13). */
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f0f2f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.login-card {
+    width: 380px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    padding: 36px 32px 32px;
+}
+.login-card h1 { margin: 0 0 24px; font-size: 20px; text-align: center; color: #303133; }
+.form-row { margin-bottom: 16px; }
+.form-row label { display: block; margin-bottom: 6px; font-size: 14px; color: #303133; }
+.form-row input[type=text], .form-row input[type=password] {
+    width: 100%; padding: 10px 12px; border: 1px solid #dcdfe6; border-radius: 4px;
+    font-size: 14px; outline: none; transition: border-color .2s;
+}
+.form-row input:focus { border-color: #409eff; }
+.captcha-block { margin-bottom: 16px; }
+.captcha-row { display: flex; gap: 8px; align-items: center; }
+.captcha-row input { flex: 1; padding: 10px 12px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; }
+.captcha-row button { padding: 9px 12px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; white-space: nowrap; }
+.captcha-block img { display: block; margin-top: 8px; width: 180px; height: 50px; border: 1px solid #dcdfe6; border-radius: 4px; cursor: pointer; }
+.hint { margin-top: 6px; font-size: 12px; color: #909399; }
+.errornote {
+    background: #fef0f0; border: 1px solid #fde2e2; color: #f56c6c;
+    padding: 9px 12px; border-radius: 4px; margin-bottom: 16px; font-size: 13px;
+}
+.btn {
+    width: 100%; padding: 11px; border: none; border-radius: 4px; background: #409eff;
+    color: #fff; font-size: 15px; cursor: pointer;
+}
+.btn:hover { background: #3a8ee6; }

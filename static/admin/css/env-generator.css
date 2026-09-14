@@ -1,0 +1,16 @@
+/* Extracted from templates/admin/devlog/env_generator.html (2026-09-13) */
+.env-generator { max-width: 1120px; margin: 24px auto; }
+.env-generator .card { background: var(--body-bg, #fff); border: 1px solid #dfe3e8; border-radius: 10px; margin-bottom: 18px; }
+.env-generator .card-header { font-weight: 600; padding: 12px 16px; border-bottom: 1px solid #dfe3e8; }
+.env-generator .card-body { padding: 16px; }
+.env-generator .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 14px; }
+.env-generator label { display: block; font-weight: 600; margin-bottom: 5px; }
+.env-generator input, .env-generator select { box-sizing: border-box; width: 100%; padding: 8px; border: 1px solid #b9c1c9; border-radius: 5px; }
+.env-generator .hint { color: #6c757d; font-size: 12px; margin: 5px 0 0; }
+.env-generator .machine { border: 1px dashed #b9c1c9; border-radius: 7px; padding: 14px; margin-bottom: 12px; }
+.env-generator .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+.env-generator button { cursor: pointer; border: 0; border-radius: 5px; padding: 9px 14px; color: #fff; background: #1677ff; }
+.env-generator button.secondary, .env-generator .remove-machine { background: #6c757d; }
+.env-generator .remove-machine { float: right; padding: 5px 9px; font-size: 12px; }
+.env-generator textarea { box-sizing: border-box; width: 100%; min-height: 430px; resize: vertical; padding: 13px; border: 1px solid #b9c1c9; border-radius: 6px; background: #1f2937; color: #e5e7eb; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.env-generator .warning { border-left: 4px solid #f59e0b; background: #fffbeb; padding: 12px 14px; margin-bottom: 18px; }

@@ -130,6 +130,37 @@ def _wants_html(request) -> bool:
 # Middleware
 # ---------------------------------------------------------------------------
 
+class CsrfCookieDedupMiddleware:
+    """Drop the redundant ``Set-Cookie: csrftoken=...`` when the value is
+    unchanged.
+
+    Django >= 4.1 re-sends the CSRF cookie on every response that renders a
+    form, solely to renew its 1-year expiry (``CSRF_COOKIE_NEEDS_UPDATE`` is
+    flagged by ``get_token()`` even when the client already returned the
+    identical cookie). Cloudflare refuses to cache responses that carry a
+    ``Set-Cookie`` header, so the re-send marked most pages uncacheable at
+    the edge. When the outgoing cookie value equals the one the client
+    already has, the header is removed here; genuine rotations and new
+    (first-visit) cookies are left untouched.
+
+    Must be registered BEFORE ``django.middleware.csrf.CsrfViewMiddleware``
+    in ``MIDDLEWARE`` so that this response-phase code runs after the CSRF
+    middleware has (re)written the cookie.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        from django.conf import settings
+        name = settings.CSRF_COOKIE_NAME
+        morsel = response.cookies.get(name)
+        if morsel is not None and request.COOKIES.get(name) == morsel.value:
+            del response.cookies[name]
+        return response
+
+
 class RealIPMiddleware(MiddlewareMixin):
     """Promote the real visitor IP into ``REMOTE_ADDR`` behind trusted proxies.
 

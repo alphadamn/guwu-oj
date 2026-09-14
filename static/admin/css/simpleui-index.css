@@ -1,0 +1,5 @@
+/* Extracted from templates/admin/index.html (2026-09-13) */
+.el-tabs__nav .el-tabs__item:nth-child(1) .el-icon-close { display: none; }
+* { -webkit-overflow-scrolling: touch; }
+[v-block] { display: none; }
+.el-menu { background-color: transparent; }

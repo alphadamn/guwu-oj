@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "server": {
+      "format": "[%(asctime)s] %(levelname)s %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S %z"
+    },
+    "access": {
+      "format": "[%(asctime)s] %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S %z"
+    }
+  },
+  "handlers": {
+    "server_file": {
+      "class": "logging.handlers.WatchedFileHandler",
+      "filename": "/www/wwwroot/guwu-oj/logs/granian.error.log",
+      "formatter": "server"
+    },
+    "access_file": {
+      "class": "logging.handlers.WatchedFileHandler",
+      "filename": "/www/wwwroot/guwu-oj/logs/granian.access.log",
+      "formatter": "access",
+      "delay": true
+    }
+  },
+  "root": {
+    "handlers": ["server_file"],
+    "level": "INFO"
+  },
+  "loggers": {
+    "granian": {"handlers": ["server_file"], "propagate": false},
+    "granian.access": {"handlers": ["access_file"], "propagate": false}
+  }
+}

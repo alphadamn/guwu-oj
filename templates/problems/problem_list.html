@@ -59,8 +59,8 @@
                                 <span class="badge bg-light text-dark me-1">{{ tag }}</span>
                             {% endfor %}
                         </td>
-                        <td>{{ problem.pass_rate }}%</td>
-                        <td>{{ problem.submissions.count }}</td>
+                        <td>{{ problem.list_pass_rate }}%</td>
+                        <td>{{ problem.total_subs }}</td>
                     </tr>
                     {% empty %}
                     <tr>

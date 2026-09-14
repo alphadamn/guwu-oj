@@ -1,0 +1,6 @@
+/* Extracted from templates/contests/detail.html (2026-09-13) */
+.contest-hero { border-radius: 1rem; color: #fff; padding: 2rem; background: linear-gradient(135deg, #1d4ed8, #4338ca); box-shadow: 0 .75rem 2rem rgba(37, 99, 235, .2); }
+.contest-stat { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); border-radius: .75rem; min-width: 9rem; }
+.contest-question-card { border: 0; border-radius: 1rem; box-shadow: 0 .35rem 1.2rem rgba(15,23,42,.08); transition: transform .15s ease, box-shadow .15s ease; }
+.contest-question-card:hover { transform: translateY(-3px); box-shadow: 0 .7rem 1.6rem rgba(15,23,42,.12); }
+.contest-question-number { width: 2.5rem; height: 2.5rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #e0e7ff; color: #3730a3; font-weight: 700; }

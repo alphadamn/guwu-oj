@@ -5,8 +5,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="google-site-verification" content="ycKPT-MMqVfP75Aj7A_ldAmayamSbsJ0Ueyn1P-g-ws" />
     <meta name="google-site-verification" content="K5qhC6gvicx9Z60kQOnWbsvuAhwew9_2CKT63bAa6dM" />
     <title>{% block title %}谷物 OJ{% endblock %}</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdn.bootcdn.net" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.ico">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -132,7 +136,9 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <div id="oj-analytics-consent" class="oj-analytics-consent d-none" role="dialog" aria-modal="true" aria-labelledby="oj-analytics-consent-title" aria-describedby="oj-analytics-consent-text">
+    <div id="oj-analytics-consent" class="oj-analytics-consent d-none" role="dialog" aria-modal="true" aria-labelledby="oj-analytics-consent-title" aria-describedby="oj-analytics-consent-text"
+         {% if OJ_BROWSER_GEOLOCATION_ENABLED %}data-geo-enabled="true"{% endif %}
+         data-record-location-url="{% url 'devlog:record_browser_location' %}">
         <section class="oj-analytics-consent__dialog">
             <header class="oj-analytics-consent__header">
                 <div class="oj-analytics-consent__icon" aria-hidden="true"><i class="bi bi-shield-check"></i></div>
@@ -202,6 +208,11 @@
                     </div>
                 </form>
                 <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link ms-lg-2 my-lg-1" href="{% url 'ai_assistant:pricing' %}">
+                            <i class="bi bi-gem"></i> 订阅
+                        </a>
+                    </li>
                     {% if user.is_authenticated %}
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
@@ -257,8 +268,7 @@
     <footer class="oj-footer text-white py-4 mt-auto">
         <div class="container text-center">
             <p class="mb-1 fw-semibold">谷物 OJ</p>
-            <p class="mb-2 small text-white-50">青少年自己做的在线评测 · Discovery Studio</p>
-            <a target="_blank" href="http://www.freecdn.vip/?zzwz" " title="免费云加速（FreeCDN），为您免费提供网站加速和网站防御（DDOS、CC攻击）" alt="免费云加速（FreeCDN），为您免费提供网站加速和网站防御（DDOS、CC攻击）">本站由免费云加速（FreeCDN）提供网站加速和攻击防御服务</a>
+            <p class="mb-2 small text-white-50">在线评测 · 算法练习</p>
             <div class="d-flex justify-content-center gap-2 mb-2">
                 <a class="github-button" href="https://github.com/alphadamn/guwu-oj" data-color-scheme="no-preference: light; light: light; dark: dark;" data-icon="octicon-star" data-size="large" data-show-count="true" aria-label="Star alphadamn/guwu-oj on GitHub">Star</a>
                 <a class="github-button" href="https://github.com/alphadamn/guwu-oj/issues" data-color-scheme="no-preference: light; light: light; dark: dark;" data-icon="octicon-issue-opened" data-size="large" data-show-count="true" aria-label="Issue alphadamn/guwu-oj on GitHub">Issue</a>
@@ -266,39 +276,18 @@
         </div>
     </footer>
 
-    <script>
-        // Expose the admin-configured Monaco CDN URL to frontend JS.
-        // Falls back to jsdelivr if the context variable is missing or empty.
-        (function () {
-            var fromServer = '{{ OJ_MONACO_BASE|default:""|safe }}';
-            window.OJ_MONACO_BASE = fromServer && fromServer.length > 10
-                ? fromServer
-                : 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs';
-        })();
-    </script>
+    <script src="{% static 'js/monaco-config.js' %}?v=20260913"></script>
     <script src="{{ OJ_BOOTSTRAP_JS|default:"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" }}"></script>
     <script src="{% static 'js/main.js' %}"></script>
-    <script src="{% static 'js/altcha-solver.js' %}?v=2"></script>
-    <script src="{% static 'js/avatar-captcha.js' %}?v=5"></script>
-    <script>
-    (function () {
-        const form = document.querySelector('form.navbar-search-form');
-        if (!form) return;
-        const input = form.querySelector('input[name="q"]');
-        function start() {
-            if (input && input.value && input.value.trim()) {
-                form.classList.add('is-searching');
-            }
-        }
-        function stop() { form.classList.remove('is-searching'); }
-        form.addEventListener('submit', start);
-        window.addEventListener('pageshow', stop);
-        // Stop the spinner after 20s as a safety net.
-        setTimeout(() => { if (form.classList.contains('is-searching')) stop(); }, 20000);
-    })();
-    </script>
+    <script defer src="{% static 'js/altcha-solver.js' %}?v=2"></script>
+    <script defer src="{% static 'js/avatar-captcha.js' %}?v=5"></script>
+    <script src="{% static 'js/github-buttons-loader.js' %}?v=20260913"></script>
+    <script src="{% static 'js/navbar-search.js' %}?v=20260913"></script>
 <!-- Shared punishment modal (populated on demand) -->
-<div class="modal fade" id="guwu-punishment-modal" tabindex="-1" aria-labelledby="guwu-punishment-title" aria-hidden="true">
+<div class="modal fade" id="guwu-punishment-modal" tabindex="-1" aria-labelledby="guwu-punishment-title" aria-hidden="true"
+     {% if punishment_json %}data-page-punishment="{{ punishment_json }}"{% endif %}
+     {% if not punishment_json and request.session_punishment_notice %}data-session-notice="{{ request.session_punishment_notice }}"{% endif %}
+     data-clear-url="{% url 'clear_punishment_notice' %}">
     <div class="modal-dialog modal-dialog-centered modal-md">
         <div class="modal-content border-0 rounded-3 shadow-lg overflow-hidden">
             <div class="modal-header text-white guwu-punishment-header d-flex align-items-center gap-2">
@@ -321,207 +310,16 @@
     </div>
 </div>
 
-<script>
-(function () {
-    // This script is at the BOTTOM of <body>, so the shared modal
-    // (#guwu-punishment-modal) is already in the DOM before we run.
-
-    // 1) Hard-ban: CustomLoginView stashes the full punishment as JSON into
-    //    ``context['punishment_json']``. Use JSON.parse to avoid surprises
-    //    with embedded special chars.
-    var pagePunishment = null;
-    {% if punishment_json %}
-    try { pagePunishment = JSON.parse('{{ punishment_json|escapejs }}'); }
-    catch (e) { pagePunishment = null; }
-    {% endif %}
-
-    // 2) Feature-ban: after a successful redirect to home, the session
-    //    still carries ``punishment_notice``; show the modal once and
-    //    drop it.
-    {% if not punishment_json and request.session_punishment_notice %}
-    try { pagePunishment = JSON.parse('{{ request.session_punishment_notice|escapejs }}'); }
-    catch (e) { pagePunishment = null; }
-    {% endif %}
-
-    if (!pagePunishment || !pagePunishment.kind) return;
-
-    var modal = document.getElementById('guwu-punishment-modal');
-    if (!modal) return;
-
-    // Header: pick an icon + color class per punishment kind.
-    var header = modal.querySelector('.guwu-punishment-header');
-    var iconEl = modal.querySelector('.guwu-punishment-icon');
-    var titleEl = modal.querySelector('.guwu-punishment-title-text');
-    var reasonEl = modal.querySelector('.guwu-punishment-reason');
-    var endsAtBox = modal.querySelector('.guwu-punishment-ends-at');
-    var featuresBox = modal.querySelector('.guwu-punishment-features');
-    var closeBtn = modal.querySelector('.guwu-punishment-close');
-
-    // Reset per-kind classes / defaults
-    header.className =
-        'modal-header text-white guwu-punishment-header d-flex align-items-center gap-2';
-    header.classList.add('kind-' + (pagePunishment.kind || 'feature_ban'));
-
-    var iconClass = 'bi-info-circle-fill';
-    var buttonLabel = '我已了解';
-    var reasonPrefix = '原因：';
-
-    if (pagePunishment.kind === 'permanent_ban') {
-        iconClass = 'bi-shield-fill-exclamation';
-        reasonPrefix = '';
-        buttonLabel = '关闭';
-    } else if (pagePunishment.kind === 'temporary_ban') {
-        iconClass = 'bi-stop-circle-fill';
-        reasonPrefix = '';
-        buttonLabel = '关闭';
-    } else {
-        // feature ban
-        iconClass = 'bi-exclamation-triangle-fill';
-        buttonLabel = '知道了';
-    }
-    if (iconEl) iconEl.className = iconEl.className.replace(/bi-[a-z0-9-]+/i, iconClass);
-
-    // Title and reason
-    if (titleEl) titleEl.textContent = pagePunishment.title || '账号状态';
-    if (reasonEl) reasonEl.textContent =
-        reasonPrefix + (pagePunishment.reason || '未填写');
-
-    // Deadline
-    if (pagePunishment.ends_at) {
-        endsAtBox.classList.remove('d-none');
-        endsAtBox.querySelector('.guwu-punishment-ends-at-value').textContent =
-            pagePunishment.ends_at;
-    } else {
-        endsAtBox.classList.add('d-none');
-    }
-
-    // Feature list (for feature_ban; ignored for hard bans)
-    if (pagePunishment.feature_labels && pagePunishment.feature_labels.length > 0) {
-        featuresBox.classList.remove('d-none');
-        featuresBox.innerHTML = '';
-        pagePunishment.feature_labels.forEach(function (label) {
-            var li = document.createElement('li');
-            li.className = 'list-group-item small';
-            li.textContent = '• 已禁用：' + label;
-            featuresBox.appendChild(li);
-        });
-    } else {
-        featuresBox.classList.add('d-none');
-    }
-
-    // CTA button label
-    if (closeBtn) closeBtn.textContent = buttonLabel;
-
-    if (window.bootstrap && window.bootstrap.Modal) {
-        new window.bootstrap.Modal(modal).show();
-    } else {
-        modal.classList.add('show');
-        modal.setAttribute('aria-modal', 'true');
-        modal.style.display = 'block';
-    }
-    // After showing the session notice, clear it on the server side so
-    // the modal only appears once.
-    try {
-        fetch('{% url "clear_punishment_notice" %}', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [, ''])[1] },
-        }).catch(function () {});
-    } catch (e) {}
-})();
-</script>
-    <div class="modal fade" id="daily-checkin-modal" tabindex="-1" aria-labelledby="daily-checkin-title" aria-hidden="true">
+<script src="{% static 'js/punishment-modal.js' %}?v=20260913"></script>
+    <div class="modal fade" id="daily-checkin-modal" tabindex="-1" aria-labelledby="daily-checkin-title" aria-hidden="true" data-url="{% url 'daily_check_in' %}">
         <div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
             <div class="modal-header text-white border-0" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><h5 class="modal-title" id="daily-checkin-title"><i class="bi bi-calendar-check me-2"></i>每日签到</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
             <div class="modal-body text-center py-4"><div class="display-3 fw-bold text-warning"><span id="daily-checkin-streak">—</span> 天</div><p class="fs-5 mb-2">连续签到</p><p class="text-muted mb-3">签到后可获得对应连续天数奖励</p><div class="row row-cols-2 row-cols-md-5 g-2 text-center small mb-3">{% for label, value in request.daily_checkin_rewards %}<div class="col"><div class="border rounded p-2 h-100"><div class="text-muted">{{ label }}</div><strong>+{{ value }}</strong></div></div>{% endfor %}</div><p id="daily-checkin-reward-text" class="text-muted mb-0">本次奖励将在签到后显示</p><p id="daily-checkin-error" class="text-danger small mt-3 mb-0 d-none"></p></div>
             <div class="modal-footer border-0 justify-content-center"><button type="button" id="daily-checkin-submit" class="btn btn-warning text-white px-4"><i class="bi bi-check2-circle me-1"></i>立即签到</button><button type="button" id="daily-checkin-done" class="btn btn-success px-4 d-none" data-bs-dismiss="modal">已签到</button></div>
         </div></div>
     </div>
-    <script>
-    (function () {
-        var available = {% if request.daily_checkin_available %}true{% else %}false{% endif %};
-        var modal = document.getElementById('daily-checkin-modal');
-        var submit = document.getElementById('daily-checkin-submit');
-        var done = document.getElementById('daily-checkin-done');
-        var error = document.getElementById('daily-checkin-error');
-        if (!available || !modal || !submit || !window.bootstrap) return;
-        var csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [, ''])[1];
-        submit.addEventListener('click', function () {
-            submit.disabled = true;
-            fetch('{% url "daily_check_in" %}', {method: 'POST', credentials: 'same-origin', headers: {'X-CSRFToken': csrf, 'Accept': 'application/json'}})
-                .then(function (response) { return response.json().then(function (data) { if (!response.ok) throw new Error(data.message || '签到失败'); return data; }); })
-                .then(function (data) {
-                    document.getElementById('daily-checkin-streak').textContent = data.streak;
-                    document.getElementById('daily-checkin-reward-text').textContent = '本次获得 +' + data.points + ' 积分';
-                    submit.classList.add('d-none'); done.classList.remove('d-none');
-                })
-                .catch(function (err) { error.textContent = err.message; error.classList.remove('d-none'); submit.disabled = false; });
-        });
-        new window.bootstrap.Modal(modal).show();
-    })();
-    </script>
-    <script>
-    (function () {
-        var banner = document.getElementById('oj-analytics-consent');
-        if (!banner) return;
-        var key = 'oj_analytics_consent';
-        var value = document.cookie.split('; ').reduce(function (found, item) {
-            var pair = item.split('='); return pair[0] === key ? decodeURIComponent(pair[1] || '') : found;
-        }, '');
-        if (!value) banner.classList.remove('d-none');
-        function csrfToken() {
-            var hidden = banner.querySelector('input[name="csrfmiddlewaretoken"]');
-            if (hidden && hidden.value) return hidden.value;
-            var match = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
-            if (!match) return '';
-            try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
-        }
-        function askLocation() {
-            var asked = false;
-            try { asked = window.sessionStorage.getItem('oj_geo_done') === '1'; } catch (e) { asked = false; }
-            if (value !== 'accepted' || !{{ OJ_BROWSER_GEOLOCATION_ENABLED|yesno:"true,false" }} || !navigator.geolocation || asked) return;
-            navigator.geolocation.getCurrentPosition(function (position) {
-                // The authoritative copy of the location now lives in the
-                // server-side session, so we cannot read it from a cookie.
-                // Keep the last uploaded point in localStorage and only
-                // re-POST when the reported position actually changes —
-                // this is the "定位改变是重新上传" behaviour.
-                var lat = position.coords.latitude.toFixed(1);
-                var lon = position.coords.longitude.toFixed(1);
-                var current = lat + ',' + lon;
-                var last = '';
-                try { last = window.localStorage.getItem('oj_geo_last') || ''; } catch (e) { last = ''; }
-                if (last === current) {
-                    try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
-                    return;
-                }
-                fetch('{% url "devlog:record_browser_location" %}', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken()}, body:JSON.stringify({latitude:position.coords.latitude, longitude:position.coords.longitude})})
-                    .then(function (response) {
-                        // Mark the attempt before reloading: if the session
-                        // write does not persist we must not re-prompt and
-                        // reload forever.
-                        try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
-                        if (response.ok) {
-                            try { window.localStorage.setItem('oj_geo_last', current); } catch (e) {}
-                            window.location.reload();
-                        }
-                    })
-                    .catch(function () {});
-            }, function () {
-                try { window.sessionStorage.setItem('oj_geo_done', '1'); } catch (e) {}
-            }, {enableHighAccuracy:false, timeout:10000, maximumAge:86400000});
-        }
-        askLocation();
-        function decide(choice) {
-            document.cookie = key + '=' + choice + '; Max-Age=31536000; Path=/; SameSite=Lax';
-            banner.classList.add('d-none');
-            value = choice;
-            if (choice === 'accepted') askLocation();
-        }
-        document.getElementById('oj-analytics-accept').addEventListener('click', function () { decide('accepted'); });
-        document.getElementById('oj-analytics-reject').addEventListener('click', function () { decide('rejected'); });
-    })();
-    </script>
+    {% if request.daily_checkin_available %}<script src="{% static 'js/daily-checkin.js' %}?v=20260913"></script>{% endif %}
+    <script src="{% static 'js/analytics-consent.js' %}?v=20260913"></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

@@ -1,0 +1,11 @@
+/* Extracted from templates/users/points_center.html (2026-09-13) */
+.points-hero {
+    background: linear-gradient(135deg, #f59e0b, #ea580c);
+    color: #fff;
+    border-radius: 1rem;
+    box-shadow: 0 .75rem 2rem rgba(234, 88, 12, .2);
+}
+.points-balance { font-size: clamp(2.5rem, 7vw, 4.5rem); font-weight: 800; line-height: 1; }
+.points-copy-input { background: #f8fafc; }
+.points-amount-positive { color: #198754; font-weight: 700; }
+.points-amount-negative { color: #dc3545; font-weight: 700; }

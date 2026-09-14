@@ -1,0 +1,184 @@
+{% extends 'base.html' %}
+{% load tz %}
+
+{% block title %}AI 会员套餐 - 谷物 OJ{% endblock %}
+
+{% block extra_css %}
+<style>
+.quota-progress {
+    border-radius: 999px;
+    overflow: hidden;
+    background-color: rgba(0, 0, 0, 0.06);
+}
+.quota-progress .progress-bar {
+    border-radius: 999px;
+    transition: width 0.5s ease;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pricing-wrap">
+    <div class="text-center mb-4">
+        <h2 class="fw-bold"><i class="bi bi-gem text-warning"></i>订阅</h2>
+    </div>
+
+    {% if user.is_authenticated and subscription and subscription.is_paid_active %}
+    <div class="alert alert-success d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <i class="bi bi-patch-check-fill"></i>
+            当前套餐：<strong>{{ subscription.get_plan_display }}</strong>
+            （{% if subscription.interval == 'year' %}按年{% else %}按月{% endif %}）
+            {% timezone 'Asia/Shanghai' %}
+            · 有效期至 {{ subscription.current_period_end|localtime|date:'Y-m-d H:i' }}
+            {% endtimezone %}
+            {% if subscription.cancel_at_period_end %}<span class="badge bg-secondary ms-1">到期后取消</span>{% endif %}
+        </div>
+        {% if not subscription.cancel_at_period_end %}
+        <form method="post" action="{% url 'ai_assistant:cancel_subscription' %}"
+              onsubmit="return confirm('确定在当前周期结束后取消订阅吗？到期前仍可使用会员权益。');">
+            {% csrf_token %}
+            <button class="btn btn-sm btn-outline-danger" type="submit">
+                <i class="bi bi-x-circle"></i> 到期后取消
+            </button>
+        </form>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if user.is_authenticated and quota %}
+    <div class="quota-usage card border-0 shadow-sm rounded-4 mb-4">
+        <div class="card-body p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-bold mb-0"><i class="bi bi-bar-chart-line text-primary me-1"></i>本周期用量</h6>
+                <span class="text-muted small">当前套餐：<strong>{{ quota.plan_label }}</strong></span>
+            </div>
+            {% for row in quota.display %}
+            <div class="quota-row mb-3{% if not forloop.last %} pb-3 border-bottom{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="fw-medium">{{ row.label }}</span>
+                    <span class="small text-muted">
+                        <strong class="{% if row.percent >= 100 %}text-danger{% elif row.percent >= 80 %}text-warning{% else %}text-success{% endif %}">{{ row.percent }}%</strong>
+                        · {{ row.used }}/{{ row.limit }} 次
+                    </span>
+                </div>
+                <div class="progress quota-progress" style="height: 10px;">
+                    <div class="progress-bar {% if row.percent >= 100 %}bg-danger{% elif row.percent >= 80 %}bg-warning{% else %}bg-success{% endif %}"
+                         role="progressbar"
+                         style="width: {{ row.percent }}%;"
+                         aria-valuenow="{{ row.used }}" aria-valuemin="0" aria-valuemax="{{ row.limit }}"></div>
+                </div>
+                <div class="d-flex justify-content-between mt-1">
+                    <span class="text-muted small">剩余 <strong>{{ row.remaining }}</strong> 次</span>
+                    <span class="text-muted small">{% if row.window == 'day' %}今日 24:00 重置{% elif row.window == 'week' %}下周一 00:00 重置{% else %}下月 1 日重置{% endif %}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row g-4 justify-content-center">
+        <!-- Free -->
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm rounded-4 {% if not subscription or not subscription.is_paid_active %}border-primary{% endif %}">
+                <div class="card-body d-flex flex-column p-4">
+                    <h5 class="fw-bold">免费版</h5>
+                    <div class="my-3"><span class="fs-2 fw-bold">¥0</span><span class="text-muted">/永久</span></div>
+                    <ul class="list-unstyled small flex-grow-1">
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>AI讲解 deepseek-flash 模型</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>每日 <strong>5</strong> 次 AI 讲解</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>每周 <strong>15</strong> 次</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>1 次讲解 + 1 次重新生成</li>
+                    </ul>
+                    {% if user.is_authenticated %}
+                        {% if not subscription or not subscription.is_paid_active %}
+                        <button class="btn btn-outline-secondary w-100" disabled>当前套餐</button>
+                        {% else %}
+                        <button class="btn btn-outline-secondary w-100" disabled>已订阅付费套餐</button>
+                        {% endif %}
+                    {% else %}
+                    <a href="{% url 'login' %}" class="btn btn-outline-primary w-100">登录使用</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {% for card in cards %}
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm rounded-4 position-relative
+                        {% if subscription.is_paid_active and subscription.plan == card.plan %}border-warning{% endif %}"
+                 style="{% if subscription.is_paid_active and subscription.plan == card.plan %}border-width:2px;{% endif %}">
+                {% if card.plan == 'plus' %}
+                <span class="position-absolute top-0 end-0 badge bg-info mt-2 me-2">热门</span>
+                {% else %}
+                <span class="position-absolute top-0 end-0 badge bg-dark mt-2 me-2">超值</span>
+                {% endif %}
+                <div class="card-body d-flex flex-column p-4">
+                    <h5 class="fw-bold">{{ card.label }}</h5>
+                    <div class="my-3">
+                        <div class="d-flex align-items-baseline gap-2">
+                            <span class="fs-3 fw-bold">¥{{ card.monthly_yuan|floatformat:2 }}</span>
+                            <span class="text-muted">/月</span>
+                        </div>
+                        <div class="small text-muted">或 ¥{{ card.yearly_yuan|floatformat:2 }}/年（约 ¥{{ card.yearly_monthly_yuan|floatformat:2 }}/月）</div>
+                    </div>
+                    <ul class="list-unstyled small flex-grow-1">
+                        {% if card.plan == 'plus' %}
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>讲解每日不限量</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>每月 <strong>50</strong> 次 AI 讲解</li>
+                        {% else %}
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>讲解每日不限量</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>每月 <strong>100</strong> 次 AI 讲解</li>
+                        {% endif %}
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>思路启发 · 关键代码片段 · 复杂度分析</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>1 次讲解 + 1 次重新生成</li>
+                        <li class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>{{ card.description }}</li>
+                    </ul>
+
+                    {% if user.is_authenticated %}
+                        {% if subscription.is_paid_active and subscription.plan == card.plan %}
+                        <button class="btn btn-outline-warning w-100" disabled>当前套餐</button>
+                        {% elif subscription.is_paid_active and subscription.plan == 'pro' and card.plan == 'plus' %}
+                        <p class="text-muted small text-center mt-2 mb-0">Pro 已包含 Plus 全部权益，无需重复购买。</p>
+                        <button class="btn btn-outline-secondary w-100" disabled
+                                title="Pro 会员已包含 Plus 的全部权益">
+                            <i class="bi bi-shield-check"></i> 已是 Pro 会员
+                        </button>
+                        {% else %}
+                        <div class="d-grid gap-2">
+                            <form method="post" action="{% url 'ai_assistant:checkout' %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="plan" value="{{ card.plan }}">
+                                <input type="hidden" name="interval" value="month">
+                                <button class="btn btn-primary w-100" type="submit"
+                                        {% if not stripe_configured %}disabled title="支付尚未配置"{% endif %}>
+                                    按月订阅 · ¥{{ card.monthly_yuan|floatformat:2 }}
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'ai_assistant:checkout' %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="plan" value="{{ card.plan }}">
+                                <input type="hidden" name="interval" value="year">
+                                <button class="btn btn-outline-primary w-100" type="submit"
+                                        {% if not stripe_configured %}disabled title="支付尚未配置"{% endif %}>
+                                    按年订阅 · ¥{{ card.yearly_yuan|floatformat:2 }}
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    {% else %}
+                    <a href="{% url 'login' %}" class="btn btn-primary w-100">登录后订阅</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <p class="text-center text-muted small mt-4">
+        支付由 Stripe 安全处理；订阅自动续费，可随时在本页取消，到期前权益不受影响。
+        升级立即生效。
+    </p>
+</div>
+{% endblock %}

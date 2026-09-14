@@ -147,9 +147,25 @@ class JudgeLoadBalancer:
     def _busy_key(self, machine):
         return f"judge:busy:{machine['name']}"
 
+    def _priority_suffixes(self):
+        """Queue-name suffixes for the four judge priority tiers.
+
+        The free tier keeps the bare queue name (empty suffix) so the load
+        counter and the existing worker command both keep working.
+        """
+        return getattr(
+            settings, 'JUDGE_PRIORITY_SUFFIXES', ('-pro', '-plus', '', '-ai'),
+        )
+
     def _get_queue_length(self, machine):
+        """Total queued jobs across all priority tiers of one machine."""
         try:
-            return self._machine_redis(machine).llen(f"rq:queue:{machine['queue']}")
+            r = self._machine_redis(machine)
+            base = machine['queue']
+            total = 0
+            for suffix in self._priority_suffixes():
+                total += r.llen(f'rq:queue:{base}{suffix}')
+            return total
         except Exception:
             return 9999
 
@@ -206,13 +222,26 @@ class JudgeLoadBalancer:
             logger.exception('Failed to lookup submission machine for %s', submission_id)
         return None
 
+    def _strip_priority_suffix(self, queue_name):
+        """Remove a judge-priority suffix (``-pro``/``-plus``/``-ai``) from a
+        queue name so it can be matched against a machine's base queue."""
+        if not queue_name:
+            return queue_name
+        for suffix in self._priority_suffixes():
+            if suffix and queue_name.endswith(suffix):
+                return queue_name[: -len(suffix)]
+        return queue_name
+
     def release_machine(self, submission_id, queue_name=None):
         """Decrement busy count when judging completes."""
         machine_name = self._get_and_clear_submission_machine(submission_id)
         machine = self._find_machine(name=machine_name)
 
         if machine is None and queue_name:
-            machine = self._find_machine(queue=queue_name)
+            # The queue name carries a priority suffix (e.g. judge-1-pro);
+            # strip it before looking up the owning machine.
+            base_queue = self._strip_priority_suffix(queue_name)
+            machine = self._find_machine(queue=base_queue)
             if machine:
                 logger.info(
                     'Recovered machine %s for submission %s via queue %s',

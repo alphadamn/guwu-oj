@@ -1,0 +1,17 @@
+/* Extracted from templates/admin/devlog/siteconfig/database_backup.html (2026-09-13) */
+.backup-container { max-width: 720px; margin: 0 auto; }
+.backup-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+.backup-header h1 { margin: 0; font-size: 28px; }
+.backup-icon { font-size: 32px; }
+.info-card { background: #f8f9fa; border-left: 4px solid #0066cc; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
+.info-card strong { color: #0066cc; }
+.warning-card { background: #fef3cd; border-left: 4px solid #ff9800; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
+.error-card { background: #f8d7da; border-left: 4px solid #dc3545; padding: 16px; margin-bottom: 16px; border-radius: 4px; color: #721c24; }
+.dest-box { background: #f5f5f5; padding: 12px 14px; margin: 12px 0; border-radius: 4px; font-family: monospace; font-size: 13px; border: 1px solid #ddd; }
+.submit-row { margin-top: 24px; display: flex; gap: 8px; }
+.submit-row input[type="submit"] { padding: 8px 24px; font-size: 14px; cursor: pointer; border-radius: 4px; }
+.submit-row .default { background: #417690; color: white; border: none; }
+.submit-row .default:hover { background: #205067; }
+.submit-row .closelink { padding: 8px 24px; display: inline-block; color: #666; border: 1px solid #ddd; text-decoration: none; border-radius: 4px; }
+.submit-row .closelink:hover { color: #333; background: #f9f9f9; }
+.sudo-badge { display: inline-block; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-left: 8px; }

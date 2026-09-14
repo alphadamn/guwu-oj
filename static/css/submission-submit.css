@@ -1,0 +1,23 @@
+/* Extracted from templates/submissions/submit.html (2026-09-13) */
+.submission-captcha-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 6px 20px -10px rgba(15, 23, 42, 0.25);
+}
+.submission-captcha-header {
+    background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+    letter-spacing: 0.02em;
+}
+#captcha-img {
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.2s ease;
+}
+#captcha-img:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+    cursor: pointer;
+}
+#captcha-img.refreshing {
+    filter: blur(2px) opacity(0.6);
+}

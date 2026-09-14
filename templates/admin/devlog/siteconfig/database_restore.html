@@ -1,4 +1,5 @@
 {% extends 'admin/base_site.html' %}
+{% load static %}
 
 {% block title %}从备份导入数据库{% endblock %}
 
@@ -12,40 +13,8 @@
 {% endblock %}
 
 {% block extrahead %}
-<style>
-    .restore-container { max-width: 720px; margin: 0 auto; }
-    .restore-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
-    .restore-header h1 { margin: 0; font-size: 28px; }
-    .restore-icon { font-size: 32px; }
-    .danger-card { background: #f8d7da; border-left: 4px solid #dc3545; padding: 16px; margin-bottom: 16px; border-radius: 4px; color: #721c24; }
-    .danger-card strong { color: #721c24; }
-    .info-card { background: #f8f9fa; border-left: 4px solid #0066cc; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
-    .info-card strong { color: #0066cc; }
-    .warning-card { background: #fef3cd; border-left: 4px solid #ff9800; padding: 16px; margin-bottom: 16px; border-radius: 4px; }
-    .error-card { background: #f8d7da; border-left: 4px solid #dc3545; padding: 16px; margin-bottom: 16px; border-radius: 4px; color: #721c24; }
-    .source-section { background: #f5f5f5; padding: 16px; border-radius: 4px; margin-bottom: 12px; }
-    .radio-group { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
-    .radio-input { margin-top: 2px; cursor: pointer; }
-    .radio-label { flex: 1; }
-    .radio-label label { font-weight: bold; display: flex; align-items: center; gap: 8px; cursor: pointer; }
-    .select-box { max-width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-top: 8px; }
-    .select-box option { padding: 4px; }
-    .help-text { color: #666; font-size: 12px; margin-top: 6px; }
-    .upload-disabled { opacity: 0.6; cursor: not-allowed; }
-    .submit-row { margin-top: 24px; display: flex; gap: 8px; }
-    .submit-row input[type="submit"] { padding: 8px 24px; font-size: 14px; cursor: pointer; border-radius: 4px; background: #ba2121; color: white; border: none; }
-    .submit-row input[type="submit"]:hover { background: #9d1a1a; }
-    .submit-row .closelink { padding: 8px 24px; display: inline-block; color: #666; border: 1px solid #ddd; text-decoration: none; border-radius: 4px; }
-    .submit-row .closelink:hover { color: #333; background: #f9f9f9; }
-    .confirm-checkbox { margin-top: 16px; padding: 12px; background: #f9f9f9; border-radius: 4px; }
-    .confirm-checkbox label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; }
-    .confirm-checkbox input[type="checkbox"] { margin-top: 3px; cursor: pointer; }
-    .confirm-name-row { margin-top: 12px; padding: 12px; background: #fff3cd; border: 1px solid #ffe08a; border-radius: 4px; }
-    .confirm-name-row label { display: block; font-weight: bold; margin-bottom: 6px; color: #7a5d00; }
-    .confirm-name-row input[type="text"] { width: 100%; max-width: 280px; padding: 8px 10px; border: 1px solid #c9a224; border-radius: 4px; font-family: monospace; font-size: 14px; letter-spacing: 2px; }
-    .confirm-name-row .help-text { color: #7a5d00; font-size: 12px; margin-top: 6px; }
-    .sudo-badge { display: inline-block; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-left: 8px; }
-</style>
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'admin/css/db-restore.css' %}?v=20260913">
 {% endblock %}
 
 {% block content %}

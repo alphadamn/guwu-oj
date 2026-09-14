@@ -2,6 +2,9 @@
 
 {% block object-tools-items %}
     <li>
+        <a href="{% url 'admin:problems_problem_complete_tags' %}" class="addlink">AI 完善标签</a>
+    </li>
+    <li>
         <a href="{% url 'admin:problems_problem_import_luogu' %}" class="addlink">从洛谷导入</a>
     </li>
     {{ block.super }}

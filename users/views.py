@@ -588,6 +588,9 @@ def password_reset_confirm(request, email):
 @login_required
 def profile(request, username):
     user = get_object_or_404(User, username=username)
+    # 已停用账号（含 AI 判题专用服务账号）不对外展示主页，管理员除外。
+    if not user.is_active and not request.user.is_staff:
+        raise Http404('User not found')
     recent_submissions = user.submissions.select_related(
         'problem', 'contest_problem__contest',
     ).order_by('-created_at')[:10]

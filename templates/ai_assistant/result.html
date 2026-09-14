@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block title %}订阅结果 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="text-center py-5">
+    {% if synced %}
+    <div class="display-5 text-success mb-3"><i class="bi bi-check-circle-fill"></i></div>
+    <h3 class="fw-bold">订阅已生效</h3>
+    <p class="text-muted">感谢订阅！会员权益已开通，现在可以使用更多 AI 解题次数。</p>
+    {% else %}
+    <div class="display-5 text-warning mb-3"><i class="bi bi-hourglass-split"></i></div>
+    <h3 class="fw-bold">支付确认中</h3>
+    <p class="text-muted">
+        我们正在确认你的支付结果。若已完成付款，权益将在支付确认后自动开通
+        （通常只需几秒钟），如长时间未生效请联系管理员。
+    </p>
+    {% endif %}
+    <div class="d-flex justify-content-center gap-2 mt-4">
+        <a href="{{ pricing_url }}" class="btn btn-primary px-4">查看套餐与用量</a>
+        <a href="{% url 'problem_list' %}" class="btn btn-outline-secondary px-4">去做题</a>
+    </div>
+</div>
+{% endblock %}

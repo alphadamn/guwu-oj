@@ -21,6 +21,7 @@ urlpatterns = [
     path('search/', include('search.urls')),
     path('health/', include('health.urls')),
     path('devlog/', include('devlog.urls')),
+    path('ai/', include('ai_assistant.urls')),
     path('', include('django_prometheus.urls')),
 ]
 
