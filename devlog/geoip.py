@@ -22,7 +22,7 @@ def _reader():
     ])
     path = next((candidate for candidate in candidates if candidate and os.path.isfile(candidate)), None)
     if not path:
-        logger.info('GeoLite2 country database is not installed')
+        logger.warning('GeoLite2 country database is not installed')
         return None
     try:
         from geoip2.database import Reader
@@ -137,7 +137,7 @@ def _country_for_ip(value):
     code = country.iso_code
     coordinates = _country_coordinates(code) if code else None
     if not code or not coordinates:
-        logger.info('No map coordinate for GeoLite2 country code %s', code)
+        logger.warning('No map coordinate for GeoLite2 country code %s', code)
         return None
     return {
         'country_code': code,

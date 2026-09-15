@@ -30,7 +30,7 @@ def judge_submission_task(submission_id):
             submission.status = 'System Error'
             submission.save(update_fields=['status'])
             return None
-        logger.info(f'Processing submission {submission_id} for problem {problem.id}')
+        logger.debug(f'Processing submission {submission_id} for problem {problem.id}')
     except Submission.DoesNotExist:
         logger.error(f'Submission {submission_id} not found')
         return None
@@ -45,7 +45,7 @@ def judge_submission_task(submission_id):
     try:
         # Execute the judge (pass submission ID, not object)
         result_submission = judge_submission(submission_id)
-        logger.info(f'Submission {submission_id} judged with status: {result_submission.status}')
+        logger.debug(f'Submission {submission_id} judged with status: {result_submission.status}')
     except Exception as e:
         logger.exception(f'Error judging submission {submission_id}: {e}')
         # Unexpected worker/judge failures are infrastructure errors, not

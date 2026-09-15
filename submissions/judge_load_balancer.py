@@ -108,7 +108,7 @@ class JudgeLoadBalancer:
             is_healthy = is_healthy and checks.get('docker', (True,))[0] and checks.get('images', (True,))[0]
 
         if is_healthy:
-            logger.info('Judge machine %s is healthy', machine['name'])
+            logger.debug('Judge machine %s is healthy', machine['name'])
         else:
             failed = {name: detail for name, (ok, detail) in checks.items() if not ok}
             logger.warning('Judge machine %s health check failed: %s', machine['name'], failed)
@@ -194,7 +194,7 @@ class JudgeLoadBalancer:
             val = r.decr(key)
             if val <= 0:
                 r.delete(key)
-            logger.info('Decremented busy count for %s to %s', machine.get('name'), max(val, 0))
+            logger.debug('Decremented busy count for %s to %s', machine.get('name'), max(val, 0))
         except Exception:
             logger.exception('Failed to decrement busy count for %s', machine.get('name'))
 
@@ -243,7 +243,7 @@ class JudgeLoadBalancer:
             base_queue = self._strip_priority_suffix(queue_name)
             machine = self._find_machine(queue=base_queue)
             if machine:
-                logger.info(
+                logger.debug(
                     'Recovered machine %s for submission %s via queue %s',
                     machine['name'], submission_id, queue_name,
                 )
@@ -307,7 +307,7 @@ class JudgeLoadBalancer:
                 self._decr_busy(selected)
                 raise
 
-            logger.info(
+            logger.debug(
                 'Reserved judge machine %s for submission %s '
                 '(queue=%s, busy=%s, load=%s, reserved_busy=%s, %s)',
                 selected['name'], submission_id, queue_length, busy, min_load,

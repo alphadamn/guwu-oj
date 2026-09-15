@@ -91,8 +91,8 @@ PLAN_PRODUCT_NAMES = {
 }
 
 PLAN_DESCRIPTIONS = {
-    PLAN_PLUS: '提交优先评测',
-    PLAN_PRO: '提交优先评测',
+    PLAN_PLUS: '提交优先评测（Plus队列）',
+    PLAN_PRO: '提交优先评测+（Pro队列）',
 }
 
 # Per-user anti-abuse limit for the generate endpoint (successful or not),

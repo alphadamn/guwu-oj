@@ -47,7 +47,7 @@
     {% endif %}
 
     {% if user.is_authenticated and quota %}
-    <div class="quota-usage card border-0 shadow-sm rounded-4 mb-4">
+    <div class="quota-usage card border-0 shadow-sm rounded-4 mb-4" style="max-width: 878px; margin: 0 auto;">
         <div class="card-body p-4">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h6 class="fw-bold mb-0"><i class="bi bi-bar-chart-line text-primary me-1"></i>本周期用量</h6>
@@ -58,12 +58,12 @@
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="fw-medium">{{ row.label }}</span>
                     <span class="small text-muted">
-                        <strong class="{% if row.percent <= 5 %}text-danger{% elif row.percent <= 20 %}text-warning{% else %}text-success{% endif %}">{{ row.percent }}%</strong>
+                        <strong class="{% if row.percent <= 20 %}text-danger{% elif row.percent <= 60 %}text-warning{% else %}text-success{% endif %}">{{ row.percent }}%</strong>
                         · {{ row.used }}/{{ row.limit }} 次
                     </span>
                 </div>
                 <div class="progress quota-progress" style="height: 10px;">
-                    <div class="progress-bar {% if row.percent <= 5 %}bg-danger{% elif row.percent <= 20 %}bg-warning{% else %}bg-success{% endif %}"
+                    <div class="progress-bar {% if row.percent <= 20 %}bg-danger{% elif row.percent <= 60 %}bg-warning{% else %}bg-success{% endif %}"
                          role="progressbar"
                          style="width: {{ row.percent }}%;"
                          aria-valuenow="{{ row.used }}" aria-valuemin="0" aria-valuemax="{{ row.limit }}"></div>

@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Iterable
 
 from django.core.cache import cache
+from django.db import connections
 from django.utils.html import strip_tags
+
+from ai_assistant.deepseek_api import DeepSeekError
 
 from .models import Problem, split_stored_tags
 from .tag_labels import (
@@ -26,7 +30,7 @@ from .tag_labels import (
 )
 
 TAGS_MAX_LEN = 200
-MAX_BATCH = 1000
+MAX_BATCH = 5000
 STATEMENT_CHARS = 3500
 VOCAB_MAX = 160
 
@@ -283,6 +287,126 @@ def complete_one_problem(
         'added': suggested,
     }
 
+DEFAULT_CONCURRENCY = 10
+MAX_CONCURRENCY = 32
+
+
+def complete_problems_in_parallel(
+    problems: Iterable[Problem],
+    vocab: list[str],
+    *,
+    api_key: str,
+    system_prompt: str | None = None,
+    user_prompt_template: str | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    on_result: Callable[[dict], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> list[dict]:
+    """Fill algorithm tags for many problems using a thread pool.
+
+    ``problems`` should already be materialised (e.g. from
+    ``incomplete_problems``) so workers only touch the ORM to save their
+    own row. Each worker closes its thread-local DB connections on exit;
+    otherwise Django keeps one connection per pool thread alive.
+    """
+    concurrency = max(1, min(int(concurrency or 1), MAX_CONCURRENCY))
+    results: list[dict] = []
+    cancelled = False
+
+    def _run(problem: Problem) -> dict:
+        try:
+            return complete_one_problem(
+                problem,
+                vocab,
+                api_key=api_key,
+                system_prompt=system_prompt,
+                user_prompt_template=user_prompt_template,
+            )
+        except DeepSeekError as exc:
+            return {
+                'ok': False,
+                'problem_id': problem.id,
+                'title': problem.title,
+                'error': exc.user_message,
+                'before': problem.tags or '',
+                'after': problem.tags or '',
+                'added': [],
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'ok': False,
+                'problem_id': problem.id,
+                'title': problem.title,
+                'error': f'{type(exc).__name__}: {exc}',
+                'before': problem.tags or '',
+                'after': problem.tags or '',
+                'added': [],
+            }
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_map = {
+            executor.submit(_run, problem): problem for problem in problems
+        }
+        try:
+            for future in as_completed(future_map):
+                problem = future_map[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    result = {
+                        'ok': False,
+                        'problem_id': problem.id,
+                        'title': problem.title,
+                        'error': f'{type(exc).__name__}: {exc}',
+                        'before': problem.tags or '',
+                        'after': problem.tags or '',
+                        'added': [],
+                    }
+                results.append(result)
+                if on_result is not None:
+                    try:
+                        on_result(result)
+                    except Exception:
+                        # A misbehaving UI hook must not kill the batch.
+                        pass
+                if should_stop is not None and should_stop():
+                    cancelled = True
+                    break
+        finally:
+            if cancelled:
+                for future in future_map:
+                    future.cancel()
+
+    return results
+
+
+def complete_incomplete_problems_in_parallel(
+    *,
+    api_key: str,
+    limit: int | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    system_prompt: str | None = None,
+    user_prompt_template: str | None = None,
+    on_result: Callable[[dict], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> list[dict]:
+    """Convenience wrapper: pull the incomplete set, then fill it in parallel."""
+    problems = incomplete_problems(limit=limit)
+    if not problems:
+        return []
+    vocab = collect_vocabulary()
+    return complete_problems_in_parallel(
+        problems,
+        vocab,
+        api_key=api_key,
+        system_prompt=system_prompt,
+        user_prompt_template=user_prompt_template,
+        concurrency=concurrency,
+        on_result=on_result,
+        should_stop=should_stop,
+    )
 
 def official_deepseek_base_url() -> str:
     # Always the official product API for this admin tool, regardless of the

@@ -125,7 +125,7 @@ TAG_GROUPS = {
 # 题源标签（原始存储形式），单独成组展示。
 SOURCE_TAGS = [
     '洛谷', 'Codeforces', 'AtCoder', 'USACO', 'CodeChef', 'HackerEarth',
-    'AOJ', 'Kattis',
+    'AOJ', 'Kattis', 'GeeksforGeeks', 'HackerRank',
 ]
 
 # 所有已分组的算法标签（扁平集合）。
@@ -157,7 +157,8 @@ PROMPT_MAX_LEN = 8000
 PROVENANCE_EXACT = {
     '洛谷', 'Luogu', 'Codeforces', 'AtCoder', 'CodeChef', 'SPOJ', 'HDU',
     'POJ', 'UVa', 'UVA', 'Kattis', 'Timus', 'Yandex', 'TopCoder', 'Google',
-    'USACO', 'HackerEarth', 'AOJ', 'LibreOJ', '洛谷网',
+    'USACO', 'HackerEarth', 'AOJ', 'LibreOJ', '洛谷网', 'GeeksforGeeks', 
+    'HackerRank', 'GOLD', 'SILVER', 'BRONZE', 'PLATINUM', 
 }
 
 _PROV_PREFIXES = ('cc:', 'cf:', 'contest:', 'usaco:', 'taco:')

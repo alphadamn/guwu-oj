@@ -20,6 +20,17 @@ from .tag_complete import (
     save_prompts,
 )
 from .tag_labels import DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT
+from .tag_complete import (
+    MAX_BATCH,
+    collect_vocabulary,
+    complete_problems_in_parallel,   # 新增
+    count_incomplete_problems,
+    incomplete_problems,
+    load_saved_prompts,
+    save_prompts,
+)
+
+TAG_STEP_BATCH = 10
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +186,10 @@ class ProblemAdmin(admin.ModelAdmin):
     def complete_tags_step(self, request):
         if request.method != 'POST':
             return JsonResponse({'ok': False, 'error': '请使用 POST。'}, status=405)
+
         api_key = request.session.get('tag_complete_api_key') or ''
         ids = list(request.session.get('tag_complete_ids') or [])
+
         if not api_key:
             return JsonResponse(
                 {'ok': False, 'error': '会话已过期，请重新填写 API Key。'},
@@ -185,49 +198,71 @@ class ProblemAdmin(admin.ModelAdmin):
         if not ids:
             request.session.pop('tag_complete_api_key', None)
             request.session.modified = True
-            return JsonResponse({'ok': True, 'done': True, 'remaining': 0})
-        problem_id = ids[0]
-        problem = Problem.objects.filter(pk=problem_id).first()
-        if problem is None:
-            ids.pop(0)
-            request.session['tag_complete_ids'] = ids
-            request.session.modified = True
-            return JsonResponse({
-                'ok': False,
-                'done': not ids,
-                'remaining': len(ids),
-                'error': f'题目 P{problem_id} 不存在。',
-                'problem_id': problem_id,
-            })
+            return JsonResponse(
+                {'ok': True, 'done': True, 'remaining': 0, 'results': []}
+            )
+
+        batch_ids = ids[:TAG_STEP_BATCH]
+        rest_ids = ids[TAG_STEP_BATCH:]
+
+        # 保持原有顺序，同时容忍中途被删掉的题
+        problem_map = Problem.objects.in_bulk(batch_ids)
+        problems: list[Problem] = []
+        missing: list[int] = []
+        for pid in batch_ids:
+            problem = problem_map.get(pid)
+            if problem is None:
+                missing.append(pid)
+            else:
+                problems.append(problem)
+
         vocab = request.session.get('tag_complete_vocab') or collect_vocabulary()
         system_prompt = request.session.get('tag_complete_system_prompt') or ''
         user_prompt = request.session.get('tag_complete_user_prompt') or ''
-        try:
-            result = complete_one_problem(
-                problem, vocab, api_key=api_key,
+
+        results: list[dict] = []
+        if problems:
+            # 单题内部已用 try/finally 关闭线程本地连接；
+            # 这里的 concurrency 与 batch_size 保持一致，避免空闲线程。
+            results = complete_problems_in_parallel(
+                problems,
+                vocab,
+                api_key=api_key,
                 system_prompt=system_prompt,
                 user_prompt_template=user_prompt,
+                concurrency=min(TAG_STEP_BATCH, len(problems)),
             )
-        except DeepSeekError as exc:
-            logger.warning('DeepSeek tag complete failed for P%s', problem_id)
-            return JsonResponse({
+
+        for pid in missing:
+            results.append({
                 'ok': False,
-                'done': False,
-                'remaining': len(ids),
-                'problem_id': problem_id,
-                'title': problem.title,
-                'error': exc.user_message,
+                'problem_id': pid,
+                'title': '',
+                'error': f'题目 P{pid} 不存在。',
+                'before': '',
+                'after': '',
+                'added': [],
             })
-        ids.pop(0)
-        request.session['tag_complete_ids'] = ids
+
+        # 并行返回乱序，按提交顺序排回去，方便前端打印
+        order = {pid: i for i, pid in enumerate(batch_ids)}
+        results.sort(key=lambda r: order.get(r.get('problem_id'), 0))
+
+        request.session['tag_complete_ids'] = rest_ids
         request.session.modified = True
-        result['done'] = not ids
-        result['remaining'] = len(ids)
-        if result['done']:
+
+        done = not rest_ids
+        if done:
             request.session.pop('tag_complete_api_key', None)
             request.session.pop('tag_complete_vocab', None)
             request.session.modified = True
-        return JsonResponse(result)
+
+        return JsonResponse({
+            'ok': True,
+            'done': done,
+            'remaining': len(rest_ids),
+            'results': results,
+        })
 
 
 @admin.register(TestCase)

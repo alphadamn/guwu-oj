@@ -160,7 +160,7 @@ def _make_tool_executor(problem, generation):
             }
 
         if seq > MAX_JUDGE_TOOL_CALLS:
-            logger.info(
+            logger.debug(
                 'AI judge tool cap reached (gen=%s, seq=%s)', generation.id, seq,
             )
             return {

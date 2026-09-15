@@ -313,6 +313,35 @@ def cancel_at_period_end(sub: Subscription) -> None:
     sub.save(update_fields=['cancel_at_period_end', 'updated_at'])
 
 
+def cancel_stripe_subscription(sub: Subscription) -> None:
+    """Stop the Stripe subscription tied to ``sub`` from renewing.
+
+    Used by the admin when deleting a local ``Subscription`` row so that the
+    user is not billed again next cycle. No-op when the row has no Stripe
+    linkage. A "resource_missing" error (subscription already gone on Stripe's
+    side) is treated as success; any other Stripe failure is re-raised as
+    :class:`BillingError` so callers can block the local delete and avoid
+    orphaned billing.
+    """
+    if not sub.stripe_subscription_id:
+        return
+    try:
+        st = _client()
+        st.Subscription.modify(
+            sub.stripe_subscription_id, cancel_at_period_end=True
+        )
+    except stripe.InvalidRequestError as exc:
+        if getattr(exc, 'code', None) == 'resource_missing':
+            logger.info(
+                'Stripe subscription %s already absent; skipping cancel.',
+                sub.stripe_subscription_id,
+            )
+            return
+        raise BillingError(f'Stripe 拒绝取消请求：{exc.user_message or exc}') from exc
+    except stripe.StripeError as exc:
+        raise BillingError(f'Stripe 调用失败：{exc.user_message or exc}') from exc
+
+
 # ---------------------------------------------------------------------------
 # Webhooks
 # ---------------------------------------------------------------------------

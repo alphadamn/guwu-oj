@@ -757,7 +757,7 @@ def status_page(request):
     }[overall]
 
     entries = []
-    for entry in DevLogEntry.objects.select_related('author')[:30]:
+    for entry in DevLogEntry.objects.select_related('author'):
         entries.append({'obj': entry, 'html': render_markdown(entry.body)})
 
     commits = github.get_commits(limit=15)

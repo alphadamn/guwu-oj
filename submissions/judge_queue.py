@@ -109,7 +109,7 @@ def enqueue_judge(submission_id):
                             'priority': priority,
                         },
                     )
-                    logger.info(
+                    logger.debug(
                         'Enqueued judge task for submission %s (priority=%s) '
                         'to machine %s queue %s, job ID: %s',
                         submission_id, priority, machine['name'], queue_name, job.id,
@@ -132,7 +132,7 @@ def enqueue_judge(submission_id):
         # django-rq >= 4 returns None when the enqueue is deferred to the
         # database commit (COMMIT_MODE 'on_db_commit') or to the end of the
         # request ('request_finished'). The job is still queued, just later.
-        logger.info(
+        logger.debug(
             'Enqueued judge task for submission %s (priority=%s) to fallback queue %s, job ID: %s',
             submission_id, priority, fallback_queue, getattr(job, 'id', 'deferred'),
         )

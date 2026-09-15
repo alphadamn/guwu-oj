@@ -69,7 +69,7 @@ def get_ai_judge_user() -> User:
             # Self-heal accounts created before login was banned.
             user.is_active = False
             user.save(update_fields=['is_active'])
-            logger.info('Disabled login for AI judge account: %s', username)
+            logger.debug('Disabled login for AI judge account: %s', username)
         return user
 
     # Race-safe creation: two web workers may notice the missing row at once.
@@ -84,7 +84,7 @@ def get_ai_judge_user() -> User:
     user.set_unusable_password()
     try:
         user.save()
-        logger.info('Created dedicated AI judge account: %s (login disabled)', username)
+        logger.debug('Created dedicated AI judge account: %s (login disabled)', username)
     except Exception:
         # Lost the get_or_create race — fetch the winner.
         existing = User.objects.filter(username=username).first()

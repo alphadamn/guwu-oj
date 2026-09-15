@@ -531,9 +531,9 @@ def password_reset_request(request):
                     user = User.objects.get(email__iexact=email, is_active=True)
                     code = issue_password_reset_code(email)
                     send_password_reset_code_email(email, code)
-                    logger.info('Password reset code sent for %s', email)
+                    logger.debug('Password reset code sent for %s', email)
                 except User.DoesNotExist:
-                    logger.info('Password reset requested for unknown email: %s', email)
+                    logger.debug('Password reset requested for unknown email: %s', email)
                 except Exception:
                     logger.exception('Failed to send password reset email to %s', email)
 

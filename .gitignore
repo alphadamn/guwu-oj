@@ -42,3 +42,4 @@ scripts/import_usaco.py
 scripts/.cache/
 tests/test_problem_tags.py
 .well-known/
+logs/

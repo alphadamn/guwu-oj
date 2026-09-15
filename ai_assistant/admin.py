@@ -1,5 +1,6 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 
+from .billing import BillingError, cancel_stripe_subscription
 from .models import AIGeneration, AISession, AIToolCall, BillingConfig, Subscription
 
 
@@ -25,6 +26,34 @@ class SubscriptionAdmin(admin.ModelAdmin):
     search_fields = ('user__username', 'user__email',
                      'stripe_customer_id', 'stripe_subscription_id')
     readonly_fields = ('created_at', 'updated_at')
+
+    def delete_model(self, request, obj):
+        """Sync to Stripe before deleting so billing stops next cycle."""
+        try:
+            cancel_stripe_subscription(obj)
+        except BillingError as exc:
+            messages.error(request, f'已阻止删除订阅：{exc}')
+            return
+        super().delete_model(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        """Cancel each Stripe subscription first; skip rows that fail so
+        billing is never orphaned from a deleted local record."""
+        failed_pks = set()
+        for sub in queryset:
+            if not sub.stripe_subscription_id:
+                continue
+            try:
+                cancel_stripe_subscription(sub)
+            except BillingError as exc:
+                failed_pks.add(sub.pk)
+                messages.error(
+                    request,
+                    f'订阅 {sub.pk}（{sub.user}）Stripe 同步失败，已跳过：{exc}',
+                )
+        if failed_pks:
+            queryset = queryset.exclude(pk__in=failed_pks)
+        super().delete_queryset(request, queryset)
 
 
 class GenerationInline(admin.TabularInline):
