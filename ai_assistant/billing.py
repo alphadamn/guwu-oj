@@ -342,6 +342,32 @@ def cancel_stripe_subscription(sub: Subscription) -> None:
         raise BillingError(f'Stripe 调用失败：{exc.user_message or exc}') from exc
 
 
+def delete_stripe_customer(sub: Subscription) -> None:
+    """Delete the Stripe Customer record tied to ``sub``.
+
+    Deleting a customer on Stripe cascades to all their subscriptions, so
+    calling this after :func:`cancel_stripe_subscription` fully severs the
+    billing relationship. No-op when the row has no ``stripe_customer_id``.
+    ``resource_missing`` is treated as success (customer already deleted).
+    Any other Stripe failure is re-raised as :class:`BillingError`.
+    """
+    if not sub.stripe_customer_id:
+        return
+    try:
+        st = _client()
+        st.Customer.delete(sub.stripe_customer_id)
+    except stripe.InvalidRequestError as exc:
+        if getattr(exc, 'code', None) == 'resource_missing':
+            logger.info(
+                'Stripe customer %s already absent; skipping delete.',
+                sub.stripe_customer_id,
+            )
+            return
+        raise BillingError(f'Stripe 拒绝删除客户请求：{exc.user_message or exc}') from exc
+    except stripe.StripeError as exc:
+        raise BillingError(f'Stripe 调用失败：{exc.user_message or exc}') from exc
+
+
 # ---------------------------------------------------------------------------
 # Webhooks
 # ---------------------------------------------------------------------------
