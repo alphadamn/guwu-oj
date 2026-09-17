@@ -2,6 +2,7 @@ import json
 import threading
 from decimal import Decimal, InvalidOperation
 
+from django.core.cache import cache as _djcache
 from django.core.mail import mail_managers
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
