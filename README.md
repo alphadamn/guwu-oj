@@ -115,7 +115,7 @@ python manage.py runserver
 gunicorn oj_project.wsgi --bind 0.0.0.0:8000
 ```
 访问 http://127.0.0.1:8000 查看网站。
-#### 或使用systemd
+#### 或使用systemd（参考，下游nginx反代）
 ```
 [Unit]
 Description=Guwu Online Judge (Granian WSGI over Unix domain socket)
@@ -129,9 +129,6 @@ Group=root
 WorkingDirectory=/www/wwwroot/guwu-oj
 Environment="PATH=/www/wwwroot/guwu-oj/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DJANGO_SETTINGS_MODULE=oj_project.settings"
-# The upstream hop (Caddy -> Granian) is plain HTTP/1.1, so request.is_secure()
-# must follow Caddy's X-Forwarded-Proto; without this, the production
-# SECURE_SSL_REDIRECT=true setting would redirect-loop every request.
 Environment="SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https"
 # With multiple workers, django_prometheus needs multiprocess mode for
 # correct /metrics aggregation.
