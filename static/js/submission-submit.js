@@ -39,6 +39,12 @@ document.addEventListener('DOMContentLoaded', function () {
     var idEl = document.getElementById('captcha-id');
     var answerEl = document.getElementById('captcha-answer');
     var captchaUrl = form ? form.getAttribute('data-captcha-url') : '';
+    // Validate that captchaUrl is a same-origin relative path (starts with
+    // a single '/'). This prevents DOM-based XSS where a crafted attribute
+    // value such as "javascript:..." could otherwise reach img.src below.
+    if (captchaUrl && !/^\/[^/]/.test(captchaUrl)) {
+        captchaUrl = '';
+    }
     if (img && idEl && captchaUrl) {
         function refreshCaptcha() {
             img.classList.add('refreshing');

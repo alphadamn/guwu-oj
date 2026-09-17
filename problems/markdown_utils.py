@@ -24,9 +24,12 @@ _DISPLAY_MATH_PATTERNS = [
     re.compile(r'\$\$[\s\S]+?\$\$', re.MULTILINE),
     re.compile(r'\\\[[\s\S]+?\\\]', re.MULTILINE),
 ]
+# The \(...\) branch uses a tempered greedy token ((?:(?!\\\)).)*?) instead
+# of (.+?) so the content cannot backtrack into the closing \) delimiter,
+# removing the ambiguity that previously allowed polynomial-time matching.
 _INLINE_MATH_RE = re.compile(
     r'(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)|'
-    r'\\\((.+?)\\\)',
+    r'\\\(((?:(?!\\\)).)*?)\\\)',
 )
 
 
@@ -66,18 +69,28 @@ def _apply_strikethrough(text):
 def render_markdown(text):
     if not text:
         return ''
-    
+
     # Generate cache key based on content hash
     content_hash = hashlib.md5(text.encode('utf-8'), usedforsecurity=False).hexdigest()
     cache_key = f'markdown_render_{content_hash}'
-    
+
     # Try to get cached result
     cached_html = cache.get(cache_key)
     if cached_html is not None:
         return cached_html
-    
-    # Render markdown
-    text, math_blocks = _protect_math(text)
+
+    # Cap the input length passed to the math-extraction regexes. The
+    # non-greedy quantifiers in _protect_math can require O(n^2) time on
+    # pathological inputs (e.g. many unclosed \( sequences), so bounding n
+    # keeps the worst-case runtime small. Real markdown with math is far
+    # below this cap (the largest handbook article is ~3.6 KB), so this
+    # branch is rarely hit in practice.
+    _MAX_MATH_INPUT = 10_000
+    if len(text) <= _MAX_MATH_INPUT:
+        text, math_blocks = _protect_math(text)
+    else:
+        math_blocks = []
+
     text = _apply_strikethrough(text)
     html = markdown.markdown(
         text,
