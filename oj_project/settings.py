@@ -680,6 +680,38 @@ OJ_DOCKER_PIDS_LIMIT = int(os.environ.get('OJ_DOCKER_PIDS_LIMIT', '64'))
 OJ_DOCKER_NOFILE_LIMIT = int(os.environ.get('OJ_DOCKER_NOFILE_LIMIT', '64'))
 # The profile must be loaded on every judge host before containers are started.
 OJ_DOCKER_APPARMOR_PROFILE = os.environ.get('OJ_DOCKER_APPARMOR_PROFILE', 'oj-judge').strip()
+
+# ── Warm per-language judge container pool (judge workers only) ──────────
+# A pool of long-lived `sleep infinity` containers is maintained per judge
+# image on each worker, so submissions skip the ~0.5-1.5s `docker run`
+# startup overhead. Queue layout and OJ_JUDGE_CONCURRENCY are unaffected.
+OJ_CONTAINER_POOL_ENABLED = os.environ.get(
+    'OJ_CONTAINER_POOL_ENABLED', 'true'
+).lower() in ('1', 'true', 'yes')
+# Idle containers kept warm per image (the maintainer refills on checkout).
+OJ_CONTAINER_POOL_MIN_IDLE = int(os.environ.get('OJ_CONTAINER_POOL_MIN_IDLE', '1'))
+# Max live containers (idle + in-use) per image. 0/empty = concurrency +
+# min-idle, which guarantees a warm spare while every thread is busy.
+OJ_CONTAINER_POOL_MAX_SIZE = int(
+    os.environ.get('OJ_CONTAINER_POOL_MAX_SIZE', '0')
+) or None
+# Initial cgroup cap of a pooled container. Each checkout is resized via
+# `docker update` to max(problem memory limit, 512), so this only needs to
+# cover the idle keepalive; it's a cap, not a reserve.
+OJ_CONTAINER_POOL_MEMORY_MB = int(os.environ.get('OJ_CONTAINER_POOL_MEMORY_MB', '1024'))
+# Recycle a pooled container after this many submissions / seconds of life.
+OJ_CONTAINER_POOL_MAX_USES = int(os.environ.get('OJ_CONTAINER_POOL_MAX_USES', '50'))
+OJ_CONTAINER_POOL_MAX_AGE_SEC = int(os.environ.get('OJ_CONTAINER_POOL_MAX_AGE_SEC', '3600'))
+# Extra warm containers left by a burst are reaped after this many idle seconds.
+OJ_CONTAINER_POOL_IDLE_TTL_SEC = int(os.environ.get('OJ_CONTAINER_POOL_IDLE_TTL_SEC', '300'))
+# Max wait for a free pooled container before falling back to an ephemeral one.
+OJ_CONTAINER_POOL_ACQUIRE_TIMEOUT = int(
+    os.environ.get('OJ_CONTAINER_POOL_ACQUIRE_TIMEOUT', '15')
+)
+# Host directory whose per-container subfolders are bind-mounted at /sandbox.
+OJ_CONTAINER_POOL_WORK_ROOT = os.environ.get(
+    'OJ_CONTAINER_POOL_WORK_ROOT', '/tmp/oj_container_pool'
+)
 # Default subprocess timeout (can be overridden via JudgeConfig model in admin)
 OJ_SUBPROCESS_TIMEOUT_SEC = int(os.environ.get('OJ_SUBPROCESS_TIMEOUT_SEC', '5'))
 

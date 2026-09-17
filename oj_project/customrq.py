@@ -4,6 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from submissions.container_cleanup import start_container_cleanup
+from submissions.container_pool import shutdown_pool, start_pool
 
 import redis
 from django.conf import settings
@@ -56,6 +57,9 @@ class AutoReconnectWorker(SimpleWorker):
             thread_name_prefix='judge-job',
         )
         start_container_cleanup()
+        # Warm the per-language judge container pool in the background so
+        # the first submissions after (re)start pay no docker-run overhead.
+        start_pool()
         logger.info(
             'Judge worker %s started with concurrency %s', self.name, self.concurrency
         )
@@ -197,6 +201,9 @@ class AutoReconnectWorker(SimpleWorker):
             # Wait for in-flight judges before the process exits so a
             # graceful stop never truncates submissions mid-judgement.
             self._executor.shutdown(wait=True)
+            # All judges have returned their pool containers; tear the pool
+            # down so no warm containers are orphaned.
+            shutdown_pool()
             # super().work() skips teardown when bootstrap fails (e.g. a
             # stale worker record); close out our registration regardless.
             try:

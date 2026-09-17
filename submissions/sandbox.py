@@ -5,6 +5,11 @@ Performance / stability changes vs the previous naive approach:
 * A single long-running judge container is kept alive per submission and
   reused across test cases via `docker exec`. This amortises Docker startup
   overhead (≈0.5–1.5 s) across all test cases.
+* On judge workers the per-submission container itself comes from a warm
+  per-image container pool (see `submissions.container_pool`); this module
+  only owns the hardened `docker run` argv and the raw `docker exec` call,
+  shared by both the pool path and the one-container-per-submission
+  fallback.
 * `docker info` is cached in-process (with a short TTL) instead of being
   invoked on every test case.
 * The subprocess timeout honours the caller-supplied value. A small fixed
@@ -155,6 +160,150 @@ def _kill_container(cid):
 
 # ── Long-running JudgeContainer ─────────────────────────────────────────
 
+POOL_ROLE_LABEL = "oj.judge.role"
+POOL_IMAGE_LABEL = "oj.judge.image"
+POOL_WORKER_LABEL = "oj.judge.worker"
+
+
+def build_judge_run_args(
+    work_dir, memory_mb, image, is_compile=False, labels=None, use_init=False
+):
+    """Construct the ``docker run`` argv for a judge sandbox container.
+
+    The same hardened defaults (no network, no IPC, dropped caps, read-only
+    rootfs, seccomp/apparmor profiles, device allow-list) are shared by the
+    one-shot :class:`JudgeContainer` fallback path and by the warm container
+    pool (``submissions.container_pool``).
+
+    *labels* — optional mapping of ``--label`` key/values (used by the pool
+    so housekeeping can tell pooled containers apart from orphans).
+    *use_init* — when true, ``--init`` reaps zombies left by submissions
+    (pooled containers serve many submissions and therefore need it).
+    """
+    args = [
+        "docker", "run", "--rm", "-d", "-i",
+        "--network", "none",
+        "--ipc", "none",
+        "--hostname", "judge",
+        *_memory_flags(memory_mb),
+        *_runtime_user_flags(),
+        "--pids-limit", str(getattr(settings, "OJ_DOCKER_PIDS_LIMIT", 64)),
+        "--ulimit", "nofile={0}:{0}".format(
+            max(16, int(getattr(settings, "OJ_DOCKER_NOFILE_LIMIT", 64)))
+        ),
+        "--security-opt", "no-new-privileges=true",
+        "--security-opt", f"seccomp={_seccomp_flag(is_compile)}",
+        "--cap-drop", "ALL",
+        "--read-only",
+        "--security-opt", f"apparmor={_apparmor_flag()}",
+        "--tmpfs", "/tmp:exec,mode=777",
+        "--device", "/dev/null:rw",
+        "--device", "/dev/zero:r",
+        "--device", "/dev/random:r",
+        "--device", "/dev/urandom:r",
+        "-v", f"{work_dir}:/sandbox:rw",
+        "-w", "/sandbox",
+    ]
+    if use_init:
+        args.append("--init")
+    for key, value in (labels or {}).items():
+        args.extend(["--label", f"{key}={value}"])
+    args.extend([image, "sleep", "infinity"])
+    return args
+
+
+def start_judge_container(
+    work_dir, memory_mb, image, is_compile=False, labels=None, use_init=False
+):
+    """Start a detached long-lived judge container; return its cid.
+
+    ``docker run`` failures (daemon unreachable, image missing, security
+    profile not loaded, ...) are normalised to
+    :class:`DockerNotAvailableError`.
+    """
+    args = build_judge_run_args(
+        work_dir,
+        memory_mb,
+        image,
+        is_compile=is_compile,
+        labels=labels,
+        use_init=use_init,
+    )
+    try:
+        create = subprocess.run(
+            args, capture_output=True, text=True, timeout=30
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise DockerNotAvailableError(
+            f"Failed to start judge container: {exc}"
+        )
+    if create.returncode != 0:
+        raise DockerNotAvailableError(
+            f"Failed to start judge container: {create.stderr or create.stdout}"
+        )
+    return create.stdout.strip().strip('"').strip("'")
+
+
+def update_judge_container_memory(cid, memory_mb):
+    """Resize a running judge container's cgroup memory + swap caps.
+
+    The warm pool serves problems with different memory limits; the cgroup
+    cap is what turns a memory-hogging submission into SIGKILL (rc 137 →
+    MLE), so each checkout is resized to ``max(problem limit, 512)`` —
+    exactly what the one-container-per-submission path used. Takes a few
+    tens of milliseconds, vs ≈0.5–1.5 s for a fresh ``docker run``.
+    """
+    mem = max(int(memory_mb), 32)
+    try:
+        result = subprocess.run(
+            ["docker", "update",
+             "--memory", f"{mem}m",
+             "--memory-swap", f"{mem}m",
+             cid],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise DockerNotAvailableError(
+            f"Failed to resize judge container memory: {exc}"
+        )
+    if result.returncode != 0:
+        raise DockerNotAvailableError(
+            f"Failed to resize judge container memory: "
+            f"{result.stderr or result.stdout}"
+        )
+
+
+def docker_exec(cid, command, timeout_sec, stdin=None, workdir=None):
+    """Run *command* via ``docker exec`` inside running container *cid*.
+
+    *workdir* overrides the container's default working directory
+    (``/sandbox``). The warm pool bind-mounts one shared host root at
+    ``/sandbox`` and executes each submission in its own subdirectory.
+
+    Returns a :class:`subprocess.CompletedProcess` like object.
+    ``stdout`` / ``stderr`` are decoded strings when *stdin* is not bytes,
+    otherwise they are bytes (matching subprocess semantics).
+    """
+    if not cid:
+        raise DockerNotAvailableError("Judge container is not running")
+
+    input_is_bytes = isinstance(stdin, (bytes, bytearray, memoryview))
+    text_mode = stdin is None or not input_is_bytes
+    full_cmd = ["docker", "exec", "-i"]
+    if workdir:
+        full_cmd.extend(["-w", workdir])
+    full_cmd.extend([cid, *command])
+    return subprocess.run(
+        full_cmd,
+        input=stdin,
+        capture_output=True,
+        text=text_mode,
+        timeout=max(float(timeout_sec), 0.1),
+    )
+
+
 class JudgeContainer:
     """Keeps a single judge container alive for many ``docker exec`` calls.
 
@@ -177,45 +326,12 @@ class JudgeContainer:
         ensure_docker_ready()
         ensure_judge_image_available(self.image)
         _prepare_work_dir(self.work_dir)
-        args = [
-            "docker", "run", "--rm", "-d", "-i",
-            "--network", "none",
-            "--ipc", "none",
-            "--hostname", "judge",
-            *_memory_flags(self.memory_mb),
-            *_runtime_user_flags(),
-            "--pids-limit", str(getattr(settings, "OJ_DOCKER_PIDS_LIMIT", 64)),
-            "--ulimit", "nofile={0}:{0}".format(
-                max(16, int(getattr(settings, "OJ_DOCKER_NOFILE_LIMIT", 64)))
-            ),
-            "--security-opt", "no-new-privileges=true",
-            "--security-opt", f"seccomp={_seccomp_flag(self.is_compile)}",
-            "--cap-drop", "ALL",
-            "--read-only",
-            "--security-opt", f"apparmor={_apparmor_flag()}",
-            "--tmpfs", "/tmp:exec,mode=777",
-            "--device", "/dev/null:rw",
-            "--device", "/dev/zero:r",
-            "--device", "/dev/random:r",
-            "--device", "/dev/urandom:r",
-            "-v", f"{self.work_dir}:/sandbox:rw",
-            "-w", "/sandbox",
+        self.cid = start_judge_container(
+            self.work_dir,
+            self.memory_mb,
             self.image,
-            "sleep", "infinity",
-        ]
-        try:
-            create = subprocess.run(
-                args, capture_output=True, text=True, timeout=30
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            raise DockerNotAvailableError(
-                f"Failed to start judge container: {exc}"
-            )
-        if create.returncode != 0:
-            raise DockerNotAvailableError(
-                f"Failed to start judge container: {create.stderr or create.stdout}"
-            )
-        self.cid = create.stdout.strip().strip('"').strip("'")
+            is_compile=self.is_compile,
+        )
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -224,25 +340,15 @@ class JudgeContainer:
         finally:
             self.cid = None
 
-    def exec(self, command, timeout_sec, stdin=None):
+    def exec(self, command, timeout_sec, stdin=None, workdir=None):
         """Run *command* inside the running container.
 
         Returns a :class:`subprocess.CompletedProcess` like object.
         ``stdout`` / ``stderr`` are decoded strings when *stdin* is not bytes,
         otherwise they are bytes (matching subprocess semantics).
         """
-        if not self.cid:
-            raise DockerNotAvailableError("Judge container is not running")
-
-        input_is_bytes = isinstance(stdin, (bytes, bytearray, memoryview))
-        text_mode = stdin is None or not input_is_bytes
-        full_cmd = ["docker", "exec", "-i", self.cid, *command]
-        return subprocess.run(
-            full_cmd,
-            input=stdin,
-            capture_output=True,
-            text=text_mode,
-            timeout=max(float(timeout_sec), 0.1),
+        return docker_exec(
+            self.cid, command, timeout_sec, stdin=stdin, workdir=workdir
         )
 
 

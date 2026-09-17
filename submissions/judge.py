@@ -6,9 +6,14 @@ Key performance / stability changes:
   TypeScript / Kotlin). Previously, the combined helpers recompiled the
   whole source for every single test case, which made per-case overhead
   grow linearly with test-case count.
-* **Container reuse.** A single long-running judge container is started
-  per submission and shared across all test cases via ``docker exec``.
-  This amortises ≈0.5–1.5 s of Docker startup overhead per submission.
+* **Container reuse.** On judge workers the container is handed out from a
+  warm per-image container pool (``submissions.container_pool``) — no
+  ``docker run`` startup overhead (≈0.5–1.5 s) per submission. Every
+  checkout executes in its own ``/sandbox/<token>`` subdirectory and the
+  container is sanitised (stray processes killed, tmpfs wiped) on return.
+  If the pool is unavailable, a dedicated long-running container is
+  started per submission (fallback) and shared across all test cases via
+  ``docker exec``.
 * **Honest per-case timeout.** ``_run()`` uses ``timeout_sec + 1 s`` —
   no more ``max(timeout, 5)`` inflation. The authoritative verdict
   comes from ``/usr/bin/time`` inside the container; the outer 1 s
@@ -27,7 +32,9 @@ import os
 import os.path
 import pwd
 import grp
+import logging
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -39,6 +46,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 
+from . import container_pool
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
     DockerNotAvailableError,
@@ -47,6 +55,8 @@ from .sandbox import (
     run_in_container,
     run_commands_in_container,
 )
+
+logger = logging.getLogger(__name__)
 
 JUDGED_LANGUAGES = {"C++", "Python", "Java", "C", "Assembly", "Rust",
                     "Golang", "JavaScript", "Ruby", "Kotlin"}
@@ -133,16 +143,23 @@ def _get_judge_config_global_timeout():
 class SandboxRunner:
     """Runs the compilation + per-test-case steps of one submission.
 
-    A single long-running judge container is started in ``__enter__``
-    and reused for every command that this runner executes. This means
-    the amortised Docker startup overhead is ≈0 for N test cases.
+    The runner uses either a warm container checked out from the per-image
+    pool (``pool_handle``; zero ``docker run`` overhead) or, as a fallback,
+    a dedicated long-running container started in ``__enter__``. The
+    container is reused for every compile/execute command of the
+    submission, so the amortised startup overhead is ≈0 for N test cases.
     """
 
-    def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image):
+    def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image,
+                 pool_handle=None, exec_workdir=None):
         self.work_dir = work_dir
         self.time_limit_sec = max(float(time_limit_ms) / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
         self.image = image
+        self.pool_handle = pool_handle
+        # Pooled containers mount one shared host root at /sandbox; each
+        # submission executes in its own /sandbox/<token> subdirectory.
+        self.exec_workdir = exec_workdir
         self.last_memory_kb = None
         self._container = None
         self._global_timeout_sec = None  # loaded lazily
@@ -163,20 +180,34 @@ class SandboxRunner:
             os.chmod(self.work_dir, 0o754)
         except OSError:
             pass
-        self._container = JudgeContainer(
-            self.work_dir,
-            memory_mb=max(self.memory_limit_mb, 512),
-            image=self.image,
-            is_compile=True,
-        ).__enter__()
+        if self.pool_handle is not None:
+            # Warm container: no docker run / image check needed here.
+            self._container = self.pool_handle
+        else:
+            self._container = JudgeContainer(
+                self.work_dir,
+                memory_mb=max(self.memory_limit_mb, 512),
+                image=self.image,
+                is_compile=True,
+            ).__enter__()
         # Read JudgeConfig.global_timeout_sec (cached) once per submission.
         self._global_timeout_sec = _get_judge_config_global_timeout()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._container is not None:
+        if self._container is None:
+            return
+        if self.pool_handle is not None:
+            # Any exception means the container state is suspect (e.g. the
+            # docker exec transport failed mid-run) — recycle rather than
+            # hand a possibly-corrupt container to the next submission.
+            container_pool.release(
+                self.pool_handle, force_destroy=exc_type is not None
+            )
+            self.pool_handle = None
+        else:
             self._container.__exit__(exc_type, exc_val, exc_tb)
-            self._container = None
+        self._container = None
 
     # ── time / memory parsing ───────────────────────────────────────────
 
@@ -219,7 +250,9 @@ class SandboxRunner:
         del is_compile
 
         padded = float(timeout_sec) + HOST_TIMEOUT_SAFETY_MARGIN_SEC
-        return self._container.exec(command, padded, stdin=stdin)
+        return self._container.exec(
+            command, padded, stdin=stdin, workdir=self.exec_workdir
+        )
 
     # ── compile steps (run once per submission) ────────────────────────
 
@@ -512,7 +545,31 @@ def judge_submission(submission_id):
         submission.save(update_fields=["status"])
         return submission
 
-    work_dir = tempfile.mkdtemp(prefix="oj_judge_")
+    image = LANG_IMAGE.get(submission.language, "oj-judge:latest")
+
+    # Prefer a warm container from the per-image pool. Pooled containers
+    # bind-mount one shared host root at /sandbox; each submission gets an
+    # unguessable subdirectory there. Fallback: ephemeral container with its
+    # own temp dir, exactly as before.
+    pool_handle = container_pool.acquire(
+        image, memory_mb=max(int(problem.memory_limit), 512)
+    )
+    exec_workdir = None
+    try:
+        if pool_handle is not None:
+            logger.debug("Submission %s using warm pooled container %s",
+                         submission_id, pool_handle.cid[:12])
+            token = secrets.token_hex(8)
+            work_dir = os.path.join(pool_handle.host_root, token)
+            os.makedirs(work_dir, mode=0o750, exist_ok=False)
+            exec_workdir = f"/sandbox/{token}"
+        else:
+            work_dir = tempfile.mkdtemp(prefix="oj_judge_")
+    except BaseException:
+        # Never leak a checked-out pool slot if setup fails before the
+        # runner context manager takes ownership.
+        container_pool.release(pool_handle, force_destroy=True)
+        raise
     max_runtime = 0
     max_memory_kb = 0
     case_statuses = []
@@ -522,7 +579,9 @@ def judge_submission(submission_id):
             work_dir,
             problem.time_limit,
             problem.memory_limit,
-            image=LANG_IMAGE.get(submission.language, "oj-judge:latest"),
+            image=image,
+            pool_handle=pool_handle,
+            exec_workdir=exec_workdir,
         )
 
         # ── Start long-running container + compile once ───────────────
