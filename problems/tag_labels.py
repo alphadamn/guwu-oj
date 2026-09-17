@@ -161,7 +161,7 @@ PROVENANCE_EXACT = {
     'HackerRank', 'GOLD', 'SILVER', 'BRONZE', 'PLATINUM', 
 }
 
-_PROV_PREFIXES = ('cc:', 'cf:', 'contest:', 'usaco:', 'taco:')
+_PROV_PREFIXES = ('cc:', 'cf:', 'contest:', 'usaco:', 'taco:', 'ht:')
 _PID_RE = re.compile(r'^P\d+$')
 _CF_RATING_RE = re.compile(r'^CF\d+$', re.IGNORECASE)
 

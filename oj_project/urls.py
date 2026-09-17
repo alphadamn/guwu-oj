@@ -23,6 +23,8 @@ urlpatterns = [
     path('devlog/', include('devlog.urls')),
     path('ai/', include('ai_assistant.urls')),
     path('', include('django_prometheus.urls')),
+    path('privacy-policy/', TemplateView.as_view(template_name='legal/privacy_policy.html'), name='privacy_policy'),
+    path('terms-of-service/', TemplateView.as_view(template_name='legal/terms_of_service.html'), name='terms_of_service'),
 ]
 
 if settings.DEBUG:

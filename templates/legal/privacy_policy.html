@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}隐私政策 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="card border-0 shadow-sm rounded-4">
+      <div class="card-body p-4 p-md-5">
+        <h1 class="h3 fw-bold mb-1">隐私政策</h1>
+        <p class="text-muted small mb-4">最后更新：2026 年 9 月 16 日</p>
+
+        <p class="lead">欢迎使用「谷物 OJ」（以下简称"本站"）。我们深知个人信息对您的重要性，并会尽全力保护您的个人信息安全可靠。本政策将帮助您了解我们在您使用本站服务时如何收集、使用、存储和保护您的个人信息，以及您享有的相关权利。</p>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">一、我们收集的信息</h2>
+
+        <h3 class="h6 fw-semibold mt-4">1. 您主动提供的信息</h3>
+        <ul>
+          <li><strong>账号信息：</strong>当您注册账号时，我们会收集您的用户名、邮箱地址、密码（以不可逆哈希形式存储）以及您自愿填写的昵称、个人简介。</li>
+          <li><strong>头像：</strong>您可以上传自定义头像，图片以二进制形式存储于数据库中。</li>
+          <li><strong>邀请码：</strong>如您通过他人邀请链接注册，我们会记录邀请关系，用于统计邀请奖励。</li>
+          <li><strong>两步验证信息：</strong>当您启用两步验证（2FA）时，我们会存储经加密的 TOTP 密钥和备用码哈希，密钥仅在 2FA 启用期间保留。</li>
+        </ul>
+
+        <h3 class="h6 fw-semibold mt-4">2. 使用服务过程中自动产生的信息</h3>
+        <ul>
+          <li><strong>提交记录：</strong>您提交的代码、所选编程语言、评测结果（通过/未通过、耗时、内存）以及提交时间。这些记录与您的账号关联。</li>
+          <li><strong>解题与创作内容：</strong>您上传的题目、题解、评论等内容，以及 AI 解题会话中您发送的提示词。</li>
+          <li><strong>最后登录 IP：</strong>我们仅记录您最近一次登录的 IP 地址，用于账号安全审计（如异地登录检测）。</li>
+          <li><strong>操作日志：</strong>积分变动、签到、订阅购买等与账号相关的操作记录。</li>
+        </ul>
+
+        <h3 class="h6 fw-semibold mt-4">3. 匿名流量统计（不用于识别个人身份）</h3>
+        <p>为改善网站体验，我们会对公开页面的访问量进行匿名统计，包括：</p>
+        <ul>
+          <li>每日各页面的访问次数（页面路径中的数字 ID 会被归一化为 <code>:id</code>，不记录具体题目或用户编号）；</li>
+          <li>基于 IP 的国家/地区分布（通过 GeoLite2 数据库解析，仅保留国家代码与聚合计数）；</li>
+          <li>经您同意后，浏览器提供的粗略经纬度（保留一位小数，仅用于访客来源热力图）。</li>
+        </ul>
+        <p><strong>我们不会保存原始 IP 地址（除最后登录 IP 外），也不会记录单次访问的具体时间戳。</strong>统计数据保留 90 天后自动清除。您可在访问本站时通过弹窗选择"拒绝"来关闭匿名统计，拒绝后上述匿名统计将不会记录与您相关的浏览行为。</p>
+
+        <h3 class="h6 fw-semibold mt-4">4. AI 解题相关信息</h3>
+        <p>当您使用 AI 解题功能时，我们会将题目信息和您的问题发送给第三方 AI 模型服务商（当前为 DeepSeek）。我们会记录会话内容（提示词、模型回答、思考过程）以及 Token 用量，用于配额统计与服务改进。AI 讲解过程中调用判题工具产生的提交记录挂在专用服务账号下，与您的真实提交记录隔离。</p>
+
+        <h3 class="h6 fw-semibold mt-4">5. 支付与订阅信息</h3>
+        <p>当您购买 AI 订阅套餐时，支付由 Stripe 处理。我们仅在本站存储您的 Stripe Customer ID、Subscription ID 以及订阅周期，<strong>不存储您的银行卡号、CVV 等完整支付信息</strong>。完整支付数据由 Stripe 按照其隐私政策处理。</p>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">二、我们如何使用信息</h2>
+        <ul>
+          <li>创建、维护和管理您的账号，提供登录与身份验证服务；</li>
+          <li>运行在线评测系统，对您提交的代码进行编译与运行；</li>
+          <li>提供竞赛、排行榜、积分、签到等核心功能；</li>
+          <li>通过邮箱发送注册验证码、密码重置链接等安全相关通知；</li>
+          <li>检测和防止滥用、欺诈和恶意行为（如 IP 封禁、验证码、提交频率限制）；</li>
+          <li>在获得您同意后进行匿名流量分析，以改善网站性能与内容；</li>
+          <li>在法律法规要求或为保护本站及用户合法权益所必需时，配合相关机构提供信息。</li>
+        </ul>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">三、信息的共享与披露</h2>
+        <p>除以下情形外，我们不会向任何第三方共享您的个人信息：</p>
+        <ul>
+          <li><strong>服务提供商：</strong>我们会与为本站提供基础设施服务的第三方共享必要信息，包括 Stripe（支付处理）、DeepSeek（AI 模型）、Cloudflare / 阿里云 CDN（内容分发）、邮件服务商（发送通知邮件）。这些服务商仅在我们授权范围内处理数据，并受保密义务约束。</li>
+          <li><strong>公开内容：</strong>您主动公开发布的题解、评论、排行榜信息等，其他用户可以查看。</li>
+          <li><strong>法律要求：</strong>当法律、法规、法律程序或政府主管部门的强制性要求需要时，我们可能会披露您的信息。</li>
+          <li><strong>经您同意：</strong>在您明确同意的其他情况下。</li>
+        </ul>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">四、Cookie 与同类技术</h2>
+        <p>本站使用以下 Cookie，均为实现核心功能所必需：</p>
+        <ul>
+          <li><strong>会话 Cookie（<code>sessionid</code>）：</strong>维持您的登录状态。</li>
+          <li><strong>CSRF Cookie（<code>csrftoken</code>）：</strong>防止跨站请求伪造攻击。</li>
+          <li><strong>匿名统计 Cookie（<code>oj_analytics_id</code> / <code>oj_analytics_consent</code>）：</strong>仅在您同意匿名统计后设置，用于区分不同访客以统计页面浏览量，有效期 1 年。</li>
+        </ul>
+        <p>您可以通过浏览器设置删除或阻止 Cookie，但这可能会影响本站部分功能（如登录状态）的正常使用。</p>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">五、信息的存储与安全</h2>
+        <ul>
+          <li><strong>存储位置：</strong>您的个人信息存储于位于中国大陆/中国香港的服务器上。</li>
+          <li><strong>存储期限：</strong>账号信息在您注销账号前持续保留；匿名流量统计保留 90 天后自动删除；提交记录在账号存续期间保留。</li>
+          <li><strong>安全措施：</strong>全站启用 HTTPS 与 HSTS；密码使用不可逆哈希算法存储；2FA 密钥经加密存储；启用 CSRF 防护；代码在隔离的 Docker 沙箱中运行，无网络访问权限；上传文件受大小与格式限制；对敏感操作（登录、注册、密码重置）实施验证码与频率限制。</li>
+        </ul>
+        <p>尽管我们采取了合理的安全措施，但互联网传输并非绝对安全，我们无法保证信息传输的绝对安全性。</p>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">六、您的权利</h2>
+        <p>您对您的个人信息享有以下权利：</p>
+        <ul>
+          <li><strong>查阅与更正：</strong>您可在"编辑资料"页面查看和修改昵称、个人简介、头像。</li>
+          <li><strong>删除：</strong>您可删除已提交的代码记录、题解等内容（符合竞赛等规则限制的除外）。如需删除账号，请通过下方联系方式与我们联系。</li>
+          <li><strong>撤回同意：</strong>您可随时在浏览器中清除匿名统计 Cookie 来撤回对流量统计的同意。</li>
+          <li><strong>数据可携带性：</strong>如需导出您的提交记录等数据，请联系我们。</li>
+        </ul>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">七、未成年人保护</h2>
+        <p>本站面向算法竞赛爱好者开放，欢迎未成年人使用。若您是未满 14 周岁的未成年人，请在监护人陪同下阅读本政策并使用本站。我们不会主动收集超出必要范围的未成年人信息。如监护人发现我们在未取得有效同意的情况下收集了未成年人的个人信息，可通过下方联系方式要求删除。</p>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">八、本政策的更新</h2>
+        <p>我们可能不时更新本隐私政策。更新后，我们将在本页面公布最新版本，并更新"最后更新"日期。对于重大变更，我们会通过站内公告或邮件方式通知您。继续使用本站服务即视为您同意更新后的政策。</p>
+
+        <hr class="my-4">
+
+        <h2 class="h5 fw-bold mb-3">九、联系我们</h2>
+        <p>如您对本隐私政策或个人信息保护有任何疑问、建议或投诉，可通过以下方式联系我们：</p>
+        <ul>
+          <li>邮箱：<a href="mailto:oscar.liu@student.isb.cn">oscar.liu@student.isb.cn</a></li>
+          <li>GitHub Issue：<a href="https://github.com/alphadamn/guwu-oj/issues" target="_blank" rel="noopener">alphadamn/guwu-oj</a></li>
+        </ul>
+
+        <div class="alert alert-info mt-4 rounded-3 border-0" role="alert">
+          <i class="bi bi-info-circle me-1"></i> 本政策仅为信息性说明，不构成法律意见。如您对数据处理有特定疑问，建议咨询专业法律顾问。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

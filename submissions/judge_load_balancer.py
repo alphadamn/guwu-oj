@@ -19,7 +19,7 @@ class JudgeLoadBalancer:
         self.health_check_ttl = 30
         self.selection_lock_key = 'judge:selection:lock'
         self.selection_lock_ttl = 10
-        self.selection_lock_wait_sec = 3
+        self.selection_lock_wait_sec = 5
 
     @property
     def machines(self):
@@ -157,27 +157,33 @@ class JudgeLoadBalancer:
             settings, 'JUDGE_PRIORITY_SUFFIXES', ('-pro', '-plus', '', '-ai'),
         )
 
-    def _get_queue_length(self, machine):
-        """Total queued jobs across all priority tiers of one machine."""
+    def _get_queue_length(self, machine, client=None):
+        """Total queued jobs across all priority tiers of one machine.
+
+        When ``client`` is supplied it is reused (important while holding the
+        global selection lock against a remote TLS endpoint: opening a fresh
+        connection per LLEN can cost ~80 ms and serialise every reservation).
+        """
         try:
-            r = self._machine_redis(machine)
+            r = client or self._machine_redis(machine)
             base = machine['queue']
-            total = 0
+            pipe = r.pipeline()
             for suffix in self._priority_suffixes():
-                total += r.llen(f'rq:queue:{base}{suffix}')
-            return total
+                pipe.llen(f'rq:queue:{base}{suffix}')
+            return sum(pipe.execute())
         except Exception:
             return 9999
 
-    def _get_busy_count(self, machine):
+    def _get_busy_count(self, machine, client=None):
         try:
-            return int(self._machine_redis(machine).get(self._busy_key(machine)) or 0)
+            r = client or self._machine_redis(machine)
+            return int(r.get(self._busy_key(machine)) or 0)
         except Exception:
             return 9999
 
-    def _incr_busy(self, machine):
+    def _incr_busy(self, machine, client=None):
         try:
-            r = self._machine_redis(machine)
+            r = client or self._machine_redis(machine)
             key = self._busy_key(machine)
             val = r.incr(key)
             r.expire(key, 3600)
@@ -268,52 +274,68 @@ class JudgeLoadBalancer:
                 logger.warning('No healthy judge machines available, falling back to default queue')
                 return None
 
-            machine_loads = []
-            for machine in healthy_machines:
-                queue_length = self._get_queue_length(machine)
-                busy = self._get_busy_count(machine)
-                total_load = queue_length + busy
-                machine_loads.append((total_load, machine, queue_length, busy))
-                logger.debug(
-                    'Judge %s load: queue=%s, busy=%s, total=%s',
-                    machine['name'], queue_length, busy, total_load,
-                )
-
-            machine_loads.sort(key=lambda item: item[0])
-            min_load = machine_loads[0][0]
-            candidates = [item for item in machine_loads if item[0] == min_load]
-
-            if len(candidates) == 1:
-                _, selected, queue_length, busy = candidates[0]
-                reason = 'only lowest-load candidate'
-            else:
-                total_weight = sum(machine.get('weight', 1) for _, machine, _, _ in candidates)
-                threshold = random.uniform(0, total_weight)
-                running_weight = 0
-                selected, queue_length, busy = candidates[-1][1:]
-                for _, machine, candidate_queue_length, candidate_busy in candidates:
-                    running_weight += machine.get('weight', 1)
-                    if threshold <= running_weight:
-                        selected = machine
-                        queue_length = candidate_queue_length
-                        busy = candidate_busy
-                        break
-                reason = f'weighted among {len(candidates)} lowest-load candidates'
-
-            reserved_busy = self._incr_busy(selected)
+            # One connection per machine for the whole critical section.
+            # Against remote TLS judges each fresh connection is a handshake;
+            # opening several while holding the global lock serialises all
+            # concurrent submissions behind ~1-2 s of round trips.
+            clients = {
+                machine['name']: self._machine_redis(machine)
+                for machine in healthy_machines
+            }
             try:
-                self._set_submission_machine(submission_id, selected['name'])
-            except Exception:
-                self._decr_busy(selected)
-                raise
+                machine_loads = []
+                for machine in healthy_machines:
+                    client = clients[machine['name']]
+                    queue_length = self._get_queue_length(machine, client)
+                    busy = self._get_busy_count(machine, client)
+                    total_load = queue_length + busy
+                    machine_loads.append((total_load, machine, queue_length, busy))
+                    logger.debug(
+                        'Judge %s load: queue=%s, busy=%s, total=%s',
+                        machine['name'], queue_length, busy, total_load,
+                    )
 
-            logger.debug(
-                'Reserved judge machine %s for submission %s '
-                '(queue=%s, busy=%s, load=%s, reserved_busy=%s, %s)',
-                selected['name'], submission_id, queue_length, busy, min_load,
-                reserved_busy, reason,
-            )
-            return selected
+                machine_loads.sort(key=lambda item: item[0])
+                min_load = machine_loads[0][0]
+                candidates = [item for item in machine_loads if item[0] == min_load]
+
+                if len(candidates) == 1:
+                    _, selected, queue_length, busy = candidates[0]
+                    reason = 'only lowest-load candidate'
+                else:
+                    total_weight = sum(machine.get('weight', 1) for _, machine, _, _ in candidates)
+                    threshold = random.uniform(0, total_weight)
+                    running_weight = 0
+                    selected, queue_length, busy = candidates[-1][1:]
+                    for _, machine, candidate_queue_length, candidate_busy in candidates:
+                        running_weight += machine.get('weight', 1)
+                        if threshold <= running_weight:
+                            selected = machine
+                            queue_length = candidate_queue_length
+                            busy = candidate_busy
+                            break
+                    reason = f'weighted among {len(candidates)} lowest-load candidates'
+
+                reserved_busy = self._incr_busy(selected, clients[selected['name']])
+                try:
+                    self._set_submission_machine(submission_id, selected['name'])
+                except Exception:
+                    self._decr_busy(selected)
+                    raise
+
+                logger.debug(
+                    'Reserved judge machine %s for submission %s '
+                    '(queue=%s, busy=%s, load=%s, reserved_busy=%s, %s)',
+                    selected['name'], submission_id, queue_length, busy, min_load,
+                    reserved_busy, reason,
+                )
+                return selected
+            finally:
+                for client in clients.values():
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
     def select_machine(self):
         """Return the least-loaded machine without reserving capacity.

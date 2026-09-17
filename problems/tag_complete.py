@@ -30,7 +30,7 @@ from .tag_labels import (
 )
 
 TAGS_MAX_LEN = 200
-MAX_BATCH = 5000
+MAX_BATCH = 10000
 STATEMENT_CHARS = 3500
 VOCAB_MAX = 160
 
