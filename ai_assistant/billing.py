@@ -174,14 +174,24 @@ def get_or_create_customer(user, sub: Subscription | None = None) -> str:
             st.Customer.retrieve(sub.stripe_customer_id)
             return sub.stripe_customer_id
         except stripe.InvalidRequestError:
-            pass
+            # Customer was deleted out-of-band (admin panel / Stripe
+            # dashboard). Fall through and recreate one below.
+            logger.warning(
+                'Stripe customer %s stored for user %s is gone; recreating.',
+                sub.stripe_customer_id, user.id,
+            )
     customer = st.Customer.create(
         email=user.email or None,
         name=user.username,
         metadata={'user_id': str(user.id)},
     )
     sub.stripe_customer_id = customer.id
-    sub.save(update_fields=['stripe_customer_id', 'updated_at'])
+    # Subscriptions live and die with their customer: the old subscription id
+    # now points at a deleted resource and must not be reused.
+    sub.stripe_subscription_id = ''
+    sub.save(update_fields=[
+        'stripe_customer_id', 'stripe_subscription_id', 'updated_at',
+    ])
     return customer.id
 
 
@@ -256,7 +266,19 @@ def _apply_subscription(stripe_sub) -> Subscription | None:
     if local is None and customer_id:
         local = Subscription.objects.filter(stripe_customer_id=customer_id).first()
     if local is None and user_id:
-        local = Subscription.objects.filter(user_id=user_id).first()
+        # Only adopt a row that has no Stripe linkage yet. A row already bound
+        # to a *different* customer/subscription means this event belongs to a
+        # stale relationship — e.g. an admin-deleted customer whose events
+        # Stripe keeps redelivering (retries can span days) after the user
+        # repurchased under a new customer. Adopting it would overwrite the
+        # fresh subscription with deleted resource IDs.
+        candidate = Subscription.objects.filter(user_id=user_id).first()
+        if (
+            candidate is not None
+            and not candidate.stripe_customer_id
+            and not candidate.stripe_subscription_id
+        ):
+            local = candidate
     if local is None:
         logger.warning('No local user for Stripe subscription %s', sid)
         return None
@@ -265,7 +287,14 @@ def _apply_subscription(stripe_sub) -> Subscription | None:
     active = stripe_status in _ACTIVE_STATUSES
     local.stripe_subscription_id = sid
     if customer_id:
-        local.stripe_customer_id = customer_id
+        if not local.stripe_customer_id or local.stripe_customer_id == customer_id:
+            local.stripe_customer_id = customer_id
+        else:
+            logger.warning(
+                'Ignoring customer %s on Stripe subscription %s: local row '
+                'for user %s already bound to customer %s.',
+                customer_id, sid, local.user_id, local.stripe_customer_id,
+            )
     local.interval = interval
     local.current_period_start = _ts_to_dt(getattr(stripe_sub, 'current_period_start', None))
     local.current_period_end = _ts_to_dt(getattr(stripe_sub, 'current_period_end', None))
@@ -399,4 +428,32 @@ def handle_event(event) -> None:
         if local:
             local.status = Subscription.Status.CANCELED
             local.cancel_at_period_end = True
-            local.save(update_fields=['status', 'cancel_at_period_end', 'updated_at'])
+            # The subscription resource no longer exists on Stripe; drop the
+            # dead id so retried events stay idempotent and later API calls
+            # can never reference it.
+            local.stripe_subscription_id = ''
+            local.save(update_fields=[
+                'status', 'cancel_at_period_end',
+                'stripe_subscription_id', 'updated_at',
+            ])
+    elif event_type == 'customer.deleted':
+        # Emitted when a customer is deleted from the admin panel, the Stripe
+        # dashboard or the API. Their subscriptions are gone together with
+        # the customer, so purge every dangling reference locally — otherwise
+        # repurchasing would send Stripe an ID it no longer recognises.
+        cid = data_object.get('id') if isinstance(data_object, dict) else data_object.id
+        if cid:
+            updated = Subscription.objects.filter(
+                stripe_customer_id=cid
+            ).update(
+                stripe_customer_id='',
+                stripe_subscription_id='',
+                status=Subscription.Status.CANCELED,
+                cancel_at_period_end=True,
+                updated_at=datetime.now(dt_timezone.utc),
+            )
+            if updated:
+                logger.info(
+                    'Stripe customer %s deleted; purged linkage on %s local '
+                    'subscription(s).', cid, updated,
+                )

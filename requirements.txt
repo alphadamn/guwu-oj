@@ -40,3 +40,7 @@ argon2-cffi>=23.0.0
 # AI 解题 + Stripe 订阅支付
 openai>=2.0.0
 stripe>=15.0.0
+
+# WebSocket live judge-status push: served by Granian (--interface asgi),
+# same runtime as the main WSGI site. See oj_project/asgi.py and
+# deploy/systemd/guwu-oj-ws.service.

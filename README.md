@@ -18,6 +18,7 @@
   - 代码提交（支持 C、C++、Python、Java、JavaScript、Go、Rust、Ruby、Kotlin、Assembly）
   - 提交记录查看
   - 提交详情（代码、评测结果、运行时间、内存使用）
+  - 评测状态 WebSocket 实时推送（逐测试点刷新，失败自动降级为 HTTP 轮询）
 
 - 排行榜
   - 用户排名（按已解决题目数排序）
@@ -34,7 +35,8 @@
 - Bootstrap
 - PostgreSQL
 - Docker (用于沙箱评测环境)
-- Redis+RQ (缓存 + 任务队列)
+- Redis+RQ (缓存 + 任务队列 + pub/sub 状态推送)
+- Granian 双服务：WSGI 主站 + 独立 ASGI WebSocket 服务（不引入 Channels）
 
 ## 安装步骤
 
@@ -320,6 +322,60 @@ python verify_setup.py
 python manage.py test
 ```
 
+### 11. 启动 WebSocket 实时状态服务
+
+提交状态推送由独立的 ASGI 进程提供，必须与主站分别启动（共需运行：主站 + Redis + RQ worker + WebSocket 服务）。
+
+**开发环境**（主站仍可用 `runserver`，另开一个终端启动 ASGI 服务）：
+
+```bash
+granian oj_project.asgi:application \
+    --interface asgi \
+    --host 127.0.0.1 \
+    --port 8447 \
+    --workers 1
+```
+
+> 必须固定单 worker：consumer 在事件循环内缓存共享的 Redis 异步客户端（`submissions/ws.py`），多 worker 会破坏客户端缓存的一致性。
+
+**生产环境（systemd）**：单元文件位于 `deploy/systemd/guwu-oj-ws.service`，安装后启动：
+
+```bash
+cp deploy/systemd/guwu-oj-ws.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now guwu-oj-ws
+```
+
+nginx 需将 `location /ws/` 反代到 `127.0.0.1:8447`（Upgrade/Connection 头、关闭 buffering、读超时 3600s）。
+
+### 12. 启动完整服务（命令汇总）
+
+完整站点由三个常驻服务组成（另有 Redis/PostgreSQL 作为基础设施）：
+
+| 组件 | 作用 | systemd 单元 |
+|------|------|-------------|
+| 主站 | Django（Granian WSGI，Unix socket） | `guwu-oj.service` |
+| WebSocket | 提交状态 ASGI 推送（127.0.0.1:8447） | `guwu-oj-ws.service`（见 `deploy/systemd/`） |
+| 判题 Worker | RQ 异步评测 | `guwu-oj-judge-worker.service`（见 `deploy/systemd/`） |
+
+```bash
+# 生产环境：一次性启动/重启全部应用服务
+systemctl start guwu-oj guwu-oj-ws guwu-oj-judge-worker
+systemctl restart guwu-oj guwu-oj-ws guwu-oj-judge-worker
+systemctl status guwu-oj guwu-oj-ws guwu-oj-judge-worker
+
+# 开发环境：分别在三个终端运行
+python manage.py runserver                          # 主站
+python manage.py rqworker default high low         # 判题 worker（macOS 需加 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES）
+granian oj_project.asgi:application --interface asgi --host 127.0.0.1 --port 8447 --workers 1
+```
+
+修改后端代码后，WSGI 主站与 ASGI WebSocket 服务都需要重启：
+
+```bash
+systemctl restart guwu-oj guwu-oj-ws
+```
+
 
 ## 项目结构
 
@@ -332,7 +388,8 @@ guwu-oj/
 │   ├── __init__.py
 │   ├── settings.py          # 项目设置
 │   ├── urls.py              # 主 URL 配置
-│   └── wsgi.py              # WSGI 配置
+│   ├── wsgi.py              # WSGI 配置（主站）
+│   └── asgi.py              # ASGI 配置（WebSocket 服务）
 ├── users/                   # 用户应用
 │   ├── __init__.py
 │   ├── apps.py
@@ -354,6 +411,9 @@ guwu-oj/
 │   ├── models.py            # 提交模型
 │   ├── views.py             # 提交视图
 │   ├── urls.py              # 提交 URL
+│   ├── ws.py                # WebSocket ASGI consumer
+│   ├── realtime.py          # Redis pub/sub 与状态载荷构建
+│   ├── signals.py           # post_save 触发推送
 │   └── admin.py             # 提交管理后台
 ├── templates/               # 模板文件
 │   ├── base.html            # 基础模板
@@ -408,6 +468,20 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 - 支持多个优先级队列 (default, high, low)
 - 评测结果自动更新到数据库
 - 支持任务失败重试和错误日志记录
+
+### 提交状态实时推送（WebSocket）
+
+提交详情页的评测进度通过 WebSocket 毫秒级推送，取代旧的 long polling 轮询。实现上不引入 Channels/Twisted，而是用 Granian（`--interface asgi`）跑一个独立的 ASGI 服务（`guwu-oj-ws.service`，仅监听 `127.0.0.1:8447`，单 worker），主站的 Granian WSGI 服务完全不动。
+
+- **端点**：`/ws/submissions/<id>/status/`，由 `oj_project/asgi.py` 路由到 `submissions/ws.py` 的原生 ASGI consumer；其余 HTTP 路径回落 Django ASGI。
+- **鉴权**：复用 Django session cookie（与普通页面同源），仅提交者本人或 staff 可连接。握手前拒绝返回 HTTP 403，关闭码 `4401`（未登录）/ `4403`（无权访问）/ `4404`（未知路由）。
+- **推送链路**：判题进程保存测试点/终态 → `submissions/signals.py` 中 `Submission` 与 `SubmissionTestResult` 的 `post_save` 信号 → `submissions/realtime.py` 经 django-redis `PUBLISH` 到频道 `oj:submission:<id>` → ASGI 服务订阅后重新查库并推送 JSON 快照。消息本身不带数据，避免泄露隐藏测试用例。
+- **多 Redis 订阅**：consumer 同时订阅本机缓存 Redis 和所有启用判题机的 Redis（远程 worker 在其队列所在实例上发布；Redis pub/sub 不区分 db），不可达的判题机不阻塞首包，监听器断线 2 秒自动重连。
+- **兜底机制**：除 pub/sub 外，consumer 每 5 秒轮询一次数据库（watchdog），防止漏消息或远程判题机未同步信号代码；另含 30 秒应用层 ping 与 0.25 秒取数合并；评测到达终态后服务端主动关闭连接。
+- **载荷兼容**：WebSocket 推送与 HTTP 轮询接口 `/submissions/api/<id>/status/` 共用 `realtime.build_submission_status_payload`，JSON 结构完全一致。
+- **前端降级**（`static/js/submission-detail.js`）：优先连 WebSocket（25 秒心跳），遇到 4401/4403/4404 或连续重连 3 次失败，自动降级为 800ms 间隔的 HTTP 轮询，旧接口保留可用。
+- **nginx**：`location /ws/` 反代到 `127.0.0.1:8447`（`Upgrade`/`Connection` 头、`proxy_buffering off`、`proxy_read_timeout 3600s`）。经 CDN 访问时需在 CDN 控制台确认开通 WebSocket（否则前端自动降级轮询）。
+- **远程判题机**：需手动同步信号相关代码并 restart worker 才能获得毫秒级推送；在此之前由 5 秒 watchdog 兜底，状态最迟约 5 秒更新。
 
 ### 缓存策略
 

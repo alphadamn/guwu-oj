@@ -141,33 +141,9 @@ def submission_status_api(request, submission_id):
     if submission.user_id != request.user.id and not request.user.is_staff:
         raise Http404('Submission not found')
 
-    test_results = list(submission.test_results.order_by('case_index'))
-    # print(test_results[0].runtime)
-    passed_count = sum(1 for r in test_results if r.status == 'Accepted')
-    problem = submission.effective_problem
-    total_cases = problem.test_cases.count() if problem else 0
-    judging = (
-        submission.status == 'Pending'
-        and submission.language in JUDGED_LANGUAGES
-        and total_cases > 0
-    )
-
-    return JsonResponse({
-        'status': submission.status,
-        'runtime': str(submission.runtime),
-        'memory': submission.memory,
-        'passed_count': passed_count,
-        'total_cases': max(total_cases, len(test_results)),
-        'done': not judging,
-        'test_results': [
-            {
-                'case_index': r.case_index,
-                'status': r.status,
-                'runtime': str(r.runtime),
-            }
-            for r in test_results
-        ],
-    })
+    # Payload is shared with the WebSocket push channel.
+    from .realtime import build_submission_status_payload
+    return JsonResponse(build_submission_status_payload(submission))
 
 
 @never_cache

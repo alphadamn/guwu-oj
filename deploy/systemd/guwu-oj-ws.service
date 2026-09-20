@@ -1,0 +1,36 @@
+[Unit]
+Description=Guwu OJ WebSocket live-status service (Granian ASGI)
+After=network.target postgresql.service redis.service guwu-oj.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/www/wwwroot/guwu-oj
+Environment="PATH=/www/wwwroot/guwu-oj/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DJANGO_SETTINGS_MODULE=oj_project.settings"
+# .env (Redis/DB credentials) is read by settings.load_dotenv(); localhost
+# only — nginx proxies /ws/ to this port, nothing external binds it.
+# Granian ASGI: --ws is enabled by default. One worker keeps the per-loop
+# Redis client cache (submissions/ws.py:_endpoints) coherent.
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/granian oj_project.asgi:application \
+    --interface asgi \
+    --host 127.0.0.1 \
+    --port 8447 \
+    --workers 1 \
+    --no-access-log \
+    --log-level info
+
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=2
+
+# One async Granian worker; normal RSS is well below 200 MB.
+MemoryHigh=300M
+MemoryMax=500M
+
+[Install]
+WantedBy=multi-user.target

@@ -9,8 +9,13 @@
     .handbook-layout {
         grid-template-columns: 1fr;
     }
-    .handbook-sidebar {
+    .handbook-layout > .handbook-sidebar {
+        order: 2;
         position: static !important;
+        max-height: 40vh;
+    }
+    .handbook-layout > article {
+        order: 1;
     }
 }
 

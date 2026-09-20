@@ -10,7 +10,8 @@
 {% block content %}
 <div id="submission-detail-root"
      data-poll="{% if should_poll %}true{% else %}false{% endif %}"
-     data-status-url="{% url 'submission_status_api' submission.id %}">
+     data-status-url="{% url 'submission_status_api' submission.id %}"
+     data-ws-url="/ws/submissions/{{ submission.id }}/status/">
 <div class="card">
     <div class="card-header bg-primary text-white">
         <h5 class="mb-0">
@@ -128,6 +129,6 @@
 
 {% block extra_js %}
 {% if should_poll %}
-<script src="{% static 'js/submission-detail.js' %}"></script>
+<script src="{% static 'js/submission-detail.js' %}?v=20260918"></script>
 {% endif %}
 {% endblock %}

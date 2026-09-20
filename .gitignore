@@ -43,3 +43,7 @@ scripts/.cache/
 tests/test_problem_tags.py
 .well-known/
 logs/
+ojdb_2026-09-16/
+main.java
+ac.cpp
+backup.sh
