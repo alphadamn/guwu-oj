@@ -117,7 +117,7 @@ python manage.py runserver
 gunicorn oj_project.wsgi --bind 0.0.0.0:8000
 ```
 访问 http://127.0.0.1:8000 查看网站。
-#### 或使用systemd（参考，下游nginx反代）
+#### 或使用systemd（参考，nginx反代的上游）
 ```
 [Unit]
 Description=Guwu Online Judge (Granian WSGI over Unix domain socket)
@@ -477,11 +477,11 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 - **鉴权**：复用 Django session cookie（与普通页面同源），仅提交者本人或 staff 可连接。握手前拒绝返回 HTTP 403，关闭码 `4401`（未登录）/ `4403`（无权访问）/ `4404`（未知路由）。
 - **推送链路**：判题进程保存测试点/终态 → `submissions/signals.py` 中 `Submission` 与 `SubmissionTestResult` 的 `post_save` 信号 → `submissions/realtime.py` 经 django-redis `PUBLISH` 到频道 `oj:submission:<id>` → ASGI 服务订阅后重新查库并推送 JSON 快照。消息本身不带数据，避免泄露隐藏测试用例。
 - **多 Redis 订阅**：consumer 同时订阅本机缓存 Redis 和所有启用判题机的 Redis（远程 worker 在其队列所在实例上发布；Redis pub/sub 不区分 db），不可达的判题机不阻塞首包，监听器断线 2 秒自动重连。
-- **兜底机制**：除 pub/sub 外，consumer 每 5 秒轮询一次数据库（watchdog），防止漏消息或远程判题机未同步信号代码；另含 30 秒应用层 ping 与 0.25 秒取数合并；评测到达终态后服务端主动关闭连接。
+- **兜底机制**：除 pub/sub 外，consumer 每 5 秒轮询一次数据库（watchdog polling），防止漏消息或远程判题机未同步信号代码；另含 30 秒应用层 ping 与 0.25 秒取数合并；评测到达终态后服务端主动关闭连接。
 - **载荷兼容**：WebSocket 推送与 HTTP 轮询接口 `/submissions/api/<id>/status/` 共用 `realtime.build_submission_status_payload`，JSON 结构完全一致。
 - **前端降级**（`static/js/submission-detail.js`）：优先连 WebSocket（25 秒心跳），遇到 4401/4403/4404 或连续重连 3 次失败，自动降级为 800ms 间隔的 HTTP 轮询，旧接口保留可用。
 - **nginx**：`location /ws/` 反代到 `127.0.0.1:8447`（`Upgrade`/`Connection` 头、`proxy_buffering off`、`proxy_read_timeout 3600s`）。经 CDN 访问时需在 CDN 控制台确认开通 WebSocket（否则前端自动降级轮询）。
-- **远程判题机**：需手动同步信号相关代码并 restart worker 才能获得毫秒级推送；在此之前由 5 秒 watchdog 兜底，状态最迟约 5 秒更新。
+- **远程判题机**：需手动同步信号相关代码并 restart worker 才能获得毫秒级推送；在此之前由 5 秒 polling 兜底，状态最迟约 5 秒更新。
 
 ### 缓存策略
 
