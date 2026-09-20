@@ -62,50 +62,89 @@
         progressEl?.classList.add('d-none');
         testContainer.classList.remove('d-none');
 
-        const html = results.map((r) => {
+        // Build nodes instead of interpolating server data into innerHTML,
+        // so a malicious payload (status/runtime/case_index) can never be
+        // interpreted as HTML (js/xss).
+        const pointsEl = testContainer.querySelector('.case-points');
+        pointsEl.replaceChildren();
+
+        results.forEach((r) => {
             const badge = CASE_BADGE[r.status] || {
                 cls: 'case-Skipped',
                 label: `#${r.case_index}`,
             };
-            const runtimeHtml = r.runtime && r.runtime !== 'None'
-                ? `<span class="case-runtime">${r.runtime} ms</span>`
-                : '';
-            return `
-                <div class="case-point">
-                    <span class="badge case-badge ${badge.cls}" title="${r.status}">${badge.label}</span>
-                    <span class="case-label">#${r.case_index}</span>
-                    ${runtimeHtml}
-                </div>`;
-        }).join('');
+            const row = document.createElement('div');
+            row.className = 'case-point';
 
-        testContainer.querySelector('.case-points').innerHTML = html;
+            const badgeEl = document.createElement('span');
+            badgeEl.className = `badge case-badge ${badge.cls}`;
+            badgeEl.title = r.status;
+            badgeEl.textContent = badge.label;
+
+            const labelEl = document.createElement('span');
+            labelEl.className = 'case-label';
+            labelEl.textContent = `#${r.case_index}`;
+
+            row.appendChild(badgeEl);
+            row.appendChild(labelEl);
+
+            if (r.runtime && r.runtime !== 'None') {
+                const runtimeEl = document.createElement('span');
+                runtimeEl.className = 'case-runtime';
+                runtimeEl.textContent = `${r.runtime} ms`;
+                row.appendChild(runtimeEl);
+            }
+            pointsEl.appendChild(row);
+        });
     }
 
     function updateSummary(data) {
         if (!summaryEl) {
             return;
         }
-        let html = '';
+        // All dynamic values go through text nodes; no innerHTML with data.
+        summaryEl.replaceChildren();
+
         if (data.test_results.length || data.total_cases) {
-            html += `<p class="mb-1">测试点: <strong>${data.passed_count}/${data.total_cases}</strong> 通过</p>`;
+            const p = document.createElement('p');
+            p.className = 'mb-1';
+            p.appendChild(document.createTextNode('测试点: '));
+            const strong = document.createElement('strong');
+            strong.textContent = `${data.passed_count}/${data.total_cases}`;
+            p.appendChild(strong);
+            p.appendChild(document.createTextNode(' 通过'));
+            summaryEl.appendChild(p);
         }
         if (data.runtime != null && data.runtime !== 'None') {
-            html += `<p class="mb-0">最大运行时间: ${data.runtime} ms</p>`;
+            const p = document.createElement('p');
+            p.className = 'mb-0';
+            p.textContent = `最大运行时间: ${data.runtime} ms`;
+            summaryEl.appendChild(p);
         }
         if (data.memory != null) {
-            html += `<p class="mb-0">内存使用: ${data.memory} KB</p>`;
+            const p = document.createElement('p');
+            p.className = 'mb-0';
+            p.textContent = `内存使用: ${data.memory} KB`;
+            summaryEl.appendChild(p);
         }
-        summaryEl.innerHTML = html;
     }
 
     let finished = false;
 
     function applyPayload(data) {
         if (statusEl) {
-            statusEl.innerHTML = data.done ? data.status : (
-                '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>'
-                + data.status
-            );
+            // textContent / createTextNode keep data.status as plain text.
+            statusEl.replaceChildren();
+            if (data.done) {
+                statusEl.textContent = data.status;
+            } else {
+                const spinner = document.createElement('span');
+                spinner.className = 'spinner-border spinner-border-sm me-2';
+                spinner.setAttribute('role', 'status');
+                spinner.setAttribute('aria-hidden', 'true');
+                statusEl.appendChild(spinner);
+                statusEl.appendChild(document.createTextNode(data.status));
+            }
             applyStatusClass(statusEl, data.status);
         }
         updateSummary(data);
