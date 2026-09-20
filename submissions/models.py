@@ -35,7 +35,24 @@ class Submission(models.Model):
         ('Compile Error', 'Compile Error'),
         ('System Error', 'System Error'),
     ]
-    
+
+    # Lifecycle state machine (target architecture, Phase 2). This is
+    # deliberately separate from ``status`` above, which carries the judge
+    # verdict the frontend API contract depends on.
+    STATE_PENDING = 'PENDING'   # created, not (yet) dispatched
+    STATE_QUEUED = 'QUEUED'     # job sits on a broker, unclaimed
+    STATE_JUDGING = 'JUDGING'   # claimed by a worker; heartbeat fresh
+    STATE_DONE = 'DONE'         # terminal verdict written by the claim owner
+    STATE_FAILED = 'FAILED'     # terminal: retries exhausted / infra failure
+    JUDGE_STATE_CHOICES = [
+        (STATE_PENDING, 'Pending'),
+        (STATE_QUEUED, 'Queued'),
+        (STATE_JUDGING, 'Judging'),
+        (STATE_DONE, 'Done'),
+        (STATE_FAILED, 'Failed'),
+    ]
+    TERMINAL_JUDGE_STATES = (STATE_DONE, STATE_FAILED)
+
     problem = models.ForeignKey(Problem, null=True, blank=True, on_delete=models.CASCADE, related_name='submissions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='submissions')
     contest_problem = models.ForeignKey(
@@ -48,11 +65,29 @@ class Submission(models.Model):
     runtime = models.IntegerField(blank=True, null=True)  # in milliseconds
     memory = models.IntegerField(blank=True, null=True)  # in KB
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
+    # ── Atomic claim / lease bookkeeping (Phase 2) ───────────────────────
+    judge_state = models.CharField(
+        max_length=10, choices=JUDGE_STATE_CHOICES,
+        default=STATE_PENDING, db_index=True,
+    )
+    worker_id = models.CharField(max_length=128, blank=True, default='')
+    claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = '提交记录'
         verbose_name_plural = '提交记录'
+        indexes = [
+            # Reaper hot path: find live claims whose lease has expired.
+            models.Index(
+                fields=['judge_state', 'heartbeat_at'],
+                name='subm_judgestate_hb_idx',
+            ),
+        ]
 
     @property
     def effective_problem(self):
@@ -76,7 +111,12 @@ class Submission(models.Model):
         super().save(*args, **kwargs)
         if not self.problem_id:
             return
-        cache.delete(f'problem_pass_rate_{self.problem_id}')
+        # Cache invalidation must never break the write itself (a cache
+        # outage would otherwise turn every submission save into a 500).
+        try:
+            cache.delete(f'problem_pass_rate_{self.problem_id}')
+        except Exception:
+            pass
         try:
             from django_redis import get_redis_connection
             redis_conn = get_redis_connection('default')

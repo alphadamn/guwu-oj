@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from dotenv import load_dotenv
 
@@ -303,6 +303,40 @@ def _redis_url(host, port, db, password='', tls=False, ca_cert_path=''):
     return url
 
 
+def _parse_redis_broker_url(url):
+    """Parse a ``redis://`` / ``rediss://`` broker URL into a machine dict.
+
+    The returned dict has the same shape as one ``JUDGE_MACHINES_JSON`` item
+    (host/port/db/password/tls/ca_cert_path/...), so it can be fed directly
+    into ``_rq_queue_entry`` and ``_rq_machine_connection``. TLS query params
+    follow redis-py naming: ``ssl_ca_certs``, ``ssl_certfile``, ``ssl_keyfile``.
+    Credentials stay in the environment file, never in logs.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ('redis', 'rediss'):
+        raise ValueError('JUDGE_BROKER_URL must use the redis:// or rediss:// scheme')
+    if not parsed.hostname:
+        raise ValueError('JUDGE_BROKER_URL requires a host')
+
+    machine = {
+        'host': parsed.hostname,
+        'port': parsed.port or 6379,
+        'db': int((parsed.path or '/0').lstrip('/') or 0),
+        'password': unquote(parsed.password) if parsed.password else '',
+        'tls': parsed.scheme == 'rediss',
+    }
+    query = parse_qs(parsed.query)
+    for url_key, machine_key in (
+        ('ssl_ca_certs', 'ca_cert_path'),
+        ('ssl_certfile', 'client_cert_path'),
+        ('ssl_keyfile', 'client_key_path'),
+    ):
+        value = query.get(url_key, [''])[0].strip()
+        if value:
+            machine[machine_key] = value
+    return machine
+
+
 def _rq_redis_kwargs():
     return _rq_machine_connection({})
 
@@ -412,6 +446,39 @@ if not DEMO_MODE:
     # How many submissions one judge worker process runs in parallel (threads).
     OJ_JUDGE_CONCURRENCY = int(os.environ.get('OJ_JUDGE_CONCURRENCY', '4'))
 
+    # ── Central judge broker (target architecture, Phase 1) ─────────────
+    # JUDGE_BROKER_URL is an optional redis:// / rediss:// URL pointing at the
+    # single central broker every judge worker pulls from. When set it
+    # overrides RQ_REDIS_* for (a) the worker's own queue registration and
+    # (b) the central judge lanes below — the legacy per-machine dispatch
+    # path keeps using RQ_REDIS_* / JUDGE_MACHINES_*, so flipping
+    # OJ_CENTRAL_QUEUE off restores the previous behaviour exactly.
+    # Without JUDGE_BROKER_URL the central lanes run on the default RQ Redis
+    # (on the web host this already is the central broker).
+    central_broker = None
+    broker_url = os.environ.get('JUDGE_BROKER_URL', '').strip()
+    if broker_url:
+        central_broker = _parse_redis_broker_url(broker_url)
+    OJ_CENTRAL_QUEUE = _env_enabled('OJ_CENTRAL_QUEUE', False)
+    OJ_CENTRAL_QUEUE_NAME = os.environ.get('OJ_CENTRAL_QUEUE_NAME', 'judge:queue')
+
+    # Phase 2 claim/lease: stable worker identity (defaults to hostname) and
+    # the heartbeat cadence; the reaper reaps claims silent for ~5 min.
+    OJ_WORKER_ID = os.environ.get('OJ_WORKER_ID', '').strip()
+    OJ_JUDGE_HEARTBEAT_SECS = int(os.environ.get('OJ_JUDGE_HEARTBEAT_SECS', '15'))
+    OJ_JUDGE_LEASE_TIMEOUT_SECS = int(
+        os.environ.get('OJ_JUDGE_LEASE_TIMEOUT_SECS', '300')
+    )
+
+    # Phase 3 DB-less workers: claim/heartbeat over HTTP, results over the
+    # central Redis result list. JUDGE_INTERNAL_TOKEN authenticates worker
+    # calls to the internal API; JUDGE_API_BASE is the web origin workers
+    # call (workers only).
+    JUDGE_INTERNAL_TOKEN = os.environ.get('JUDGE_INTERNAL_TOKEN', '').strip()
+    JUDGE_API_BASE = os.environ.get('JUDGE_API_BASE', '').rstrip('/')
+    OJ_WORKER_DBLESS = _env_enabled('OJ_WORKER_DBLESS', False)
+    OJ_RESULT_QUEUE_NAME = os.environ.get('OJ_RESULT_QUEUE_NAME', 'judge:result')
+
     # Judge-priority lanes consumed by the rqworker command, in drain order:
     # {base}-pro > {base}-plus > {base} (free users) > {base}-ai. django-rq
     # resolves every CLI queue name through RQ_QUEUES and raises KeyError for
@@ -420,16 +487,22 @@ if not DEMO_MODE:
 
     # A judge host normally has credentials only for its own local Redis endpoint.
     # Register that queue and its priority lanes even when its web-side
-    # JUDGE_MACHINES_JSON lives solely on the web host.
+    # JUDGE_MACHINES_JSON lives solely on the web host. Workers pointing at
+    # the central broker via JUDGE_BROKER_URL consume that instead.
     if OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE:
+        worker_machine = central_broker or default_rq_machine
         for _suffix in JUDGE_PRIORITY_SUFFIXES:
-            RQ_QUEUES[f'{OJ_JUDGE_QUEUE}{_suffix}'] = _rq_queue_entry(default_rq_machine)
+            RQ_QUEUES[f'{OJ_JUDGE_QUEUE}{_suffix}'] = _rq_queue_entry(worker_machine)
 
     if not (OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE):
         for machine in JUDGE_MACHINES:
             if machine.get('enabled', True):
                 for _suffix in JUDGE_PRIORITY_SUFFIXES:
                     RQ_QUEUES[f'{machine["queue"]}{_suffix}'] = _rq_queue_entry(machine)
+        if OJ_CENTRAL_QUEUE:
+            central_machine = central_broker or default_rq_machine
+            for _suffix in JUDGE_PRIORITY_SUFFIXES:
+                RQ_QUEUES[f'{OJ_CENTRAL_QUEUE_NAME}{_suffix}'] = _rq_queue_entry(central_machine)
 
     RQ = {
         # Pin enqueue timing explicitly rather than relying on the default,
@@ -456,7 +529,16 @@ else:
     RQ_QUEUES = {}
     JUDGE_MACHINES = []
     OJ_MULTI_JUDGE_ENABLED = False
+    OJ_CENTRAL_QUEUE = False
+    OJ_CENTRAL_QUEUE_NAME = 'judge:queue'
     OJ_JUDGE_QUEUE = ''
+    OJ_WORKER_ID = ''
+    OJ_JUDGE_HEARTBEAT_SECS = 15
+    OJ_JUDGE_LEASE_TIMEOUT_SECS = 300
+    JUDGE_INTERNAL_TOKEN = ''
+    JUDGE_API_BASE = ''
+    OJ_WORKER_DBLESS = False
+    OJ_RESULT_QUEUE_NAME = 'judge:result'
 
 if DEMO_MODE:
     DATABASES = {
@@ -466,24 +548,38 @@ if DEMO_MODE:
         }
     }
 else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('DB_NAME', 'ojdb'),
-            'USER': os.environ.get('DB_USER', 'ojuser'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-            'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
-            'PORT': os.environ.get('DB_PORT', '5432'),
-            'OPTIONS': {
-                'sslmode': os.environ.get('DB_SSLMODE', 'require'),
-                **(
-                    {'sslrootcert': os.environ['DB_SSLROOTCERT']}
-                    if os.environ.get('DB_SSLROOTCERT')
-                    else {}
-                ),
-            },
+    if OJ_ROLE == 'worker' and OJ_WORKER_DBLESS:
+        # Phase 3 DB-less judge worker: it never touches PostgreSQL (claims
+        # and results go through HTTP / the result queue). Give Django a
+        # inert sqlite database so framework/bootstrap code that resolves the
+        # default connection still imports cleanly; the dbless task path
+        # never queries it. The PostgreSQL credentials are deliberately
+        # absent from the deployment environment in this mode.
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': '/tmp/oj-dbless-dummy.sqlite3',
+            }
         }
-    }
+    else:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': os.environ.get('DB_NAME', 'ojdb'),
+                'USER': os.environ.get('DB_USER', 'ojuser'),
+                'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+                'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
+                'PORT': os.environ.get('DB_PORT', '5432'),
+                'OPTIONS': {
+                    'sslmode': os.environ.get('DB_SSLMODE', 'require'),
+                    **(
+                        {'sslrootcert': os.environ['DB_SSLROOTCERT']}
+                        if os.environ.get('DB_SSLROOTCERT')
+                        else {}
+                    ),
+                },
+            }
+        }
 
 # Hostname presented to libpq for TLS certificate verification by the
 # ``pg_dump``/``psql`` CLI used for admin database backup and restore.

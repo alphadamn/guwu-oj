@@ -41,14 +41,22 @@ def build_submission_status_payload(submission):
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
     problem = submission.effective_problem
     total_cases = problem.test_cases.count() if problem else 0
-    judging = (
-        submission.status == 'Pending'
-        and submission.language in JUDGED_LANGUAGES
-        and total_cases > 0
-    )
+    # Lifecycle authority (Phase 2); the verdict-based heuristic below stays
+    # as a defensive fallback for rows that predate the migration.
+    judge_state = getattr(submission, 'judge_state', None)
+    if judge_state is not None:
+        judging = judge_state not in ('DONE', 'FAILED')
+    else:
+        judging = (
+            submission.status == 'Pending'
+            and submission.language in JUDGED_LANGUAGES
+            and total_cases > 0
+        )
 
     return {
         'status': submission.status,
+        'judge_state': judge_state,
+        'worker_id': getattr(submission, 'worker_id', '') or '',
         'runtime': str(submission.runtime),
         'memory': submission.memory,
         'passed_count': passed_count,

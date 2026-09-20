@@ -1,0 +1,17 @@
+[Unit]
+Description=Guwu OJ judge result consumer (persists DB-less worker outcomes)
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/guwu-oj
+EnvironmentFile=/www/wwwroot/guwu-oj/.env
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/python manage.py consume_judge_results
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

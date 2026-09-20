@@ -44,9 +44,9 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
 
 from . import container_pool
+from .claiming import ClaimLostError, finalize_claim
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
     DockerNotAvailableError,
@@ -151,7 +151,7 @@ class SandboxRunner:
     """
 
     def __init__(self, work_dir, time_limit_ms, memory_limit_mb, image,
-                 pool_handle=None, exec_workdir=None):
+                 pool_handle=None, exec_workdir=None, global_timeout_sec=None):
         self.work_dir = work_dir
         self.time_limit_sec = max(float(time_limit_ms) / 1000.0, 0.1)
         self.memory_limit_mb = max(int(memory_limit_mb), 32)
@@ -162,7 +162,9 @@ class SandboxRunner:
         self.exec_workdir = exec_workdir
         self.last_memory_kb = None
         self._container = None
-        self._global_timeout_sec = None  # loaded lazily
+        # Explicit override (DB-less workers receive it in the claim bundle);
+        # lazily read from JudgeConfig/cache when None.
+        self._global_timeout_sec = global_timeout_sec
 
     # ── context manager ──────────────────────────────────────────────────
     def chown_rec(self, path, user, group):
@@ -190,8 +192,10 @@ class SandboxRunner:
                 image=self.image,
                 is_compile=True,
             ).__enter__()
-        # Read JudgeConfig.global_timeout_sec (cached) once per submission.
-        self._global_timeout_sec = _get_judge_config_global_timeout()
+        # Read JudgeConfig.global_timeout_sec (cached) once per submission
+        # unless an explicit override was provided (DB-less workers).
+        if self._global_timeout_sec is None:
+            self._global_timeout_sec = _get_judge_config_global_timeout()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -451,58 +455,118 @@ class SandboxRunner:
 
 def save_case_result(submission, tc, case_index, status, runtime,
                      actual, expected, error_message=""):
-    result_kwargs = {'test_case': tc} if submission.contest_problem_id is None else {'contest_test_case': tc}
-    SubmissionTestResult.objects.create(
+    """Persist one per-case verdict, idempotent on (submission, case_index).
+
+    Duplicate delivery inside the same claim therefore collapses onto the
+    same row instead of violating the unique constraint.
+    """
+    relation_field = (
+        'contest_test_case' if submission.contest_problem_id is not None
+        else 'test_case'
+    )
+    SubmissionTestResult.objects.update_or_create(
         submission=submission,
         case_index=case_index,
-        **result_kwargs,
-        status=status,
-        runtime=runtime,
-        actual_output=truncate_text(actual),
-        expected_output="",
-        error_message=truncate_text(error_message, 2000),
+        defaults={
+            relation_field: tc,
+            'status': status,
+            'runtime': runtime,
+            'actual_output': truncate_text(actual),
+            'expected_output': '',
+            'error_message': truncate_text(error_message, 2000),
+        },
     )
 
 
+def commit_verdict(submission, verdict, claim, runtime=None, memory=None,
+                   failed=False):
+    """Write the terminal verdict through the claim fence.
+
+    With an active claim the UPDATE is conditional on (token, JUDGING); a
+    stale worker that lost its lease raises :class:`ClaimLostError` and its
+    side effects never run. Without a claim (legacy direct calls, e.g.
+    unit tests) the plain ORM write path is preserved.
+    """
+    if claim is None:
+        submission.status = verdict
+        if runtime is not None:
+            submission.runtime = runtime
+        if memory is not None:
+            submission.memory = memory
+        fields = ['status']
+        if runtime is not None:
+            fields.append('runtime')
+        if memory is not None:
+            fields.append('memory')
+        submission.save(update_fields=fields)
+        return
+
+    won = finalize_claim(
+        submission.id, claim.token, verdict,
+        runtime=runtime, memory=memory, failed=failed,
+    )
+    if not won:
+        raise ClaimLostError(
+            f'fenced verdict write rejected for submission {submission.id} '
+            f'(token {claim.token})'
+        )
+    submission.status = verdict
+    submission.judge_state = 'FAILED' if failed else 'DONE'
+    if runtime is not None:
+        submission.runtime = runtime
+    if memory is not None:
+        submission.memory = memory
+
+
 def finalize_submission(submission, case_results, max_runtime,
-                        max_memory_kb, problem):
-    submission.runtime = max_runtime or 0
-    submission.memory = max_memory_kb or None
+                        max_memory_kb, problem, claim=None):
+    verdict = 'Accepted'
     for status in case_results:
         if status != "Accepted":
-            submission.status = status
-            submission.save(update_fields=["status", "runtime", "memory"])
-            return
+            verdict = status
+            break
 
-    with transaction.atomic():
-        submission.status = "Accepted"
-        submission.save(update_fields=["status", "runtime", "memory"])
-        if submission.contest_problem_id is None:
-            submission.user.solved_problems.add(problem)
-            from points.models import PointConfig
-            from points.services import apply_points
+    if verdict != 'Accepted':
+        commit_verdict(
+            submission, verdict, claim,
+            runtime=max_runtime or 0, memory=max_memory_kb or None,
+        )
+        return
 
-            reward_points = PointConfig.get_solo().accepted_testcase_points
-            if reward_points:
-                for result in submission.test_results.filter(status='Accepted').select_related('test_case'):
-                    if result.test_case_id and not result.test_case.is_sample:
-                        apply_points(
-                            user_id=submission.user_id,
-                            amount=reward_points,
-                            event_type='accepted_testcase',
-                            event_key=f'{problem.id}:{result.test_case_id}',
-                            description=f'首次通过 {problem.title} 的测试点 #{result.case_index}',
-                        )
+    commit_verdict(
+        submission, 'Accepted', claim,
+        runtime=max_runtime or 0, memory=max_memory_kb or None,
+    )
+
+    # Side effects run only after the fenced write won; both are
+    # intrinsically idempotent (M2M add, and apply_points keyed on
+    # (user, event_type, event_key)), so a re-judged Accepted stays a
+    # single credit.
+    if submission.contest_problem_id is None:
+        submission.user.solved_problems.add(problem)
+        from points.models import PointConfig
+        from points.services import apply_points
+
+        reward_points = PointConfig.get_solo().accepted_testcase_points
+        if reward_points:
+            for result in submission.test_results.filter(status='Accepted').select_related('test_case'):
+                if result.test_case_id and not result.test_case.is_sample:
+                    apply_points(
+                        user_id=submission.user_id,
+                        amount=reward_points,
+                        event_type='accepted_testcase',
+                        event_key=f'{problem.id}:{result.test_case_id}',
+                        description=f'首次通过 {problem.title} 的测试点 #{result.case_index}',
+                    )
 
 
-def save_compile_error(submission, test_case, error_message):
+def save_compile_error(submission, test_case, error_message, claim=None):
     """Persist compiler output as the first-case diagnostic for a submission."""
-    submission.status = "Compile Error"
-    submission.save(update_fields=["status"])
     save_case_result(
         submission, test_case, 1, "Skipped", None,
         error_message, test_case.expected_output, error_message,
     )
+    commit_verdict(submission, "Compile Error", claim)
     return submission
 
 
@@ -520,29 +584,32 @@ def _case_status_from_error(error, actual, expected):
 
 # ── main entry point ─────────────────────────────────────────────────────
 
-def judge_submission(submission_id):
+def judge_submission(submission_id, claim=None):
     submission = Submission.objects.select_related("problem", "contest_problem", "user").get(
         id=submission_id
     )
     problem = submission.effective_problem
+    # Fresh attempt: the claim winner owns the row, so removing the
+    # previous attempt's partial case rows is safe.
     SubmissionTestResult.objects.filter(submission=submission).delete()
 
+    def _permanent_system_error(reason):
+        logger.error('Submission %s -> System Error: %s', submission_id, reason)
+        commit_verdict(submission, "System Error", claim, runtime=0)
+
     if problem is None:
-        submission.status = "System Error"
-        submission.save(update_fields=["status"])
+        _permanent_system_error('no judging target')
         return submission
 
     if submission.language not in JUDGED_LANGUAGES:
-        submission.status = "System Error"
-        submission.save(update_fields=["status"])
+        _permanent_system_error(f'unsupported language {submission.language}')
         return submission
 
     test_cases = list(problem.test_cases.all())
     if not test_cases:
         # A terminal status avoids submissions polling forever when a problem
         # was published before test data was configured.
-        submission.status = "System Error"
-        submission.save(update_fields=["status"])
+        _permanent_system_error('no test cases configured')
         return submission
 
     image = LANG_IMAGE.get(submission.language, "oj-judge:latest")
@@ -590,43 +657,43 @@ def judge_submission(submission_id):
             if submission.language == "C++":
                 exe, err = runner.compile_cpp(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "C":
                 exe, err = runner.compile_c(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Rust":
                 exe, err = runner.compile_rust(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Golang":
                 exe, err = runner.compile_golang(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Assembly":
                 exe, err = runner.compile_assembly(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "Java":
                 class_name, err = runner.compile_java(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable(["java", class_name], stdin)
 
             elif submission.language == "Kotlin":
                 _, err = runner.compile_kotlin(submission.code)
                 if err:
-                    return save_compile_error(submission, test_cases[0], err)
+                    return save_compile_error(submission, test_cases[0], err, claim=claim)
                 run_fn = lambda stdin: runner.run_executable(
                     ["java", "-jar", "main.jar"], stdin
                 )
@@ -654,6 +721,10 @@ def judge_submission(submission_id):
 
             # ── Run each test case inside the SAME container ────────
             for idx, tc in enumerate(test_cases, start=1):
+                # Abort immediately if the reaper revoked our lease while a
+                # previous case was running.
+                if claim is not None:
+                    claim.ensure_alive()
                 runner.last_memory_kb = None
                 stdout, elapsed_ms, error = run_fn(tc.input_data)
                 actual = stdout if stdout is not None else ""
@@ -690,18 +761,7 @@ def judge_submission(submission_id):
                 case_statuses.append(case_status)
 
         finalize_submission(submission, case_statuses, max_runtime,
-                            max_memory_kb, problem)
-
-    except DockerNotAvailableError as exc:
-        # This is platform infrastructure failure, not a program error.
-        submission.status = "System Error"
-        submission.save(update_fields=["status"])
-        if test_cases:
-            save_case_result(
-                submission, test_cases[0], 1, "System Error", None,
-                "", test_cases[0].expected_output,
-                f"Judge infrastructure is unavailable: {exc}",
-            )
+                            max_memory_kb, problem, claim=claim)
 
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

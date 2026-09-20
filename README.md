@@ -19,6 +19,7 @@
   - 提交记录查看
   - 提交详情（代码、评测结果、运行时间、内存使用）
   - 评测状态 WebSocket 实时推送（逐测试点刷新，失败自动降级为 HTTP 轮询）
+  - 分布式判题：中央 Redis 队列、多机竞争消费、原子抢占 + 租约心跳 + 栅栏写回，测评机可完全无数据库凭证（DB-less）
 
 - 排行榜
   - 用户排名（按已解决题目数排序）
@@ -298,6 +299,86 @@ python manage.py check_judge_health
 - **降级兜底**：所有机器不可用时自动回退到 `default` 队列
 - 关闭多判题模式（`OJ_MULTI_JUDGE_ENABLED=false`）即恢复单机模式
 
+#### 生产架构：中央判题代理 + DB-less 测评机（推荐）
+
+旧的「每机一个队列 + 加权分发 + worker 直连 PostgreSQL」之外，现支持三阶段演进后的生产判题架构。各阶段均由环境变量开关控制，可独立部署、独立回滚：
+
+1. **中央队列（central broker）**：Web 端只把判题任务投到中央 Redis 的四条优先级车道（`judge:queue-pro` / `-plus` / `judge:queue` / `judge:queue-ai`），所有测评机运行相同的 worker 单元竞争消费。添加测评机无需任何 Django 侧配置，只需让它指向同一个中央 Redis。
+2. **抢占 / 租约 / 栅栏（claim · lease · fence）**：`Submission` 增加 `judge_state`（PENDING/QUEUED/JUDGING/DONE/FAILED）、`worker_id`、`claim_token`、`claimed_at` / `heartbeat_at` / `finished_at` 字段（迁移 `0017`，旧 `status` 判定字段保持不变）。worker 开工前用单条 `UPDATE ... WHERE judge_state IN (...) RETURNING` 原子抢占；判题期间每 15 秒经心跳续租；结果写回带 `claim_token` 栅栏——丢失租约的 worker 无法覆盖新 owner 的结果，重复投递也只有一台机器真正判题。僵尸任务由常驻 reaper 按 JUDGING 300s / QUEUED 600s 阈值自动回收重投。
+3. **DB-less 测评机**：开启后测评机进程内**不存在任何 PostgreSQL 凭证**（`DATABASES` 退化为惰性 sqlite 仅用于 Django 引导）。worker 通过 HTTPS 调用 Web 内部 API 抢占任务并取回代码与测试点，判题期间 HTTP 心跳续租，判完把结果信封 `LPUSH` 到中央 Redis 的 `judge:result` 列表；Web 端常驻消费者以「处理中队列 + ACK + 死信」的可靠队列模式取出信封，经同一套栅栏逻辑幂等写库（测试点、solved 关系、积分均幂等）。
+
+```
+                ┌──────────────────────────── Web ───────────────────────────┐
+ HTTPS /internal/judge/claim|heartbeat/  (X-Judge-Token)                     │
+ worker ───────────────────────────────▶│ Django: 原子抢占 / 心跳校验          │
+                                        │ result consumer ──▶ PostgreSQL       │
+                                        └──────▲──────────────▲───────────────┘
+                                               │ BRPOPLPUSH    │
+                                  judge:result │   judge:queue │ LPUSH 任务
+                            ┌──────────────────┴───────────────┴──────────┐
+                            │        中央 Redis（TLS + 密码，4 车道）        │
+                            └──────▲──────────────────────────▲────────────┘
+                                   │ 竞争消费                  │ 竞争消费
+                          ┌────────┴────────┐        ┌────────┴────────┐
+                          │ judge-1 DB-less │        │ judge-2 DB-less │
+                          │ 无 PG 凭证，只出 │        │ 无 PG 凭证，只出 │
+                          │ 站 443 + Redis  │        │ 站 443 + Redis  │
+                          └─────────────────┘        └─────────────────┘
+ reaper（Web 侧，30s 巡检）：回收心跳超时的 JUDGING / QUEUED 任务并重新入队
+```
+
+**环境变量**（Web `.env`）：
+
+```dotenv
+# Phase 1：启用中央队列投递
+OJ_CENTRAL_QUEUE=true
+OJ_CENTRAL_QUEUE_NAME=judge:queue
+JUDGE_BROKER_URL=rediss://:<password>@<central-redis-host>:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+
+# Phase 3：内部判题 API（worker 用此令牌鉴权，务必使用高强度随机值）
+JUDGE_INTERNAL_TOKEN=<generated-secret>
+```
+
+**环境变量**（每台测评机 `.env`；DB-less 模式下**不配置任何 `DB_*`**）：
+
+```dotenv
+OJ_ROLE=worker
+OJ_JUDGE_QUEUE=judge:queue
+JUDGE_BROKER_URL=rediss://:<password>@<central-redis-host>:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+
+# Phase 3 DB-less
+OJ_WORKER_DBLESS=true
+JUDGE_API_BASE=https://<web-host>
+JUDGE_INTERNAL_TOKEN=<same-secret-as-web>
+# OJ_WORKER_ID 不设则默认取主机名；心跳间隔/租约超时一般保持默认
+# OJ_JUDGE_HEARTBEAT_SECS=15   OJ_JUDGE_LEASE_TIMEOUT_SECS=300
+```
+
+> 内部 API 固定使用 `X-Judge-Token` 请求头做 HMAC 常量时间比较（`hmac.compare_digest`），并豁免 CSRF；抢占失败返回 `409 {"claimable": false}`，worker 直接空 ACK。经 CDN 暴露时注意：Python urllib 默认 User-Agent 可能被 WAF 拦截，worker 客户端已固定为 `GuwuOJ-JudgeWorker/1.0`。
+
+**Web 侧常驻辅助服务**（单元文件均在 `deploy/systemd/`）：
+
+| 服务 | 作用 |
+|------|------|
+| `guwu-oj-judge-reaper.service` | 30 秒巡检一轮，回收心跳超时的判题任务并重新入队（`reap_stale_judgments --loop`） |
+| `guwu-oj-judge-result-consumer.service` | `BLPOP` 消费 `judge:result`，栅栏校验后幂等写库；处理中崩溃的消息启动时自动回队，反复失败的消息进 `judge:result:dead` |
+
+```bash
+cp deploy/systemd/guwu-oj-judge-reaper.service \
+   deploy/systemd/guwu-oj-judge-result-consumer.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now guwu-oj-judge-reaper guwu-oj-judge-result-consumer
+```
+
+**运维命令**：
+
+```bash
+python manage.py judge_overview        # 队列深度、在线 worker、状态分布、僵尸数、近 1 小时延迟/错误率
+python manage.py reap_stale_judgments  # 手动回收一轮（--loop 常驻；--judging-timeout/--queued-timeout 调阈值）
+```
+
+**回滚**：Web 侧设 `OJ_CENTRAL_QUEUE=false` 即恢复旧的按机投递（迁移 0017 为纯新增列/索引，旧代码直接忽略）；单机回滚 DB-less 只需恢复原 `.env`（含 `DB_*`）并去掉 `OJ_WORKER_DBLESS` 后重启 worker。
+
 ### 10. 验证环境配置 (可选)
 
 运行环境验证脚本检查所有组件是否正常工作:
@@ -350,19 +431,24 @@ nginx 需将 `location /ws/` 反代到 `127.0.0.1:8447`（Upgrade/Connection 头
 
 ### 12. 启动完整服务（命令汇总）
 
-完整站点由三个常驻服务组成（另有 Redis/PostgreSQL 作为基础设施）：
+完整站点由 Web 侧四个常驻服务与每台测评机的 worker 组成（另有 Redis/PostgreSQL 作为基础设施）：
 
 | 组件 | 作用 | systemd 单元 |
 |------|------|-------------|
 | 主站 | Django（Granian WSGI，Unix socket） | `guwu-oj.service` |
 | WebSocket | 提交状态 ASGI 推送（127.0.0.1:8447） | `guwu-oj-ws.service`（见 `deploy/systemd/`） |
-| 判题 Worker | RQ 异步评测 | `guwu-oj-judge-worker.service`（见 `deploy/systemd/`） |
+| 判题 Worker | RQ 异步评测（中央队列竞争消费，可 DB-less） | `guwu-oj-judge-worker.service`（每台测评机，见 `deploy/systemd/`） |
+| 判题回收器 | 回收心跳超时的僵尸判题任务并重投 | `guwu-oj-judge-reaper.service`（Web 侧，见 `deploy/systemd/`） |
+| 结果消费者 | 消费 `judge:result`，栅栏校验后幂等写库 | `guwu-oj-judge-result-consumer.service`（Web 侧，见 `deploy/systemd/`） |
 
 ```bash
-# 生产环境：一次性启动/重启全部应用服务
-systemctl start guwu-oj guwu-oj-ws guwu-oj-judge-worker
-systemctl restart guwu-oj guwu-oj-ws guwu-oj-judge-worker
-systemctl status guwu-oj guwu-oj-ws guwu-oj-judge-worker
+# 生产环境 Web 侧：一次性启动/重启
+systemctl start guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer
+systemctl restart guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer
+systemctl status guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer
+
+# 每台测评机：
+systemctl restart guwu-oj-judge-worker
 
 # 开发环境：分别在三个终端运行
 python manage.py runserver                          # 主站
@@ -408,12 +494,20 @@ guwu-oj/
 ├── submissions/             # 提交应用
 │   ├── __init__.py
 │   ├── apps.py
-│   ├── models.py            # 提交模型
+│   ├── models.py            # 提交模型（含 judge_state/claim_token 租约字段）
 │   ├── views.py             # 提交视图
 │   ├── urls.py              # 提交 URL
 │   ├── ws.py                # WebSocket ASGI consumer
 │   ├── realtime.py          # Redis pub/sub 与状态载荷构建
 │   ├── signals.py           # post_save 触发推送
+│   ├── judge_queue.py       # 判题任务入队（中央/旧队列双模式）
+│   ├── claiming.py          # 原子抢占、心跳续租、栅栏 finalize、僵尸回收
+│   ├── judge.py             # 判题流程（DB 路径）
+│   ├── judge_core.py        # 纯判题核心（无 ORM/缓存，DB-less worker 使用）
+│   ├── results.py           # 栅栏幂等写回（测试点/solved/积分）与信封处理
+│   ├── result_queue.py      # judge:result 可靠队列原语（处理中队列/ACK/死信）
+│   ├── worker_api.py        # DB-less worker 的内部 HTTP 客户端与 HTTP 心跳
+│   ├── internal_views.py    # /internal/judge/claim|heartbeat/ 内部 API
 │   └── admin.py             # 提交管理后台
 ├── templates/               # 模板文件
 │   ├── base.html            # 基础模板
@@ -464,10 +558,11 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 
 项目使用 Django-RQ 实现异步评测，避免评测阻塞 HTTP 请求：
 
-- 评测任务通过 Redis 队列异步执行
-- 支持多个优先级队列 (default, high, low)
+- 评测任务通过中央 Redis 队列异步执行（`OJ_CENTRAL_QUEUE=true`），支持多台测评机竞争消费与多条优先级车道（`judge:queue-pro` / `-plus` / 默认 / `-ai`）
+- 原子抢占 + 租约心跳 + claim-token 栅栏：重复投递只有一台机器真正判题，worker 崩溃后由 reaper 自动回收重投，结果写回与积分/通过等副作用全部幂等
+- DB-less 模式下测评机不持有任何 PostgreSQL 凭证：经 HTTPS 内部 API 抢占任务，结果经 `judge:result` 队列由 Web 侧消费者幂等写库
 - 评测结果自动更新到数据库
-- 支持任务失败重试和错误日志记录
+- 支持基础设施故障自动重试（有次数上限）与错误日志记录，可用 `python manage.py judge_overview` 查看队列与租约状态
 
 ### 提交状态实时推送（WebSocket）
 
@@ -603,6 +698,8 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 - [x] 判题 Docker 镜像按语言拆分
 - [x] 多判题机分布式部署 (Multi-Judge)
 - [x] Docker 容器池
+- [x] 中央判题队列 + 原子抢占/租约心跳/栅栏写回 + 僵尸任务回收
+- [x] DB-less 测评机（无 PostgreSQL 凭证，HTTP 抢占 + 结果队列幂等写回）
 - [x] 添加比赛功能
 - [x] 植入AI解题功能
 - [x] 文档搜索引擎

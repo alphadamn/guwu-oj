@@ -1,0 +1,17 @@
+[Unit]
+Description=Guwu OJ stale judge-claim reaper
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/guwu-oj
+EnvironmentFile=/www/wwwroot/guwu-oj/.env
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/python manage.py reap_stale_judgments --loop --interval 30 --judging-timeout 300 --queued-timeout 600
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
