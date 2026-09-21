@@ -644,6 +644,9 @@ def judge_submission(submission_id, claim=None):
     pool_handle = container_pool.acquire(
         image, memory_mb=max(int(problem.memory_limit), 512)
     )
+    # Pool checkout is done (warm handle, or None for the ephemeral fallback);
+    # the gap from judge_started_at is pool wait, not compile cost.
+    stamp_phase(submission, claim, container_acquired_at=None)
     exec_workdir = None
     try:
         if pool_handle is not None:

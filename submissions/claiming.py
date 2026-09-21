@@ -190,6 +190,7 @@ def mark_queued(submission_id) -> bool:
 # Lifecycle timing columns a worker may stamp while it owns the claim.
 _PROGRESS_COLUMNS = frozenset({
     'judge_started_at',
+    'container_acquired_at',
     'compile_done_at',
     'tests_done_at',
 })

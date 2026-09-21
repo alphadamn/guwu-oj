@@ -84,7 +84,8 @@ class Submission(models.Model):
     #   created_at        -> enqueued_at        request -> broker handoff
     #   enqueued_at       -> claimed_at         broker queue wait
     #   claimed_at        -> judge_started_at   worker pickup / setup
-    #   judge_started_at  -> compile_done_at    container start + compile
+    #   judge_started_at  -> container_acquired_at  container-pool checkout
+    #   container_acquired_at -> compile_done_at    container start + compile
     #   compile_done_at   -> tests_done_at      test-case execution
     #   tests_done_at     -> result_written_at  writeback / envelope lag
     #
@@ -92,6 +93,7 @@ class Submission(models.Model):
     # never reached (e.g. no test phase after a Compile Error) stays NULL.
     enqueued_at = models.DateTimeField(null=True, blank=True)
     judge_started_at = models.DateTimeField(null=True, blank=True)
+    container_acquired_at = models.DateTimeField(null=True, blank=True)
     compile_done_at = models.DateTimeField(null=True, blank=True)
     tests_done_at = models.DateTimeField(null=True, blank=True)
     result_written_at = models.DateTimeField(null=True, blank=True)

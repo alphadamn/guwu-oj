@@ -35,7 +35,10 @@ logger = logging.getLogger(__name__)
 
 # Worker-reported phase boundaries accepted from the result envelope. The
 # web side owns every other timestamp column.
-_WORKER_TIMING_FIELDS = ('judge_started_at', 'compile_done_at', 'tests_done_at')
+_WORKER_TIMING_FIELDS = (
+    'judge_started_at', 'container_acquired_at', 'compile_done_at',
+    'tests_done_at',
+)
 
 
 def _parse_timings(raw):

@@ -109,6 +109,10 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
     pool_handle = container_pool.acquire(
         image, memory_mb=max(memory_limit_mb, 512)
     )
+    # The pool has handed over a warm container (or returned None, telling us
+    # to fall back to an ephemeral one). Either way the checkout call is done,
+    # so the gap from judge_started_at is time spent waiting on the pool.
+    container_acquired_at = _utcnow_iso()
     exec_workdir = None
     try:
         if pool_handle is not None:
@@ -149,6 +153,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
                 outcome = dict(runner._compile_outcome)
                 outcome['timings'] = {
                     'judge_started_at': judge_started_at,
+                    'container_acquired_at': container_acquired_at,
                     'compile_done_at': compile_done_at,
                 }
                 return outcome
@@ -204,6 +209,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
     )
     outcome['timings'] = {
         'judge_started_at': judge_started_at,
+        'container_acquired_at': container_acquired_at,
         'compile_done_at': compile_done_at,
         'tests_done_at': tests_done_at,
     }
