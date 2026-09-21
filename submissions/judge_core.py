@@ -21,7 +21,13 @@ Outcome shape::
     {"verdict": "Accepted|Wrong Answer|...|Compile Error",
      "runtime_ms": int, "memory_kb": int,
      "cases": [{"index", "status", "runtime_ms",
-                "actual_output", "error_message"}]}
+                "actual_output", "error_message"}],
+     "timings": {"judge_started_at", "compile_done_at", "tests_done_at"}}
+
+``timings`` carries the phase boundaries this worker is the only one to
+witness (absolute UTC ISO-8601 strings, so the envelope stays JSON-clean).
+The web-side consumer stamps them onto the submission row; a phase that
+never ran (no test phase after a Compile Error) is simply absent.
 
 Infrastructure failures (Docker unavailable) propagate as
 :class:`submissions.sandbox.DockerNotAvailableError`; the worker turns
@@ -35,6 +41,7 @@ import secrets
 import shutil
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,6 +70,11 @@ def _submission_view(spec):
     )
 
 
+def _utcnow_iso() -> str:
+    """Phase-boundary timestamp for the result envelope (absolute UTC)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _case_views(cases):
     return [
         SimpleNamespace(
@@ -83,6 +95,10 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
     cases = spec.get('cases') or []
     if not cases:
         raise JudgeSpecError('no test cases in claim bundle')
+
+    # Judging work starts here; everything from claimed_at to this point is
+    # claim + dispatch overhead on the web side.
+    judge_started_at = _utcnow_iso()
 
     submission = _submission_view(spec)
     tcs = _case_views(cases)
@@ -109,6 +125,8 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
     max_runtime = 0
     max_memory_kb = 0
     case_outcomes = []
+    compile_done_at = None
+    tests_done_at = None
     runner = None
     try:
         runner_kwargs = dict(
@@ -124,9 +142,16 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
 
         with runner:
             run_fn = _compile(runner, submission, work_dir)
+            compile_done_at = _utcnow_iso()
             if run_fn is None:
-                # Compiler diagnostic already encoded by _compile.
-                return runner._compile_outcome
+                # Compiler diagnostic already encoded by _compile. No test
+                # phase ran, so tests_done_at is deliberately absent.
+                outcome = dict(runner._compile_outcome)
+                outcome['timings'] = {
+                    'judge_started_at': judge_started_at,
+                    'compile_done_at': compile_done_at,
+                }
+                return outcome
 
             for tc in tcs:
                 if check_alive is not None:
@@ -164,6 +189,8 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
                     'actual_output': actual,
                     'error_message': error_msg,
                 })
+
+            tests_done_at = _utcnow_iso()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -172,9 +199,15 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
         if co['status'] != 'Accepted':
             verdict = co['status']
             break
-    return _finalize_outcome(
+    outcome = _finalize_outcome(
         case_outcomes, max_runtime, max_memory_kb, verdict_override=verdict,
     )
+    outcome['timings'] = {
+        'judge_started_at': judge_started_at,
+        'compile_done_at': compile_done_at,
+        'tests_done_at': tests_done_at,
+    }
+    return outcome
 
 
 def _compile(runner, submission, work_dir):

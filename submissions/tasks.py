@@ -80,6 +80,9 @@ def _result_envelope(submission_id, token, worker_id, outcome):
         'runtime_ms': outcome.get('runtime_ms') or 0,
         'memory_kb': outcome.get('memory_kb') or 0,
         'cases': outcome.get('cases') or [],
+        # Phase boundaries only this worker witnesses; the web-side
+        # consumer stamps them onto the submission row.
+        'timings': outcome.get('timings') or {},
     }
 
 

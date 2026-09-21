@@ -77,6 +77,25 @@ class Submission(models.Model):
     heartbeat_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
+    # ── Phase-boundary timings (bottleneck analysis) ─────────────────────
+    # One column per pipeline boundary, so the cost of each stage can be
+    # attributed with a plain date subtraction instead of log mining:
+    #
+    #   created_at        -> enqueued_at        request -> broker handoff
+    #   enqueued_at       -> claimed_at         broker queue wait
+    #   claimed_at        -> judge_started_at   worker pickup / setup
+    #   judge_started_at  -> compile_done_at    container start + compile
+    #   compile_done_at   -> tests_done_at      test-case execution
+    #   tests_done_at     -> result_written_at  writeback / envelope lag
+    #
+    # Observability only: these never gate judging, and a phase that was
+    # never reached (e.g. no test phase after a Compile Error) stays NULL.
+    enqueued_at = models.DateTimeField(null=True, blank=True)
+    judge_started_at = models.DateTimeField(null=True, blank=True)
+    compile_done_at = models.DateTimeField(null=True, blank=True)
+    tests_done_at = models.DateTimeField(null=True, blank=True)
+    result_written_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = '提交记录'

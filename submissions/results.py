@@ -17,6 +17,7 @@ idempotent and fencing-protected:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from django.db import transaction
 
@@ -27,9 +28,38 @@ from .claiming import (
     next_attempt,
     requeue_claim,
     sleep_backoff,
+    stamp_progress,
 )
 
 logger = logging.getLogger(__name__)
+
+# Worker-reported phase boundaries accepted from the result envelope. The
+# web side owns every other timestamp column.
+_WORKER_TIMING_FIELDS = ('judge_started_at', 'compile_done_at', 'tests_done_at')
+
+
+def _parse_timings(raw):
+    """Parse worker-reported phase timestamps; drop unusable values.
+
+    A DB-less worker never shares the database clock, so these are only as
+    trustworthy as its NTP sync. They feed analysis charts, never a
+    correctness decision, so malformed input is logged and ignored rather
+    than failing an otherwise good verdict.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    parsed = {}
+    for name in _WORKER_TIMING_FIELDS:
+        value = raw.get(name)
+        if not value:
+            continue
+        try:
+            parsed[name] = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            logger.warning(
+                'Ignoring unparseable %s %r in result envelope', name, value,
+            )
+    return parsed
 
 
 def _ordered_case_rows(submission):
@@ -64,11 +94,14 @@ def grant_accepted_rewards(submission, problem):
 
 
 def write_judge_outcome(submission_id, token, verdict, runtime_ms,
-                        memory_kb, cases):
+                        memory_kb, cases, timings=None):
     """Persist a worker outcome behind its claim fence. Returns ``bool``.
 
     ``False`` means the envelope was stale (claim revoked / row already
-    terminal) and was discarded without any side effect.
+    terminal) and was discarded without any side effect. ``timings`` are
+    the worker-reported phase boundaries (already parsed to datetimes);
+    they are stamped under the same token, so a stale envelope cannot
+    write them either.
     """
     from .models import Submission, SubmissionTestResult
 
@@ -99,6 +132,9 @@ def write_judge_outcome(submission_id, token, verdict, runtime_ms,
                     '(token %s)', submission_id, token,
                 )
                 return False
+
+            if timings:
+                stamp_progress(submission_id, token, **timings)
 
             SubmissionTestResult.objects.filter(submission_id=submission_id).delete()
             for case in cases:
@@ -147,13 +183,15 @@ def fail_unclaimed(submission_id):
            SET status = 'System Error',
                judge_state = 'FAILED',
                finished_at = %s,
+               result_written_at = %s,
                runtime = 0
          WHERE id = %s
            AND judge_state = 'QUEUED'
            AND claim_token IS NULL
     """
     with connection.cursor() as cur:
-        cur.execute(sql, [timezone.now(), submission_id])
+        now = timezone.now()
+        cur.execute(sql, [now, now, submission_id])
         return cur.rowcount == 1
 
 
@@ -245,6 +283,7 @@ def process_envelope(raw, redis_conn):
         int(env.get('runtime_ms') or 0),
         env.get('memory_kb'),
         env.get('cases') or [],
+        timings=_parse_timings(env.get('timings')),
     )
     if won:
         publish_submission_changed(submission_id)

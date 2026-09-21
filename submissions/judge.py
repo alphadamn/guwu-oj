@@ -46,7 +46,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from . import container_pool
-from .claiming import ClaimLostError, finalize_claim
+from .claiming import ClaimLostError, finalize_claim, stamp_progress
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
     DockerNotAvailableError,
@@ -562,12 +562,32 @@ def finalize_submission(submission, case_results, max_runtime,
 
 def save_compile_error(submission, test_case, error_message, claim=None):
     """Persist compiler output as the first-case diagnostic for a submission."""
+    stamp_phase(submission, claim, compile_done_at=None)
     save_case_result(
         submission, test_case, 1, "Skipped", None,
         error_message, test_case.expected_output, error_message,
     )
     commit_verdict(submission, "Compile Error", claim)
     return submission
+
+
+def stamp_phase(submission, claim, **fields):
+    """Best-effort lifecycle timing stamp; never fails the judge run.
+
+    A failed stamp (DB blip, lost fence) only loses analysis data, which
+    must never turn a judgeable submission into a System Error.
+    """
+    try:
+        stamp_progress(
+            submission.id,
+            claim.token if claim is not None else None,
+            **fields,
+        )
+    except Exception:
+        logger.warning(
+            'Timing stamp %s failed for submission %s',
+            sorted(fields), submission.id, exc_info=True,
+        )
 
 
 def _case_status_from_error(error, actual, expected):
@@ -589,6 +609,9 @@ def judge_submission(submission_id, claim=None):
         id=submission_id
     )
     problem = submission.effective_problem
+    # This worker is now actually on the job; the gap from claimed_at is
+    # scheduling/pickup overhead.
+    stamp_phase(submission, claim, judge_started_at=None)
     # Fresh attempt: the claim winner owns the row, so removing the
     # previous attempt's partial case rows is safe.
     SubmissionTestResult.objects.filter(submission=submission).delete()
@@ -719,6 +742,9 @@ def judge_submission(submission_id, claim=None):
             else:
                 return submission
 
+            # Compilation (if any) is done; every branch below runs tests.
+            stamp_phase(submission, claim, compile_done_at=None)
+
             # ── Run each test case inside the SAME container ────────
             for idx, tc in enumerate(test_cases, start=1):
                 # Abort immediately if the reaper revoked our lease while a
@@ -759,6 +785,10 @@ def judge_submission(submission_id, claim=None):
                     actual, expected, error_msg,
                 )
                 case_statuses.append(case_status)
+
+            # All cases executed; only container teardown and the verdict
+            # writeback are left.
+            stamp_phase(submission, claim, tests_done_at=None)
 
         finalize_submission(submission, case_statuses, max_runtime,
                             max_memory_kb, problem, claim=claim)
