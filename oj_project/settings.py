@@ -476,8 +476,39 @@ if not DEMO_MODE:
     # call (workers only).
     JUDGE_INTERNAL_TOKEN = os.environ.get('JUDGE_INTERNAL_TOKEN', '').strip()
     JUDGE_API_BASE = os.environ.get('JUDGE_API_BASE', '').rstrip('/')
+    # Second origin the worker falls back to when the primary is unreachable
+    # (used by NAT'd workers whose direct-link firewall rule may be stale).
+    JUDGE_API_FALLBACK_BASE = os.environ.get(
+        'JUDGE_API_FALLBACK_BASE', '',
+    ).rstrip('/')
     OJ_WORKER_DBLESS = _env_enabled('OJ_WORKER_DBLESS', False)
     OJ_RESULT_QUEUE_NAME = os.environ.get('OJ_RESULT_QUEUE_NAME', 'judge:result')
+    # How often a DB-less worker re-announces its public IP (seconds). The
+    # address only changes on an ISP renumber, so this is a safety net on top
+    # of the forced report that follows a failed direct-base claim.
+    OJ_JUDGE_IP_REPORT_INTERVAL = int(
+        os.environ.get('OJ_JUDGE_IP_REPORT_INTERVAL', '600')
+    )
+
+    # Direct judge API firewall (web side). NAT'd workers report their public
+    # IP to /internal/judge/report_ip/ and the web host keeps an iptables
+    # chain in sync, so the bypass-Cloudflare link survives a dynamic IP.
+    OJ_JUDGE_DIRECT_PORT = int(os.environ.get('OJ_JUDGE_DIRECT_PORT', '8446'))
+    OJ_JUDGE_DIRECT_CHAIN = os.environ.get(
+        'OJ_JUDGE_DIRECT_CHAIN', 'JUDGE_DIRECT',
+    )
+    OJ_JUDGE_DIRECT_STATE = os.environ.get(
+        'OJ_JUDGE_DIRECT_STATE', '/etc/guwu/judge-direct-ips.json',
+    )
+    # Always-allowed sources, independent of any report: static hosts (and a
+    # safety net if the state file is lost across a reinstall).
+    OJ_JUDGE_DIRECT_STATIC_IPS = [
+        ip.strip()
+        for ip in os.environ.get(
+            'OJ_JUDGE_DIRECT_STATIC_IPS', '64.90.3.112',
+        ).split(',')
+        if ip.strip()
+    ]
 
     # Judge-priority lanes consumed by the rqworker command, in drain order:
     # {base}-pro > {base}-plus > {base} (free users) > {base}-ai. django-rq
@@ -537,8 +568,16 @@ else:
     OJ_JUDGE_LEASE_TIMEOUT_SECS = 300
     JUDGE_INTERNAL_TOKEN = ''
     JUDGE_API_BASE = ''
+    JUDGE_API_FALLBACK_BASE = ''
     OJ_WORKER_DBLESS = False
     OJ_RESULT_QUEUE_NAME = 'judge:result'
+    OJ_JUDGE_IP_REPORT_INTERVAL = 600
+    OJ_JUDGE_DIRECT_PORT = 8446
+    OJ_JUDGE_DIRECT_CHAIN = 'JUDGE_DIRECT'
+    OJ_JUDGE_DIRECT_STATE = os.path.join(
+        tempfile.gettempdir(), 'judge-direct-ips.json',
+    )
+    OJ_JUDGE_DIRECT_STATIC_IPS = []
 
 if DEMO_MODE:
     DATABASES = {
@@ -578,6 +617,20 @@ else:
                         else {}
                     ),
                 },
+                # The judge claim/heartbeat endpoints answer in ~10ms once
+                # the connection is warm, but a cold PostgreSQL connect
+                # (TCP + TLS + auth) costs ~18ms on every request while this
+                # is 0, and that lands directly on the worker's critical
+                # path. Keeping the per-thread connection alive removes it;
+                # health checks transparently replace a dropped connection.
+                # The test runner has to drop the test database, which
+                # requires every session to be gone; a persistent per-thread
+                # connection left open by a test worker thread blocks it.
+                'CONN_MAX_AGE': (
+                    0 if 'test' in sys.argv
+                    else int(os.environ.get('DB_CONN_MAX_AGE', '60'))
+                ),
+                'CONN_HEALTH_CHECKS': True,
             }
         }
 
@@ -808,6 +861,25 @@ OJ_CONTAINER_POOL_ACQUIRE_TIMEOUT = int(
 OJ_CONTAINER_POOL_WORK_ROOT = os.environ.get(
     'OJ_CONTAINER_POOL_WORK_ROOT', '/tmp/oj_container_pool'
 )
+
+# ── Shared compiler cache (ccache) ───────────────────────────────────────
+# Host directory bind-mounted read/write into the compiled-language judge
+# containers as /ccache. One directory per host, shared by every container and
+# surviving container recycling, so a compilation that has been seen before is
+# served from cache instead of running g++ again. Empty string disables it.
+OJ_CCACHE_DIR = os.environ.get('OJ_CCACHE_DIR', '/var/cache/oj-judge-ccache').strip()
+# Upper bound on the cache size on disk, enforced by ccache itself.
+OJ_CCACHE_MAX_SIZE = os.environ.get('OJ_CCACHE_MAX_SIZE', '5G').strip()
+
+# ── Judge-side test data cache ───────────────────────────────────────────
+# A DB-less worker files the test data it downloads under the content
+# fingerprint the claim carried, so a later submission of the same problem is
+# judged without re-pulling tens of megabytes over the (narrow) web uplink.
+# Entries are dropped oldest-first once the cap below is reached; an empty
+# directory disables the cache entirely.
+OJ_CASE_CACHE_DIR = os.environ.get('OJ_CASE_CACHE_DIR', '/var/cache/oj-judge-cases').strip()
+OJ_CASE_CACHE_MAX_SIZE = os.environ.get('OJ_CASE_CACHE_MAX_SIZE', '20G').strip()
+
 # Default subprocess timeout (can be overridden via JudgeConfig model in admin)
 OJ_SUBPROCESS_TIMEOUT_SEC = int(os.environ.get('OJ_SUBPROCESS_TIMEOUT_SEC', '5'))
 

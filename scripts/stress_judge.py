@@ -214,7 +214,7 @@ def poll_until_done(entries, poll_interval, timeout):
     print(f'\n轮询评测结果（间隔 {poll_interval}s，超时 {timeout}s）...')
     try:
         while pending_ids and time.monotonic() < deadline:
-            time.sleep(poll_interval)
+            # time.sleep(poll_interval)
             rows = Submission.objects.filter(
                 id__in=pending_ids,
             ).values_list('id', 'status')
@@ -227,9 +227,9 @@ def poll_until_done(entries, poll_interval, timeout):
                     still_pending.append(sid)
             pending_ids = still_pending
             if len(pending_ids) != last_pending_count:
-                print(f'  [{time.strftime("%H:%M:%S")}] '
-                      f'已完成 {len(entries) - len(pending_ids)}/{len(entries)}，'
-                      f'待评测 {len(pending_ids)}')
+                # print(f'  [{time.strftime("%H:%M:%S")}] '
+                    #   f'已完成 {len(entries) - len(pending_ids)}/{len(entries)}，'
+                    #   f'待评测 {len(pending_ids)}')
                 last_pending_count = len(pending_ids)
     except KeyboardInterrupt:
         print('\n收到中断，停止轮询。')
@@ -321,7 +321,7 @@ def main():
                         help='线性爬坡时长（秒），0 = 瞬时全部提交')
     parser.add_argument('--timeout', type=int, default=600,
                         help='整体轮询超时秒数（默认 600）')
-    parser.add_argument('--poll-interval', type=float, default=2.0,
+    parser.add_argument('--poll-interval', type=float, default=0.2,
                         help='轮询间隔秒数（默认 2）')
     parser.add_argument('--keep', action='store_true',
                         help='保留提交记录（默认退出前删除）')

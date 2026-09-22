@@ -49,8 +49,10 @@ from . import container_pool
 from .claiming import ClaimLostError, finalize_claim, stamp_progress
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
+    CCACHE_IMAGES,
     DockerNotAvailableError,
     JudgeContainer,
+    ccache_dir,
     exit_indicates_memory_limit,
     run_in_container,
     run_commands_in_container,
@@ -122,6 +124,57 @@ def _clean_kotlin_output(text):
             continue
         lines.append(line)
     return "\n".join(lines).strip()
+
+
+# Images rebuilt with the baked-in bits/stdc++.h precompiled header; a
+# probe result is cached per process/image so a stale image costs nothing
+# beyond one tiny exec and never breaks compilation.
+_pch_available_cache = {}
+_c_pch_available_cache = {}
+
+
+def _pch_include_flags(runner, image):
+    '''Return force-include flags when the image ships the stdc++ PCH.
+
+    Older images (pre-PCH rebuild) lack ``/pch/stdc++.h.gch``; probing once
+    per image keeps those hosts working with plain compiles instead of
+    turning ``-include`` into a fatal error for every C++ submission.
+    '''
+    if image not in _pch_available_cache:
+        try:
+            probe = runner._run(["/usr/bin/test", "-f", "/pch/stdc++.h.gch"], 5)
+            _pch_available_cache[image] = probe.returncode == 0
+        except Exception:
+            _pch_available_cache[image] = False
+    if _pch_available_cache[image]:
+        return ["-I/pch", "-include", "stdc++.h"]
+    return []
+
+
+def _c_pch_include_flags(runner, image):
+    '''Same probe pattern as _pch_include_flags but for the C precompiled header.'''
+    if image not in _c_pch_available_cache:
+        try:
+            probe = runner._run(["/usr/bin/test", "-f", "/pch/c_headers.h.gch"], 5)
+            _c_pch_available_cache[image] = probe.returncode == 0
+        except Exception:
+            _c_pch_available_cache[image] = False
+    if _c_pch_available_cache[image]:
+        return ["-I/pch", "-include", "c_headers.h"]
+    return []
+
+
+def _compiler_command(command, image):
+    """Prefix *command* with ``ccache`` when the shared cache is available.
+
+    The container has the host-wide cache bind-mounted at ``/ccache`` (see
+    ``submissions.sandbox``), so an identical compilation is answered from
+    cache instead of invoking the compiler. The guard mirrors the exact
+    conditions under which the mount is added.
+    """
+    if image in CCACHE_IMAGES and ccache_dir():
+        return ["ccache", *command]
+    return command
 
 
 def _get_judge_config_global_timeout():
@@ -263,9 +316,15 @@ class SandboxRunner:
     def compile_cpp(self, code):
         src = Path(self.work_dir) / "main.cpp"
         src.write_text(code, encoding="utf-8")
+        # Compile (-c) and link are split so ccache can cache the object:
+        # a bare `g++ -o main main.cpp` is classified "called for link" and
+        # never cached. The link step itself stays plain g++.
         try:
             res = self._run(
-                ["g++", "-std=c++17", "-O2", "-o", "main", "main.cpp"],
+                _compiler_command(
+                    ["g++", "-std=c++17", "-O1", *_pch_include_flags(self, self.image), "-c", "main.cpp", "-o", "main.o"],
+                    self.image,
+                ),
                 COMPILE_TIMEOUT_SEC,
                 is_compile=True,
             )
@@ -273,6 +332,16 @@ class SandboxRunner:
             return None, "Compile timeout"
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        try:
+            res = self._run(
+                ["g++", "main.o", "-o", "main"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Link timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Linking failed").strip()
         # chmod via host filesystem (work_dir is bind-mounted).
         try:
             os.chmod(Path(self.work_dir) / "main", 0o700)
@@ -283,9 +352,13 @@ class SandboxRunner:
     def compile_c(self, code):
         src = Path(self.work_dir) / "main.c"
         src.write_text(code, encoding="utf-8")
+        # Same -c split as compile_cpp so ccache can cache the object.
         try:
             res = self._run(
-                ["gcc", "-O2", "-o", "main", "main.c"],
+                _compiler_command(
+                    ["gcc", "-O1", *_c_pch_include_flags(self, self.image), "-c", "main.c", "-o", "main.o"],
+                    self.image,
+                ),
                 COMPILE_TIMEOUT_SEC,
                 is_compile=True,
             )
@@ -293,6 +366,16 @@ class SandboxRunner:
             return None, "Compile timeout"
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "Compilation failed").strip()
+        try:
+            res = self._run(
+                ["gcc", "main.o", "-o", "main"],
+                COMPILE_TIMEOUT_SEC,
+                is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Link timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Linking failed").strip()
         try:
             os.chmod(Path(self.work_dir) / "main", 0o700)
         except OSError:

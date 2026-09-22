@@ -67,7 +67,8 @@ class SubmissionCacheHeaderTests(TestCase):
     def test_status_api_reports_terminal_status_after_judging(self):
         """The API must report the stored verdict, not a stale Pending."""
         self.submission.status = "Accepted"
-        self.submission.save(update_fields=["status"])
+        self.submission.judge_state = "DONE"
+        self.submission.save(update_fields=["status", "judge_state"])
 
         response = self.client.get(
             reverse("submission_status_api", args=[self.submission.id])

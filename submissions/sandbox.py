@@ -22,6 +22,7 @@ Performance / stability changes vs the previous naive approach:
 
 import os
 import grp
+import logging
 import pwd
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ from pathlib import Path
 from django.conf import settings
 
 from .docker_cleanup import cleanup_stale_judge_containers
+
+logger = logging.getLogger(__name__)
 
 
 class DockerNotAvailableError(Exception):
@@ -128,6 +131,50 @@ def _apparmor_flag():
         raise DockerNotAvailableError("OJ_DOCKER_APPARMOR_PROFILE must not be empty")
     return profile
 
+
+# Container path the host ccache directory is bind-mounted at.
+CCACHE_MOUNT_PATH = "/ccache"
+
+# Only images that actually ship ccache get the shared cache mounted. Handing
+# an interpreter sandbox a writable path into the compilation cache would let
+# untrusted code poison the objects a later C/C++ submission compiles against.
+CCACHE_IMAGES = frozenset(("oj-c:latest", "oj-cpp:latest"))
+
+_ccache_warned = False
+
+
+def ccache_dir():
+    """Host ccache directory, or ``None`` when ccache is off or unusable.
+
+    The directory is created on first use and owned by the sandbox runtime
+    user, because the unprivileged compiler inside the container writes to it.
+    A host where that cannot be arranged just loses the cache: judging must
+    never fail over an optional optimisation.
+    """
+    global _ccache_warned
+    configured = str(getattr(settings, "OJ_CCACHE_DIR", "") or "").strip()
+    if not configured:
+        return None
+    path = Path(configured)
+    uid = int(getattr(settings, "OJ_DOCKER_UID", 65534))
+    gid = int(getattr(settings, "OJ_DOCKER_GID", 65534))
+    try:
+        if not path.is_dir():
+            path.mkdir(parents=True, exist_ok=True)
+            os.chmod(path, 0o700)
+        stat = path.stat()
+        if (stat.st_uid, stat.st_gid) != (uid, gid):
+            os.chown(path, uid, gid)
+    except OSError as exc:
+        if not _ccache_warned:
+            _ccache_warned = True
+            logger.warning(
+                "ccache disabled: %s is not writable by uid %s (%s)",
+                configured, uid, exc,
+            )
+        return None
+    return str(path)
+
 def chown_rec(path, user, group):
     uid = pwd.getpwnam(user).pw_uid
     gid = grp.getgrnam(group).gr_gid
@@ -204,6 +251,18 @@ def build_judge_run_args(
         "-v", f"{work_dir}:/sandbox:rw",
         "-w", "/sandbox",
     ]
+    cache = ccache_dir() if image in CCACHE_IMAGES else None
+    if cache:
+        args.extend([
+            "-v", f"{cache}:{CCACHE_MOUNT_PATH}:rw",
+            "--env", f"CCACHE_DIR={CCACHE_MOUNT_PATH}",
+            # Each submission compiles from its own /sandbox/<token> directory.
+            # Both settings keep that per-submission path out of the cache key,
+            # without which no two submissions could ever share an entry.
+            "--env", "CCACHE_BASEDIR=/sandbox",
+            "--env", "CCACHE_NOHASHDIR=1",
+            "--env", f"CCACHE_MAXSIZE={getattr(settings, 'OJ_CCACHE_MAX_SIZE', '5G')}",
+        ])
     if use_init:
         args.append("--init")
     for key, value in (labels or {}).items():

@@ -8,6 +8,9 @@ idempotent and fencing-protected:
   side effects happen in ONE transaction gated by the claim token, so a
   crashed consumer redelivers a clean full write instead of a partial one,
   and a stale worker's late envelope affects zero rows;
+* per-case ``partial`` envelopes only feed the live view: they are written
+  one row at a time under the same fence, so they can neither block the
+  terminal write nor overwrite a verdict that already landed;
 * rewards are intrinsically idempotent (M2M add + point ledger keyed on
   (user, event_type, event_key));
 * infra failures are re-enqueued a bounded number of times (Redis
@@ -66,11 +69,23 @@ def _parse_timings(raw):
 
 
 def _ordered_case_rows(submission):
-    """Return the 1-based-index -> ORM test-case mapping for a submission."""
+    """Return the 1-based-index -> ORM test-case mapping for a submission.
+
+    Only the primary keys are selected: callers use the returned rows purely
+    to set a foreign key. Loading the full rows would drag every case's
+    ``input_data``/``expected_output`` across the wire -- for a problem with
+    a few large cases that is several megabytes *per incremental progress
+    report*, which starved the result consumer.
+    """
     if submission.contest_problem_id is not None:
-        return list(submission.contest_problem.test_cases.order_by('order', 'id'))
+        return list(
+            submission.contest_problem.test_cases
+            .order_by('order', 'id').only('id')
+        )
     if submission.problem_id is not None:
-        return list(submission.problem.test_cases.order_by('order', 'id'))
+        return list(
+            submission.problem.test_cases.order_by('order', 'id').only('id')
+        )
     return []
 
 
@@ -176,6 +191,65 @@ def write_judge_outcome(submission_id, token, verdict, runtime_ms,
     return True
 
 
+def write_partial_case(submission_id, token, case):
+    """Persist one finished test case mid-judging. Returns ``bool``.
+
+    This is the incremental feed the browser renders while the submission is
+    still running, so each call publishes immediately. It is fenced exactly
+    like the terminal write: a row that is no longer ``JUDGING`` under this
+    token belongs to someone else, so the partial is dropped rather than
+    resurrecting or corrupting a finished result set. The terminal envelope
+    stays authoritative -- it deletes and rewrites every case.
+    """
+    from .models import Submission, SubmissionTestResult
+
+    if token is None or not isinstance(case, dict):
+        return False
+    try:
+        idx = int(case['index'])
+    except (KeyError, TypeError, ValueError):
+        logger.warning(
+            'Ignoring partial result without a usable case index for %s',
+            submission_id,
+        )
+        return False
+
+    submission = (
+        Submission.objects
+        .select_related('problem', 'contest_problem')
+        .filter(pk=submission_id, claim_token=token, judge_state='JUDGING')
+        .first()
+    )
+    if submission is None:
+        # Lease revoked or row already terminal: the verdict is owned
+        # elsewhere, so this progress report has nothing to say.
+        return False
+
+    problem = submission.effective_problem
+    if problem is None:
+        return False
+    case_rows = _ordered_case_rows(submission)
+    tc = case_rows[idx - 1] if 0 < idx <= len(case_rows) else None
+    relation = (
+        {'contest_test_case': tc}
+        if submission.contest_problem_id is not None
+        else {'test_case': tc}
+    )
+    SubmissionTestResult.objects.update_or_create(
+        submission_id=submission_id,
+        case_index=idx,
+        defaults={
+            'status': case.get('status') or 'System Error',
+            'runtime': case.get('runtime_ms'),
+            'actual_output': (case.get('actual_output') or '')[:4000],
+            'expected_output': '',
+            'error_message': (case.get('error_message') or '')[:2000],
+            **relation,
+        },
+    )
+    return True
+
+
 def fail_unclaimed(submission_id):
     """Terminal FAILED for a row that never reached JUDGING (claim-phase)."""
     from django.db import connection
@@ -274,6 +348,15 @@ def process_envelope(raw, redis_conn):
             env.get('error', 'infrastructure failure'),
         )
         logger.info('Infra envelope for %s -> %s', submission_id, outcome)
+        return 'ok'
+
+    if kind == 'partial':
+        # Mid-judging progress. Queue order guarantees this arrives before
+        # the terminal envelope from the same worker, and the write is
+        # fenced on the claim token, so a late partial after the verdict is
+        # silently dropped instead of rewriting a finished case.
+        if write_partial_case(submission_id, token, env.get('case') or {}):
+            publish_submission_changed(submission_id)
         return 'ok'
 
     if kind != 'result':

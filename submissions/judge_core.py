@@ -13,8 +13,13 @@ The spec object is a duck-typed mapping with the fields the legacy
     {
       "submission_id", "language", "code", "user_id",
       "time_limit_ms", "memory_limit_mb",
+      "total_cases": 26,
       "cases": [{"index": 1, "input": "...", "expected": "..."}],
     }
+
+``cases`` may be empty, in which case ``total_cases`` says how many exist
+and the caller passes ``case_loader`` to pull them in batches as judging
+proceeds.
 
 Outcome shape::
 
@@ -40,6 +45,7 @@ import logging
 import secrets
 import shutil
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,25 +81,144 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _case_views(cases):
-    return [
-        SimpleNamespace(
-            case_index=c['index'],
-            input_data=c.get('input', ''),
-            expected_output=c.get('expected', ''),
-        )
-        for c in cases
-    ]
+def _case_view(case):
+    return SimpleNamespace(
+        case_index=case['index'],
+        input_data=case.get('input', ''),
+        expected_output=case.get('expected', ''),
+    )
 
 
-def judge_spec(spec, check_alive=None, global_timeout_sec=None):
-    """Compile and run one submission against its cases; return outcome."""
+# Test cases pulled per round trip when the claim carried no inline data.
+# Small enough that the results panel fills in continuously, large enough
+# that per-request overhead stays in the noise.
+CASE_FETCH_BATCH = 4
+
+
+class _CaseFeed:
+    """Supplies test cases in order, from inline data or a batched loader.
+
+    A DB-less worker no longer receives test data in the claim response -
+    the web side reports only how many cases exist. Cases are therefore
+    pulled in batches *while judging is already running*, which keeps
+    ``judge_started_at`` independent of the payload size (an unlucky
+    problem can carry several hundred megabytes of test data), and each
+    case is dropped after use so the whole set never has to fit in memory.
+
+    A background thread does the pulling. Downloading dominates the test
+    phase on a fat problem (the judge uplink is the bottleneck), so fetching
+    synchronously would idle the CPU after every batch and hand the results
+    over in visible stalls. Prefetching keeps one batch in hand, so the
+    judging loop drains it while the next one is still on the wire.
+    """
+
+    def __init__(self, inline_cases, total, loader, batch=CASE_FETCH_BATCH):
+        self._pending = {int(c['index']): c for c in inline_cases}
+        self._total = int(total)
+        # Inline data (legacy claim) is complete by definition; a loader is
+        # only meaningful when it isn't.
+        self._loader = None if inline_cases else loader
+        self._batch = max(1, int(batch))
+        self._offset = len(inline_cases)
+        self._cond = threading.Condition()
+        self._error = None
+        self._exhausted = False
+        self._closed = False
+        self._thread = None
+        if self._loader is not None:
+            self._thread = threading.Thread(
+                target=self._prefetch, name='oj-case-prefetch', daemon=True,
+            )
+            self._thread.start()
+
+    @property
+    def total(self):
+        return self._total
+
+    def _prefetch(self):
+        """Pull batches ahead of the judging loop until told to stop."""
+        try:
+            while True:
+                with self._cond:
+                    # Hold off when a full batch is already buffered, or when
+                    # every case has been handed out.
+                    while not self._closed and (
+                        len(self._pending) >= self._batch
+                        or self._offset >= self._total
+                    ):
+                        if self._offset >= self._total:
+                            self._exhausted = True
+                        self._cond.wait()
+                    if self._closed:
+                        return
+                    offset = self._offset
+                    # Ask for exactly what is left. A cache that stores whole
+                    # ranges only answers a request it can satisfy in full, so
+                    # asking for a full batch past the end of the test set
+                    # always misses and forces a network round trip -- which
+                    # then lands as a stall just before the final cases.
+                    want = min(self._batch, self._total - offset)
+                rows = self._loader(offset, want)
+                with self._cond:
+                    if self._closed:
+                        return
+                    if not rows:
+                        self._exhausted = True
+                        self._cond.notify_all()
+                        return
+                    for row in rows:
+                        self._pending[int(row['index'])] = row
+                    self._offset += len(rows)
+                    self._cond.notify_all()
+        except BaseException as exc:  # noqa: BLE001 - re-raised to the judge
+            with self._cond:
+                self._error = exc
+                self._cond.notify_all()
+
+    def case(self, index):
+        if index < 1 or index > self._total:
+            raise JudgeSpecError(f'test case {index} out of range')
+        with self._cond:
+            while index not in self._pending:
+                if self._error is not None:
+                    raise self._error
+                if self._loader is None:
+                    raise JudgeSpecError(f'test case {index} unavailable')
+                if self._exhausted:
+                    raise JudgeSpecError(
+                        f'test data feed ended before case {index}'
+                    )
+                self._cond.wait()
+            case = self._pending.pop(index)
+            # A slot just freed: let the prefetcher start the next batch.
+            self._cond.notify_all()
+        return _case_view(case)
+
+    def close(self):
+        """Stop prefetching. Safe to call more than once."""
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+
+def judge_spec(spec, check_alive=None, global_timeout_sec=None,
+               case_loader=None, on_case_done=None):
+    """Compile and run one submission against its cases; return outcome.
+
+    Test data comes either inline (``spec['cases']``, legacy claim) or, when
+    only ``spec['total_cases']`` is present, from ``case_loader(offset,
+    limit)`` on demand. ``on_case_done(case_dict)`` is invoked after each
+    case finishes so a caller can report progress incrementally; it must not
+    raise (a failed progress report is never worth losing a verdict).
+    """
     language = spec['language']
     if language not in JUDGED_LANGUAGES:
         raise JudgeSpecError(f'unsupported language {language}')
 
-    cases = spec.get('cases') or []
-    if not cases:
+    inline_cases = list(spec.get('cases') or [])
+    total_cases = int(spec.get('total_cases') or 0) or len(inline_cases)
+    if total_cases <= 0 or (not inline_cases and case_loader is None):
         raise JudgeSpecError('no test cases in claim bundle')
 
     # Judging work starts here; everything from claimed_at to this point is
@@ -101,7 +226,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
     judge_started_at = _utcnow_iso()
 
     submission = _submission_view(spec)
-    tcs = _case_views(cases)
+    feed = _CaseFeed(inline_cases, total_cases, case_loader)
     image = LANG_IMAGE.get(language, 'oj-judge:latest')
     time_limit_ms = int(spec['time_limit_ms'])
     memory_limit_mb = int(spec['memory_limit_mb'])
@@ -158,9 +283,10 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
                 }
                 return outcome
 
-            for tc in tcs:
+            for index in range(1, total_cases + 1):
                 if check_alive is not None:
                     check_alive()
+                tc = feed.case(index)
                 runner.last_memory_kb = None
                 stdout, elapsed_ms, error = run_fn(tc.input_data)
                 actual = stdout if stdout is not None else ''
@@ -194,9 +320,12 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None):
                     'actual_output': actual,
                     'error_message': error_msg,
                 })
+                if on_case_done is not None:
+                    on_case_done(case_outcomes[-1])
 
             tests_done_at = _utcnow_iso()
     finally:
+        feed.close()
         shutil.rmtree(work_dir, ignore_errors=True)
 
     verdict = 'Accepted'

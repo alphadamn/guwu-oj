@@ -1,4 +1,5 @@
 import logging
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +10,11 @@ from submissions.container_pool import shutdown_pool, start_pool
 import redis
 from django.conf import settings
 from rq import SimpleWorker
+from rq.exceptions import DequeueTimeout, StopRequested
+from rq.logutils import blue, green
 from rq.timeouts import TimerDeathPenalty
+from rq.utils import now
+from rq.worker import WorkerStatus
 
 logger = logging.getLogger(__name__)
 
@@ -70,19 +75,20 @@ class AutoReconnectWorker(SimpleWorker):
         return ['default']
 
     def _refresh_heartbeat(self):
-        queue_names = self._queue_names()
-        for queue_name in queue_names:
-            key = f'judge:worker:{queue_name}'
-            self.connection.set(key, int(time.time()), ex=HEARTBEAT_TTL_SEC)
         # Keep the RQ worker record alive while long judge jobs run in
         # threads. The forking worker got this from monitor_work_horse().
         # heartbeat() hsets the worker key into existence, so it must not
         # run before register_birth() or bootstrap would see a stale record.
-        if getattr(self, 'birth_date', None) is not None:
-            try:
-                self.heartbeat()
-            except (redis.ConnectionError, redis.TimeoutError) as exc:
-                logger.warning('RQ heartbeat refresh failed: %s', exc)
+        # Everything goes through one pipeline: the broker is a WAN hop away
+        # from the judge machines, so each extra command costs a full RTT.
+        with self.connection.pipeline(transaction=False) as pipe:
+            for queue_name in self._queue_names():
+                pipe.set(
+                    f'judge:worker:{queue_name}', int(time.time()), ex=HEARTBEAT_TTL_SEC
+                )
+            if getattr(self, 'birth_date', None) is not None:
+                super().heartbeat(pipeline=pipe)
+            pipe.execute()
 
     def _heartbeat_loop(self):
         while not self._stop_heartbeat.wait(HEARTBEAT_INTERVAL_SEC):
@@ -126,6 +132,28 @@ class AutoReconnectWorker(SimpleWorker):
                 time.sleep(self.retry_delay)
         raise redis.ConnectionError('Failed to reconnect to Redis after multiple attempts.')
 
+    def heartbeat(self, timeout=None, pipeline=None):
+        """Extend the RQ worker TTL in one broker round trip.
+
+        Upstream issues ``hset`` and ``expire`` as two separate commands. The
+        judge machines reach the broker over a WAN link (~55ms RTT), and the
+        worker loop heartbeats several times per job, so pipelining the pair
+        halves the cost of every heartbeat.
+        """
+        if pipeline is not None:
+            return super().heartbeat(timeout, pipeline)
+        with self.connection.pipeline(transaction=False) as pipe:
+            super().heartbeat(timeout, pipe)
+            pipe.execute()
+
+    def check_for_suspension(self, burst):
+        """Skip the per-loop ``rq suspend`` probe.
+
+        Nothing in this project suspends workers, but upstream probes Redis on
+        every loop iteration, which costs a full round trip to the broker.
+        """
+        return
+
     def dequeue_job_and_maintain_ttl(self, timeout, max_idle_time=None):
         """Gate dequeuing on free concurrency slots.
 
@@ -133,6 +161,10 @@ class AutoReconnectWorker(SimpleWorker):
         popped job always has a worker thread ready for it. While every
         slot is busy, keep heartbeating so the worker record does not
         expire under long judgements.
+
+        The dequeue loop mirrors ``rq.worker.base.BaseWorker`` with a single
+        change: the ``IDLE`` state write shares one pipeline with the first
+        heartbeat, saving a broker round trip on every job.
         """
         while not self._job_slots.acquire(timeout=SLOT_WAIT_POLL_SEC):
             if self._stop_requested:
@@ -142,10 +174,69 @@ class AutoReconnectWorker(SimpleWorker):
             except (redis.ConnectionError, redis.TimeoutError) as exc:
                 logger.warning('Heartbeat while waiting for a judge slot failed: %s', exc)
         try:
-            return super().dequeue_job_and_maintain_ttl(timeout, max_idle_time)
+            return self._dequeue_job_and_maintain_ttl(timeout, max_idle_time)
         except BaseException:
             self._job_slots.release()
             raise
+
+    def _dequeue_job_and_maintain_ttl(self, timeout, max_idle_time):
+        result = None
+        qnames = ','.join(self.queue_names())
+
+        with self.connection.pipeline(transaction=False) as pipe:
+            self.set_state(WorkerStatus.IDLE, pipeline=pipe)
+            super().heartbeat(pipeline=pipe)
+            pipe.execute()
+        self.procline('Listening on ' + qnames)
+        self.log.debug('Worker %s: *** Listening on %s...', self.name, green(qnames))
+        connection_wait_time = 1.0
+        idle_since = now()
+        idle_time_left = max_idle_time
+        while True:
+            try:
+                if self.should_run_maintenance_tasks:
+                    self.run_maintenance_tasks()
+
+                if timeout is not None and idle_time_left is not None:
+                    timeout = min(timeout, idle_time_left)
+
+                result = self.queue_class.dequeue_any(
+                    self._ordered_queues,
+                    timeout,
+                    connection=self.connection,
+                    job_class=self.job_class,
+                    serializer=self.serializer,
+                    death_penalty_class=self.death_penalty_class,
+                )
+                if result is not None:
+                    job, queue = result
+                    self.reorder_queues(reference_queue=queue)
+                    job.redis_server_version = self.get_redis_server_version()
+                    if self.log_job_description:
+                        self.log.info('%s: %s (%s)', green(queue.name), blue(job.description), job.id)
+                    else:
+                        self.log.info('%s: %s', green(queue.name), job.id)
+
+                break
+            except DequeueTimeout:
+                if max_idle_time is not None:
+                    idle_for = (now() - idle_since).total_seconds()
+                    idle_time_left = math.ceil(max_idle_time - idle_for)
+                    if idle_time_left <= 0:
+                        break
+            except redis.exceptions.ConnectionError as conn_err:
+                self.log.error(
+                    'Worker %s: could not connect to Redis instance: %s retrying in %d seconds...',
+                    self.name,
+                    conn_err,
+                    connection_wait_time,
+                )
+                time.sleep(connection_wait_time)
+                connection_wait_time *= self.exponential_backoff_factor
+                connection_wait_time = min(connection_wait_time, self.max_connection_wait_time)
+
+        self.heartbeat()
+        return result
 
     def execute_job(self, job, queue):
         """Dispatch the dequeued job to the thread pool without blocking."""

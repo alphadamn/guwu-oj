@@ -6,11 +6,16 @@ DB-less task glue (HTTP claim -> judge core -> result envelope).
 """
 
 import json
+import os
+import shutil
+import tempfile
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, Client, override_settings
+from django.core.cache import cache
+from django.test import SimpleTestCase, TestCase, Client, override_settings
 
 from problems.models import Problem, TestCase as ProblemTestCase
 from submissions.models import Submission
@@ -95,6 +100,90 @@ class JudgeCoreTests(TestCase):
         self.assertEqual(outcome['cases'][0]['status'], 'Skipped')
         self.assertIn('boom', outcome['cases'][0]['error_message'])
 
+    def test_core_pulls_cases_lazily_and_reports_each(self):
+        from submissions.judge_core import judge_spec
+
+        all_cases = [
+            {'index': 1, 'input': '', 'expected': ''},
+            {'index': 2, 'input': '', 'expected': ''},
+        ]
+        calls = []
+
+        def loader(offset, limit):
+            calls.append((offset, limit))
+            return all_cases[offset:offset + limit]
+
+        specs = {
+            'submission_id': 999003, 'language': 'Python', 'code': 'print("")',
+            'user_id': self.user.id, 'time_limit_ms': 1000,
+            'memory_limit_mb': 256, 'total_cases': 2, 'cases': [],
+        }
+        done = []
+        with patch('submissions.judge.JudgeContainer') as container_class, \
+             patch('submissions.judge.container_pool.acquire',
+                   return_value=None), \
+             patch('submissions.judge.SandboxRunner._parse_time_stderr',
+                   return_value=(3, 0)):
+            container = container_class.return_value.__enter__.return_value
+            container.exec.return_value = SimpleNamespace(
+                returncode=0, stdout='\n', stderr='',
+            )
+            outcome = judge_spec(
+                specs, global_timeout_sec=5,
+                case_loader=loader, on_case_done=done.append,
+            )
+
+        self.assertEqual(outcome['verdict'], 'Accepted')
+        self.assertEqual([c['index'] for c in outcome['cases']], [1, 2])
+        # Every case finished is reported as it completes, in order.
+        self.assertEqual([c['index'] for c in done], [1, 2])
+        # One batch sufficed, so the loader is not re-hit per case. The
+        # request is clipped to the cases that exist, because a cache that
+        # only answers complete slices would miss a full batch past the end
+        # and force a network round trip in front of the final cases.
+        self.assertEqual(calls, [(0, 2)])
+
+    def test_case_feed_prefetches_ahead_of_the_consumer(self):
+        from submissions.judge_core import _CaseFeed
+
+        cases = [
+            {'index': i, 'input': '', 'expected': ''} for i in range(1, 5)
+        ]
+        calls = []
+        second_fetch_started = threading.Event()
+
+        def loader(offset, limit):
+            calls.append(offset)
+            if offset:
+                second_fetch_started.set()
+            return cases[offset:offset + limit]
+
+        feed = _CaseFeed([], len(cases), loader, batch=2)
+        try:
+            self.assertEqual(feed.case(1).case_index, 1)
+            # Batch two is on the wire while case two is still unread: a
+            # synchronous feed could not fetch again before the caller
+            # asked for a case it did not already hold.
+            self.assertTrue(second_fetch_started.wait(2.0))
+            self.assertEqual(feed.case(2).case_index, 2)
+        finally:
+            feed.close()
+        # Both batches came from one call each; the tail was not re-fetched.
+        self.assertEqual(calls, [0, 2])
+
+    def test_case_feed_surfaces_a_loader_failure(self):
+        from submissions.judge_core import _CaseFeed
+
+        def loader(offset, limit):
+            raise RuntimeError('test data feed exploded')
+
+        feed = _CaseFeed([], 1, loader, batch=1)
+        try:
+            with self.assertRaises(RuntimeError):
+                feed.case(1)
+        finally:
+            feed.close()
+
 
 @override_settings(JUDGE_INTERNAL_TOKEN=TEST_TOKEN)
 class InternalApiTests(TestCase):
@@ -137,6 +226,9 @@ class InternalApiTests(TestCase):
         self.assertEqual(data['cases'][0],
                          {'index': 1, 'input': '', 'expected': ''})
         self.assertTrue(data['claim_token'])
+        # Only the batched flow gets the cache key: computing it reads every
+        # test case, which a worker that inlines them does not need.
+        self.assertEqual(data['data_key'], '')
 
         self.submission.refresh_from_db()
         self.assertEqual(self.submission.judge_state, 'JUDGING')
@@ -166,6 +258,105 @@ class InternalApiTests(TestCase):
             'claim_token': data['claim_token'],
         })
         self.assertEqual(resp.json(), {'alive': False})
+
+    def test_batched_claim_omits_cases_and_serves_slices(self):
+        data = self._post('/internal/judge/claim/', {
+            'submission_id': self.submission.id, 'worker_id': 'w1',
+            'batched_cases': True,
+        }).json()
+        self.assertTrue(data['claimable'])
+        self.assertEqual(data['total_cases'], 3)
+        self.assertEqual(data['cases'], [])
+
+        from problems.fingerprint import compute_test_data_fingerprint
+        self.assertEqual(
+            data['data_key'], compute_test_data_fingerprint(self.problem.id),
+        )
+
+        first = self._post('/internal/judge/cases/', {
+            'submission_id': self.submission.id,
+            'claim_token': data['claim_token'], 'offset': 0, 'limit': 2,
+        }).json()
+        self.assertEqual(first['total'], 3)
+        self.assertEqual([c['index'] for c in first['cases']], [1, 2])
+
+        rest = self._post('/internal/judge/cases/', {
+            'submission_id': self.submission.id,
+            'claim_token': data['claim_token'], 'offset': 2, 'limit': 2,
+        }).json()
+        self.assertEqual([c['index'] for c in rest['cases']], [3])
+
+    def test_cases_endpoint_rejects_a_token_that_no_longer_owns(self):
+        data = self._post('/internal/judge/claim/', {
+            'submission_id': self.submission.id, 'worker_id': 'w1',
+            'batched_cases': True,
+        }).json()
+
+        from submissions.claiming import requeue_claim
+        requeue_claim(self.submission.id)
+
+        resp = self._post('/internal/judge/cases/', {
+            'submission_id': self.submission.id,
+            'claim_token': data['claim_token'], 'offset': 0, 'limit': 2,
+        })
+        self.assertEqual(resp.status_code, 409)
+        self.assertFalse(resp.json()['claimable'])
+
+
+@override_settings(CACHES={
+    'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+})
+class TestDataFingerprintTests(TestCase):
+    """The claim's ``data_key``: stable for unchanged data, moved by edits."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='fp-user', password='safe-test-password',
+        )
+        self.problem = _make_problem(self.user, cases=2)
+        cache.clear()
+
+    def _fingerprint(self, problem=None):
+        from problems.fingerprint import compute_test_data_fingerprint
+        return compute_test_data_fingerprint((problem or self.problem).id)
+
+    def test_repeated_calls_return_the_memoised_digest(self):
+        first = self._fingerprint()
+        self.assertEqual(len(first), 64)
+        self.assertEqual(self._fingerprint(), first)
+
+    def test_identical_text_in_another_problem_is_a_different_key(self):
+        # The digest covers row identity as well as text, so two problems
+        # holding the same strings cannot share a cache entry.
+        self.assertNotEqual(
+            self._fingerprint(_make_problem(self.user)), self._fingerprint(),
+        )
+
+    def test_editing_a_case_moves_the_key(self):
+        before = self._fingerprint()
+        case = self.problem.test_cases.first()
+        case.expected_output = 'changed'
+        case.save()
+        self.assertNotEqual(self._fingerprint(), before)
+
+    def test_deleting_a_case_moves_the_key(self):
+        before = self._fingerprint()
+        self.problem.test_cases.first().delete()
+        self.assertNotEqual(self._fingerprint(), before)
+
+    def test_bulk_inserted_cases_move_the_key(self):
+        # Importer scripts use bulk_create, which fires no signals: the shape
+        # check on read has to catch it.
+        before = self._fingerprint()
+        ProblemTestCase.objects.bulk_create([
+            ProblemTestCase(
+                problem=self.problem, input_data='1', expected_output='2',
+            ),
+        ])
+        self.assertNotEqual(self._fingerprint(), before)
+
+    def test_problem_without_cases_has_no_key(self):
+        self.assertEqual(self._fingerprint(_make_problem(self.user, cases=0)), '')
 
 
 class ConsumerWritebackTests(TestCase):
@@ -221,6 +412,50 @@ class ConsumerWritebackTests(TestCase):
         self.assertEqual(process_envelope(raw2, conn), 'ok')
         self.assertEqual(self.submission.test_results.count(), 2)
         self.assertIn(self.problem, list(self.user.solved_problems.all()))
+
+    def test_partial_envelope_writes_one_case_and_publishes(self):
+        from submissions.results import process_envelope
+
+        token = self._claim()
+        conn = MagicMock()
+        with patch('submissions.realtime.publish_submission_changed') as notify:
+            self.assertEqual(process_envelope(json.dumps({
+                'kind': 'partial', 'submission_id': self.submission.id,
+                'claim_token': str(token), 'worker_id': 'w1',
+                'case': {'index': 1, 'status': 'Accepted', 'runtime_ms': 4,
+                         'actual_output': '', 'error_message': ''},
+            }).encode(), conn), 'ok')
+            notify.assert_called_once_with(self.submission.id)
+
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'JUDGING')
+        self.assertEqual(self.submission.test_results.count(), 1)
+        self.assertEqual(self.submission.test_results.get().case_index, 1)
+
+        # The terminal envelope stays authoritative and rewrites every case.
+        process_envelope(
+            json.dumps(self._envelope(token)).encode(), conn,
+        )
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.test_results.count(), 2)
+        self.assertEqual(self.submission.judge_state, 'DONE')
+
+    def test_partial_with_stale_token_is_dropped(self):
+        from submissions.results import process_envelope
+
+        token_a = self._claim()
+        from submissions.claiming import claim_submission, requeue_claim
+        requeue_claim(self.submission.id)
+        claim_submission(self.submission.id, 'w2')
+        conn = MagicMock()
+        with patch('submissions.realtime.publish_submission_changed') as notify:
+            self.assertEqual(process_envelope(json.dumps({
+                'kind': 'partial', 'submission_id': self.submission.id,
+                'claim_token': str(token_a), 'worker_id': 'w1',
+                'case': {'index': 1, 'status': 'Accepted', 'runtime_ms': 4},
+            }).encode(), conn), 'ok')
+            notify.assert_not_called()
+        self.assertEqual(self.submission.test_results.count(), 0)
 
     def test_stale_token_envelope_discarded(self):
         from submissions.results import process_envelope
@@ -375,3 +610,96 @@ class DblessTaskGlueTests(TestCase):
         # The row was never claimed (no DB in the task path at all).
         self.submission.refresh_from_db()
         self.assertEqual(self.submission.judge_state, 'PENDING')
+
+    def test_second_run_reads_test_data_from_disk(self):
+        from submissions.tasks import judge_submission_task
+
+        root = tempfile.mkdtemp(prefix='oj-case-cache-')
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        row = {'index': 1, 'input': '1 2', 'expected': '3'}
+        bundle = {
+            'claimable': True, 'claim_token': '22222222-2222-2222-2222-222222222222',
+            'submission_id': self.submission.id, 'language': 'Python',
+            'code': 'print(1)', 'user_id': self.user.id,
+            'is_contest': False, 'time_limit_ms': 1000,
+            'memory_limit_mb': 256, 'subprocess_timeout_sec': 5,
+            'total_cases': 1, 'data_key': 'c' * 64, 'cases': [],
+        }
+        outcome = {'verdict': 'Accepted', 'runtime_ms': 1, 'memory_kb': 1,
+                   'cases': []}
+        job = self._fake_job()
+        with override_settings(OJ_CASE_CACHE_DIR=root,
+                               OJ_CASE_CACHE_MAX_SIZE='0'), \
+             patch('submissions.tasks.get_current_job', return_value=job), \
+             patch('submissions.worker_api.JudgeApiClient') as Api, \
+             patch('submissions.judge_core.judge_spec',
+                   return_value=outcome) as spec_mock:
+            Api.return_value.claim.return_value = bundle
+            Api.return_value.heartbeat.return_value = True
+            Api.return_value.fetch_cases.return_value = [row]
+            judge_submission_task(self.submission.id)
+            loader = spec_mock.call_args.kwargs['case_loader']
+
+            self.assertEqual(loader(0, 1), [row])
+            self.assertEqual(Api.return_value.fetch_cases.call_count, 1)
+
+            # Second submission of the same problem: served from disk.
+            self.assertEqual(loader(0, 1), [row])
+            self.assertEqual(Api.return_value.fetch_cases.call_count, 1)
+
+
+class CaseStoreTests(SimpleTestCase):
+    """Local test data copy: round trip, isolation and the size cap."""
+
+    def setUp(self):
+        from submissions.case_store import CaseStore
+
+        self.CaseStore = CaseStore
+        self.root = tempfile.mkdtemp(prefix='oj-case-store-')
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def _store(self, key='a' * 64, max_bytes=0):
+        return self.CaseStore(key, directory=self.root, max_bytes=max_bytes)
+
+    def test_round_trip_and_miss(self):
+        rows = [{'index': 1, 'input': '1 2', 'expected': '3'},
+                {'index': 2, 'input': '4', 'expected': '4'}]
+        store = self._store()
+        self.assertIsNone(store.get(0, 2))
+        store.put(rows)
+        self.assertEqual(store.get(0, 2), rows)
+        self.assertEqual(store.get(1, 1), [rows[1]])
+        # Asking past the stored range is a miss, not a short answer.
+        self.assertIsNone(store.get(2, 1))
+        # A different problem's entries are not visible under this key.
+        self.assertIsNone(self._store(key='b' * 64).get(0, 2))
+
+    def test_unusable_key_or_directory_is_disabled(self):
+        from submissions.case_store import parse_size
+
+        self.assertEqual(parse_size('2G'), 2 * 1024 ** 3)
+        self.assertEqual(parse_size('nonsense'), 0)
+        rows = [{'index': 1, 'input': '', 'expected': ''}]
+        for store in (
+            self._store(key=''),
+            self._store(key='../../etc'),
+            self.CaseStore('a' * 64, directory='', max_bytes=0),
+        ):
+            self.assertFalse(store.enabled)
+            store.put(rows)
+            self.assertIsNone(store.get(0, 1))
+        self.assertEqual(os.listdir(self.root), [])
+
+    def test_prune_evicts_the_least_recently_used_problem(self):
+        from submissions.case_store import _dir_size
+
+        cold, hot = 'a' * 64, 'b' * 64
+        row = {'index': 1, 'input': 'x' * 512, 'expected': 'y' * 512}
+        self._store(key=cold).put([row])
+        cap = _dir_size(os.path.join(self.root, cold)) + 8
+
+        with patch('submissions.case_store._PRUNE_EVERY_BYTES', 1):
+            self._store(key=hot, max_bytes=cap).put([row])
+
+        self.assertEqual(os.listdir(self.root), [hot])
+

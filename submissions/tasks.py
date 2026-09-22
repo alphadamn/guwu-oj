@@ -1,6 +1,8 @@
 import django
 import os
 import logging
+import threading
+import time
 
 # Setup Django before importing models
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oj_project.settings')
@@ -10,6 +12,9 @@ from rq import get_current_job
 from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
+
+# Timestamp of the last throttled worker-IP report (see _report_worker_ip).
+_ip_reported_at = 0.0
 
 
 def _release_legacy_machine(job):
@@ -86,9 +91,42 @@ def _result_envelope(submission_id, token, worker_id, outcome):
     }
 
 
+def _report_worker_ip(client, worker_id, force=False):
+    """Announce this worker's edge IP so the direct-link firewall opens.
+
+    Workers behind NAT are renumbered by the ISP, which silently breaks the
+    direct base URL. Reporting over the CDN base lets the web side rebuild
+    its whitelist. Throttled, because the address is stable for hours at a
+    time; failures are ignored (the next report, or the forced retry after
+    a failed claim, picks the change up).
+    """
+    global _ip_reported_at
+
+    from django.conf import settings
+
+    now = time.monotonic()
+    interval = float(getattr(settings, 'OJ_JUDGE_IP_REPORT_INTERVAL', 600) or 0)
+    if not force and _ip_reported_at and now - _ip_reported_at < interval:
+        return
+    _ip_reported_at = now
+    if force:
+        # Recovery path: the caller is about to retry a claim that just
+        # failed, so the whitelist must be rebuilt before that retry.
+        client.report_ip(worker_id)
+        return
+    # Otherwise stay off the critical path: the claim must not wait for a
+    # CDN round trip, which on a WAN-linked judge is tens of milliseconds.
+    threading.Thread(
+        target=client.report_ip, args=(worker_id,),
+        name=f'judge-report-ip-{worker_id}', daemon=True,
+    ).start()
+
+
 def _judge_task_dbless(submission_id, job):
     """DB-less worker path: HTTP claim -> judge core -> result list."""
+    from submissions.case_store import CaseStore
     from submissions.claiming import default_worker_id
+    from submissions.judge import truncate_text
     from submissions.judge_core import JudgeSpecError, judge_spec
     from submissions.result_queue import push_envelope
     from submissions.worker_api import (
@@ -101,18 +139,32 @@ def _judge_task_dbless(submission_id, job):
     worker_id = default_worker_id()
     client = JudgeApiClient()
 
+    _report_worker_ip(client, worker_id)
+
     # A missing/invalid token or malformed bundle is a permanent error for
     # this job; transport failures surface as ClaimEndpointUnavailable.
     try:
         bundle = client.claim(submission_id, worker_id)
     except ClaimEndpointUnavailable as exc:
-        logger.error('Claim API unavailable for %s: %r', submission_id, exc)
-        push_envelope(job.connection, {
-            'kind': 'infra', 'submission_id': submission_id,
-            'claim_token': None, 'worker_id': worker_id,
-            'error': f'claim endpoint unavailable: {exc}',
-        })
-        return None
+        # Most likely cause: our NAT address changed, so the direct base is
+        # black-holed. Re-report through the CDN base, then try once more.
+        logger.warning(
+            'Claim API unavailable for %s (%r); re-reporting worker IP',
+            submission_id, exc,
+        )
+        _report_worker_ip(client, worker_id, force=True)
+        try:
+            bundle = client.claim(submission_id, worker_id)
+        except ClaimEndpointUnavailable as retry_exc:
+            logger.error(
+                'Claim API unavailable for %s: %r', submission_id, retry_exc,
+            )
+            push_envelope(job.connection, {
+                'kind': 'infra', 'submission_id': submission_id,
+                'claim_token': None, 'worker_id': worker_id,
+                'error': f'claim endpoint unavailable: {retry_exc}',
+            })
+            return None
 
     if not bundle.get('claimable'):
         logger.info(
@@ -125,6 +177,53 @@ def _judge_task_dbless(submission_id, job):
     heartbeat = HttpHeartbeat(client, submission_id, token)
     heartbeat.start()
     try:
+        # Keyed on the test data's content fingerprint, so a re-import of the
+        # problem (new key) cannot be served the old bytes.
+        store = CaseStore(bundle.get('data_key') or '')
+
+        def load_case_batch(offset, limit):
+            # Pulled mid-judging: the claim response carries no test data,
+            # so the gap between claimed_at and judge_started_at no longer
+            # scales with the size of the problem's test data.
+            cached = store.get(offset, limit)
+            if cached is not None:
+                logger.debug(
+                    'Test data cache hit for submission %s (offset %s)',
+                    submission_id, offset,
+                )
+                return cached
+            rows = client.fetch_cases(submission_id, token, offset, limit)
+            store.put(rows)
+            return rows
+
+        def report_case(case):
+            # Progress only. A dropped partial costs the user a later
+            # refresh, never the verdict, so failures are swallowed.
+            #
+            # The raw stdout of a case can be megabytes (a correct answer to
+            # a big test case *is* megabytes of expected output). Shipping
+            # that over the WAN to Redis on every single case dominated the
+            # test phase, so trim to what the detail page actually shows --
+            # same limit the final outcome uses.
+            trimmed = dict(case)
+            trimmed['actual_output'] = truncate_text(
+                case.get('actual_output', '')
+            )
+            trimmed['error_message'] = truncate_text(
+                case.get('error_message', ''), 2000
+            )
+            try:
+                push_envelope(job.connection, {
+                    'kind': 'partial', 'submission_id': submission_id,
+                    'claim_token': str(token), 'worker_id': worker_id,
+                    'case': trimmed,
+                })
+            except Exception:
+                logger.debug(
+                    'Could not push partial result for submission %s',
+                    submission_id, exc_info=True,
+                )
+
         spec = {
             'submission_id': submission_id,
             'language': bundle['language'],
@@ -132,6 +231,7 @@ def _judge_task_dbless(submission_id, job):
             'user_id': bundle.get('user_id', 0),
             'time_limit_ms': bundle['time_limit_ms'],
             'memory_limit_mb': bundle['memory_limit_mb'],
+            'total_cases': bundle.get('total_cases') or 0,
             'cases': bundle.get('cases') or [],
         }
         try:
@@ -139,6 +239,8 @@ def _judge_task_dbless(submission_id, job):
                 spec,
                 check_alive=heartbeat.ensure_alive,
                 global_timeout_sec=bundle.get('subprocess_timeout_sec'),
+                case_loader=load_case_batch,
+                on_case_done=report_case,
             )
         except ClaimLostError:
             logger.warning(

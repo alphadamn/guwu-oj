@@ -23,6 +23,25 @@ profile oj-judge flags=(attach_disconnected) {
   /sandbox/ r,
 
 
+  # Shared ccache directory, bind-mounted from the judge host and reused by
+  # every judge container on that host. Read/write/lock only: no execute, so
+  # the cache can never become an alternate launch path for a submission.
+  /ccache/ rw,
+  /ccache/** rwmk,
+
+  # Precompiled C++ standard library header baked into the oj-cpp image;
+  # g++ only ever reads it (mmap), never writes.
+  /pch/ r,
+  /pch/** rm,
+
+
+  # A login shell runs the timed test command and sources /etc/profile, whose
+  # Debian default loops over /etc/profile.d/*.sh. Denying that turned every
+  # test case into audit-log denials.
+  /etc/profile.d/ rix,
+  /etc/profile.d/** r,
+
+
 
   # Allow read access to system libraries
 
