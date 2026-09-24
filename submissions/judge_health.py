@@ -39,6 +39,55 @@ def check_worker_heartbeat(redis_client, queue_name):
         return False
 
 
+# The central broker connection is process-wide; reuse it across the
+# per-machine checks in one health endpoint call.
+_central_client_cache = None
+
+
+def _central_broker_client():
+    """Redis client for the central judge broker (``None`` if unavailable)."""
+    global _central_client_cache
+    if _central_client_cache is None:
+        try:
+            from django_rq import get_connection
+
+            _central_client_cache = get_connection()
+        except Exception as exc:
+            logger.warning('Could not resolve central broker connection: %s', exc)
+            _central_client_cache = False
+    return _central_client_cache or None
+
+
+def check_central_worker_heartbeat():
+    """Fleet-level worker liveness on the central broker.
+
+    With ``OJ_CENTRAL_QUEUE`` every worker consumes the shared central lanes
+    (``judge:queue`` / ``-pro`` / ``-plus`` / ``-ai``) and writes its
+    ``judge:worker:<lane>`` epoch heartbeat there instead of into each
+    machine's local Redis. Heartbeats are therefore fleet-level: one fresh
+    key on any lane means the worker fleet is alive and draining.
+    """
+    client = _central_broker_client()
+    if client is None:
+        return False, 'central broker unavailable'
+    try:
+        now = time.time()
+        for key in client.scan_iter(match='judge:worker:*'):
+            raw = client.get(key)
+            if raw is None:
+                continue
+            try:
+                age = now - float(raw)
+            except (TypeError, ValueError):
+                continue
+            if age <= WORKER_HEARTBEAT_TTL_SEC:
+                return True, 'ok'
+        return False, 'no recent worker heartbeat on central broker'
+    except Exception as exc:
+        logger.warning('Central worker heartbeat check failed: %s', exc)
+        return False, str(exc)[:200]
+
+
 def check_docker_daemon():
     if shutil.which('docker') is None:
         return False, 'docker binary not found'
@@ -85,8 +134,16 @@ def evaluate_machine_health(machine, redis_client, check_local_docker=False):
     redis_ok = check_redis_ping(redis_client)
     checks['redis'] = (redis_ok, 'ok' if redis_ok else 'ping failed')
 
-    hb_ok = redis_ok and check_worker_heartbeat(redis_client, machine['queue'])
-    checks['worker'] = (hb_ok, 'ok' if hb_ok else 'no recent worker heartbeat')
+    from django.conf import settings
+
+    if getattr(settings, 'OJ_CENTRAL_QUEUE', False):
+        # Central queue: all workers heartbeat to the shared broker rather
+        # than to this machine's local Redis, so liveness is fleet-level.
+        hb_ok, hb_detail = check_central_worker_heartbeat()
+        checks['worker'] = (hb_ok, hb_detail)
+    else:
+        hb_ok = redis_ok and check_worker_heartbeat(redis_client, machine['queue'])
+        checks['worker'] = (hb_ok, 'ok' if hb_ok else 'no recent worker heartbeat')
 
     if check_local_docker:
         docker_ok, docker_detail = check_docker_daemon()

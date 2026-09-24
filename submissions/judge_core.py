@@ -73,6 +73,14 @@ def _submission_view(spec):
         language=spec['language'],
         code=spec['code'],
         user_id=spec.get('user_id', 0),
+        # Function-style problems: ship the grader/header files alongside
+        # the source so compile_cpp can write them to the work dir. Standard
+        # problems send problem_type='standard' and an empty list (no-op).
+        problem_type=spec.get('problem_type') or 'standard',
+        function_files=spec.get('function_files') or [],
+        # Interactive problems: which Communication protocol and how many
+        # user processes (see problems.Problem.interactive_config).
+        interactive_config=spec.get('interactive_config') or {},
     )
 
 
@@ -371,7 +379,26 @@ def _compile(runner, submission, work_dir):
         return None
 
     if language == 'C++':
-        exe, err = runner.compile_cpp(code)
+        if submission.problem_type == 'interactive':
+            manager_cmd, user_cmd, err = runner.compile_cpp_interactive(
+                code, submission.function_files,
+            )
+            if err:
+                return compile_failed(err)
+            cfg = submission.interactive_config or {}
+            try:
+                num_processes = int(cfg.get('num_processes') or 1)
+            except (TypeError, ValueError):
+                num_processes = 1
+            user_io = cfg.get('user_io') or 'fifo_io'
+            return lambda stdin: runner.run_interactive(
+                manager_cmd, user_cmd, stdin, num_processes, user_io,
+            )
+        exe, err = runner.compile_cpp(
+            code,
+            problem_type=submission.problem_type,
+            function_files=submission.function_files,
+        )
         if err:
             return compile_failed(err)
         return lambda stdin: runner.run_executable([exe], stdin)

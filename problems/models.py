@@ -1,3 +1,4 @@
+import json
 import re
 
 from django.db import models
@@ -57,7 +58,13 @@ class Problem(models.Model):
         ('省选', '省选'),
         ('NOI', 'NOI'),
     ]
-    
+
+    PROBLEM_TYPE_CHOICES = [
+        ('standard', '标准题'),
+        ('function', '函数题'),
+        ('interactive', '交互题'),
+    ]
+
     title = models.CharField(max_length=200)
     description = models.TextField()
     input_format = models.TextField()
@@ -80,6 +87,27 @@ class Problem(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_public = models.BooleanField(default=True)
+    # 函数题（IOI 风格）：用户只提交函数实现，题目提供 grader/header。
+    # function_files 存 JSON 数组 [{name, content}, ...]，由 judge.py 写入
+    # 工作目录后与用户 submission.cpp 一起编译链接。standard 题忽略此字段。
+    problem_type = models.CharField(
+        max_length=16, choices=PROBLEM_TYPE_CHOICES, default='standard',
+    )
+    function_files = models.TextField(
+        blank=True, default='[]',
+        help_text='函数题/交互题专用：JSON 数组 [{"name": "...", "content": "..."}]',
+    )
+    # 交互题（IOI 风格 Communication）：用户提交的代码与题目自带的
+    # manager/stub 通过管道通信，判定由 manager 打印。
+    # interactive_config 存 JSON 对象，目前使用两个键：
+    #   num_processes: 用户进程数量（每道题 1~2）
+    #   user_io: 'fifo_io'（用户进程用 argv 拿到两个 FIFO 路径）、
+    #            'std_io'（用户进程的 stdin/stdout 被重定向到 FIFO）或
+    #            'file_io'（manager 用 ifstream 读普通文件，串行执行）
+    interactive_config = models.TextField(
+        blank=True, default='{}',
+        help_text='交互题专用：JSON 对象 {"num_processes": 1, "user_io": "fifo_io"}',
+    )
     
     class Meta:
         ordering = ['-created_at']
@@ -88,6 +116,60 @@ class Problem(models.Model):
 
     def __str__(self):
         return f"P{self.id} - {self.title}"
+
+    @property
+    def function_files_parsed(self):
+        """Parse function_files JSON into a list of {name, content} dicts.
+
+        Robust to missing/invalid data: returns [] so callers (judge,
+        claim bundle) never crash on a malformed standard-problem row.
+        """
+        raw = (self.function_files or '').strip()
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        cleaned = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get('name') or '').strip()
+            content = str(item.get('content') or '')
+            if name:
+                cleaned.append({'name': name, 'content': content})
+        return cleaned
+
+    @property
+    def interactive_config_parsed(self):
+        """Parse interactive_config JSON into a dict with sane defaults.
+
+        Robust to missing/invalid data so callers never crash on a
+        malformed row: unknown/garbage values fall back to a single
+        fifo_io process, which is the most common grader layout.
+        """
+        config = {'num_processes': 1, 'user_io': 'fifo_io'}
+        raw = (self.interactive_config or '').strip()
+        if not raw:
+            return config
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return config
+        if not isinstance(data, dict):
+            return config
+        try:
+            num = int(data.get('num_processes') or 1)
+        except (ValueError, TypeError):
+            num = 1
+        config['num_processes'] = num if num > 0 else 1
+        user_io = str(data.get('user_io') or '').strip()
+        if user_io in ('fifo_io', 'std_io', 'file_io'):
+            config['user_io'] = user_io
+        return config
 
     def _invalidate_caches(self):
         """Invalidate bounded cache keys without Redis-wide pattern deletes."""

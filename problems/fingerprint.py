@@ -29,7 +29,7 @@ from django.core.cache import cache
 from django.db.models import Count, Max, Sum
 from django.db.models.signals import post_delete, post_save
 
-from .models import TestCase
+from .models import Problem, TestCase
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +40,30 @@ CACHE_TTL = 60 * 60 * 24 * 30
 
 
 def _shape(problem_id):
-    """Metadata that moves on any test-case insert or delete."""
+    """Metadata that moves on any test-case insert or delete.
+
+    Also folds in a digest of the problem's ``function_files`` so a grader
+    edit (which leaves the TestCase rows untouched) still invalidates the
+    cached fingerprint — without it, a worker would judge a fresh submission
+    against the previous grader.
+    """
     agg = TestCase.objects.filter(problem_id=problem_id).aggregate(
         count=Count('id'),
         max_id=Max('id'),
         order_sum=Sum('order'),
     )
-    return (agg['count'] or 0, agg['max_id'] or 0, agg['order_sum'] or 0)
+    func_files = (
+        Problem.objects
+        .filter(pk=problem_id)
+        .values_list('function_files', flat=True)
+        .first()
+    ) or ''
+    return (
+        agg['count'] or 0,
+        agg['max_id'] or 0,
+        agg['order_sum'] or 0,
+        hashlib.sha256(func_files.encode('utf-8', 'surrogatepass')).hexdigest(),
+    )
 
 
 def _digest(problem_id):
@@ -68,6 +85,18 @@ def _digest(problem_id):
         digest.update(b'\0')
         digest.update((expected_output or '').encode('utf-8', 'surrogatepass'))
         digest.update(b'\0')
+    # Function-style problems: the grader/header files are part of the
+    # judging contract, so they belong in the worker cache key. A grader
+    # change with identical test data must invalidate the cached payload.
+    func_files = (
+        Problem.objects
+        .filter(pk=problem_id)
+        .values_list('function_files', flat=True)
+        .first()
+    ) or ''
+    digest.update(b'files\0')
+    digest.update(func_files.encode('utf-8', 'surrogatepass'))
+    digest.update(b'\0')
     return digest.hexdigest()
 
 
@@ -120,6 +149,14 @@ def _test_case_changed(sender, instance, **kwargs):
     invalidate_test_data_fingerprint(instance.problem_id)
 
 
+def _problem_changed(sender, instance, **kwargs):
+    # A grader/header edit on a function problem leaves TestCase rows alone,
+    # so the TestCase signal would not fire. The Problem save itself must
+    # invalidate the cached fingerprint or workers would judge with a stale
+    # grader until the shape mismatch re-digests on the next read.
+    invalidate_test_data_fingerprint(getattr(instance, 'id', None) or instance.pk)
+
+
 def connect_signals():
     post_save.connect(
         _test_case_changed, sender=TestCase,
@@ -128,4 +165,8 @@ def connect_signals():
     post_delete.connect(
         _test_case_changed, sender=TestCase,
         dispatch_uid='oj.testdata.fp.deleted',
+    )
+    post_save.connect(
+        _problem_changed, sender=Problem,
+        dispatch_uid='oj.testdata.fp.problem.saved',
     )

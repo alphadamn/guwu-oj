@@ -117,6 +117,9 @@ def claim_view(request):
         total_cases = 0
         time_limit_ms = None
         memory_limit_mb = None
+        problem_type = 'standard'
+        function_files = []
+        interactive_config = {}
     else:
         cases_qs = problem.test_cases.order_by('order', 'id')
         total_cases = cases_qs.count()
@@ -130,6 +133,11 @@ def claim_view(request):
         ]
         time_limit_ms = problem.time_limit
         memory_limit_mb = problem.memory_limit
+        # Function-style problems ship grader/header files alongside the test
+        # data; the worker writes them to its work dir before compiling.
+        problem_type = problem.problem_type
+        function_files = problem.function_files_parsed
+        interactive_config = problem.interactive_config_parsed
         if batched_cases:
             # Lets the worker keep its own copy of this problem's test data
             # and skip the download on the next submission. Only batched
@@ -162,6 +170,15 @@ def claim_view(request):
         # under this key and re-downloads only when it changes.
         'data_key': data_key,
         'cases': cases,
+        # 'standard', 'function' or 'interactive'. Workers branch compile_cpp
+        # (and compile_cpp_interactive) on this; non-C++ submissions on
+        # function/interactive problems are rejected at submit time, so the
+        # worker never sees them here.
+        'problem_type': problem_type,
+        # List of {"name": "...", "content": "..."}; empty for standard.
+        'function_files': function_files,
+        # Interactive problems only: {"num_processes": N, "user_io": ...}.
+        'interactive_config': interactive_config,
     })
 
 

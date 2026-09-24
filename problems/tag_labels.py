@@ -158,10 +158,10 @@ PROVENANCE_EXACT = {
     '洛谷', 'Luogu', 'Codeforces', 'AtCoder', 'CodeChef', 'SPOJ', 'HDU',
     'POJ', 'UVa', 'UVA', 'Kattis', 'Timus', 'Yandex', 'TopCoder', 'Google',
     'USACO', 'HackerEarth', 'AOJ', 'LibreOJ', '洛谷网', 'GeeksforGeeks', 
-    'HackerRank', 'GOLD', 'SILVER', 'BRONZE', 'PLATINUM', 
+    'HackerRank', 'GOLD', 'SILVER', 'BRONZE', 'PLATINUM', 'IOI', 'IOI2024', 
 }
 
-_PROV_PREFIXES = ('cc:', 'cf:', 'contest:', 'usaco:', 'taco:', 'ht:')
+_PROV_PREFIXES = ('cc:', 'cf:', 'contest:', 'usaco:', 'taco:', 'ht:', 'ioi:')
 _PID_RE = re.compile(r'^P\d+$')
 _CF_RATING_RE = re.compile(r'^CF\d+$', re.IGNORECASE)
 

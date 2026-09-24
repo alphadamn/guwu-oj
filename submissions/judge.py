@@ -35,7 +35,6 @@ import grp
 import logging
 import re
 import secrets
-import shlex
 import shutil
 import subprocess
 import tempfile
@@ -287,8 +286,13 @@ class SandboxRunner:
         return elapsed_ms, memory_kb
 
     def _timed_command(self, cmd):
-        cmd_str = " ".join(shlex.quote(arg) for arg in cmd)
-        return ["/bin/bash", "-lc", f"/usr/bin/time -f \"OJ_TIME %M %e\" {cmd_str}"]
+        # Call /usr/bin/time directly instead of wrapping in `bash -lc`.
+        # Spawning a login shell per test case cost ~10-30 ms on the host
+        # (profile sourcing, fork/exec of bash); for a problem with many
+        # short cases that overhead dominated the test phase. The time
+        # utility execs the program directly, and stdin flows through
+        # `docker exec -i` unchanged.
+        return ["/usr/bin/time", "-f", "OJ_TIME %M %e", *cmd]
 
     # ── low-level runner ────────────────────────────────────────────────
 
@@ -313,7 +317,9 @@ class SandboxRunner:
 
     # ── compile steps (run once per submission) ────────────────────────
 
-    def compile_cpp(self, code):
+    def compile_cpp(self, code, problem_type='standard', function_files=None):
+        if problem_type == 'function' and function_files:
+            return self._compile_cpp_function(code, function_files)
         src = Path(self.work_dir) / "main.cpp"
         src.write_text(code, encoding="utf-8")
         # Compile (-c) and link are split so ccache can cache the object:
@@ -348,6 +354,214 @@ class SandboxRunner:
         except OSError:
             pass
         return "./main", None
+
+    # Regex that flags a grader .cpp which textually #include's the user's
+    # submission. Such graders must NOT be linked against submission.o or
+    # every symbol gets defined twice. Common IOI naming: submission, user,
+    # solution, plus the problem id (we accept any of them).
+    _USER_CODE_INCLUDE_RE = re.compile(
+        r'#include\s*"\s*(submission|user|solution)[^"]*\.cpp\s*"'
+    )
+
+    def _compile_cpp_function(self, code, function_files):
+        """Compile an IOI-style function submission.
+
+        User's code is written to ``submission.cpp``; each problem-provided
+        file (grader, header, ...) is written alongside it. The grader's
+        convention is auto-detected:
+
+        * **link-style** — grader calls the user's function via ``extern``;
+          submission.cpp and grader.cpp become separate translation units
+          and are linked together.
+        * **include-style** — grader.cpp ``#include``s submission.cpp
+          directly; submission.cpp must NOT be a separate TU (or symbols
+          duplicate).
+
+        Each .cpp is compiled with ``-c`` so ccache can cache it; the link
+        step stays plain g++.
+        """
+        work = Path(self.work_dir)
+        # Write the user's submission first.
+        (work / "submission.cpp").write_text(code, encoding="utf-8")
+        cpp_files = []
+        for entry in function_files or []:
+            name = (entry.get('name') or '').strip()
+            content = entry.get('content') or ''
+            if not name:
+                continue
+            # Defence in depth: a malicious path must not escape work_dir.
+            dest = (work / name)
+            try:
+                dest_resolved = dest.resolve()
+                work_resolved = work.resolve()
+            except OSError:
+                return None, f"Invalid file path: {name}"
+            if not str(dest_resolved).startswith(str(work_resolved) + os.sep) \
+               and dest_resolved != work_resolved:
+                return None, f"Illegal file path: {name}"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+            if name.endswith('.cpp'):
+                cpp_files.append(name)
+
+        # Detect include-style graders. If any grader #include's the user's
+        # submission textually, we drop submission.cpp from the TU list so
+        # the symbols come from the grader's textual include alone.
+        include_user_code = False
+        for name in cpp_files:
+            try:
+                text = (work / name).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if self._USER_CODE_INCLUDE_RE.search(text):
+                include_user_code = True
+                break
+
+        if include_user_code:
+            tu_files = list(cpp_files)
+        else:
+            tu_files = ['submission.cpp'] + list(cpp_files)
+
+        if not tu_files:
+            return None, "Function problem has no grader .cpp file"
+
+        # Build the include search path so an `#include "nile.h"` written by
+        # the user in submission.cpp (sitting at the work_dir root) can still
+        # resolve a header shipped inside a subdir like `graders/nile.h`.
+        # Without -I, the compiler only looks in the directory of the source
+        # file being compiled, so the grader finds its sibling header but the
+        # user's submission does not.
+        include_dirs = ['.']
+        for entry in function_files or []:
+            n = (entry.get('name') or '').strip()
+            if '/' in n:
+                parent = n.rsplit('/', 1)[0]
+                if parent and parent not in include_dirs:
+                    include_dirs.append(parent)
+        include_flags = [f"-I{d}" for d in include_dirs]
+        pch = _pch_include_flags(self, self.image)
+        obj_files = []
+        for src_name in tu_files:
+            # Object name must be unique per source; strip any subdirectory
+            # so "sub/grader.cpp" -> "grader.o" rather than colliding.
+            base = src_name.rsplit('/', 1)[-1]
+            obj_name = base.rsplit('.', 1)[0] + '.o'
+            cmd = _compiler_command(
+                ["g++", "-std=c++17", "-O1", *include_flags, *pch,
+                 "-c", src_name, "-o", obj_name],
+                self.image,
+            )
+            try:
+                res = self._run(cmd, COMPILE_TIMEOUT_SEC, is_compile=True)
+            except subprocess.TimeoutExpired:
+                return None, "Compile timeout"
+            if res.returncode != 0:
+                return None, (res.stderr or res.stdout or "Compilation failed").strip()
+            obj_files.append(obj_name)
+
+        try:
+            res = self._run(
+                ["g++", *obj_files, "-o", "main"],
+                COMPILE_TIMEOUT_SEC, is_compile=True,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "Link timeout"
+        if res.returncode != 0:
+            return None, (res.stderr or res.stdout or "Linking failed").strip()
+        try:
+            os.chmod(Path(self.work_dir) / "main", 0o700)
+        except OSError:
+            pass
+        return "./main", None
+
+    def compile_cpp_interactive(self, code, files):
+        """Build both executables of an interactive (Communication) task.
+
+        Returns ``(manager_cmd, user_cmd, error)``. Every problem file is
+        written to the work dir, so a shipped ``manager.cpp`` brings its
+        ``testlib.h`` along and the user's ``#include "foo.h"`` resolves
+        through the extra ``-I`` path.
+        """
+        work = Path(self.work_dir)
+        (work / "submission.cpp").write_text(code, encoding="utf-8")
+        cpp_files = []
+        for entry in files or []:
+            name = (entry.get('name') or '').strip()
+            content = entry.get('content') or ''
+            if not name:
+                continue
+            dest = work / name
+            try:
+                dest_resolved = str(dest.resolve())
+                work_resolved = str(work.resolve())
+            except OSError:
+                return None, None, "Invalid file path: " + name
+            if (dest_resolved != work_resolved
+                    and not dest_resolved.startswith(work_resolved + os.sep)):
+                return None, None, "Illegal file path: " + name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+            if name.endswith('.cpp'):
+                cpp_files.append(name)
+
+        # The manager is the grader entry point; stubs are reference
+        # solutions shipped for the contestant and must not be built.
+        manager_src = None
+        for name in cpp_files:
+            base = name.rsplit('/', 1)[-1].lower()
+            if 'stub' in base:
+                continue
+            if 'manager' in base:
+                manager_src = name
+                break
+        if manager_src is None:
+            return None, None, "Interactive problem ships no manager source"
+
+        include_dirs = ['.']
+        for entry in files or []:
+            name = (entry.get('name') or '').strip()
+            if '/' in name:
+                parent = name.rsplit('/', 1)[0]
+                if parent and parent not in include_dirs:
+                    include_dirs.append(parent)
+        include_flags = ["-I" + d for d in include_dirs]
+        pch = _pch_include_flags(self, self.image)
+
+        def _build(src_name, out_name):
+            obj_name = out_name + '.o'
+            cmd = _compiler_command(
+                ["g++", "-std=c++17", "-O2", *include_flags, *pch,
+                 "-c", src_name, "-o", obj_name],
+                self.image,
+            )
+            try:
+                res = self._run(cmd, COMPILE_TIMEOUT_SEC, is_compile=True)
+            except subprocess.TimeoutExpired:
+                return "Compile timeout"
+            if res.returncode != 0:
+                return (res.stderr or res.stdout or "Compilation failed").strip()
+            try:
+                res = self._run(
+                    ["g++", obj_name, "-o", out_name],
+                    COMPILE_TIMEOUT_SEC, is_compile=True,
+                )
+            except subprocess.TimeoutExpired:
+                return "Link timeout"
+            if res.returncode != 0:
+                return (res.stderr or res.stdout or "Linking failed").strip()
+            try:
+                os.chmod(Path(self.work_dir) / out_name, 0o700)
+            except OSError:
+                pass
+            return None
+
+        err = _build(manager_src, "manager")
+        if err:
+            return None, None, err
+        err = _build("submission.cpp", "user")
+        if err:
+            return None, None, err
+        return "./manager", "./user", None
 
     def compile_c(self, code):
         src = Path(self.work_dir) / "main.c"
@@ -526,12 +740,154 @@ class SandboxRunner:
             # so callers see a non-None runtime.
             elapsed_ms = fallback_ms
 
+        # Memory Limit Exceeded is decided by the measured RSS (the
+        # authoritative figure) rather than the cgroup cap. The cgroup
+        # cap is now only a safety ceiling set at container creation;
+        # the problem's own limit is enforced here so the container
+        # pool never has to `docker update --memory` on the common
+        # path (limits well below the ceiling).
+        limit_kb = self.memory_limit_mb * 1024
+        if memory_kb is not None and memory_kb >= limit_kb:
+            return None, elapsed_ms, "Memory Limit Exceeded"
+
         if exit_indicates_memory_limit(result.returncode):
             return None, elapsed_ms, "Memory Limit Exceeded"
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "Runtime error").strip()
             return None, elapsed_ms, ("Runtime Error", err)
         return result.stdout, elapsed_ms, None
+
+    # Extra wall-clock head-room handed to the whole interaction beyond the
+    # problem limit, so the in-sandbox ``timeout`` fires first and the
+    # manager's partial output is still recovered for diagnosis.
+    INTERACTIVE_GRACE_SEC = 3.0
+
+    def run_interactive(self, manager_cmd, user_cmd, stdin_data,
+                        num_processes, user_io):
+        """Run one test case of an interactive (Communication) problem.
+
+        A single ``docker exec`` runs only one foreground command, so the
+        manager and every user process are launched concurrently from a
+        generated shell script and wired through per-process FIFO pairs.
+        The manager's stdout -- the verdict -- is forwarded to the caller
+        and compared against the expected output like any other problem.
+
+        The test input is staged in ``__stdin.txt`` and fed to the manager
+        explicitly: POSIX shells point a background job's stdin at
+        ``/dev/null``, so an inherited stdin would be silently dropped.
+        """
+        work = Path(self.work_dir)
+        num_processes = max(int(num_processes or 1), 1)
+        if user_io not in ('fifo_io', 'std_io', 'file_io'):
+            user_io = 'fifo_io'
+        limit = "%.3f" % self.time_limit_sec
+
+        (work / "__stdin.txt").write_text(stdin_data or "", encoding="utf-8")
+
+        lines = [
+            "#!/bin/sh",
+            'cd "$(dirname "$0")" || exit 1',
+            "rm -f __s2m_* __m2s_*",
+        ]
+        mgr_args = " ".join("__s2m_" + str(i) + " __m2s_" + str(i)
+                            for i in range(num_processes))
+        if user_io == 'file_io':
+            # Robot-style hand-off: the user program writes its answer to a
+            # plain file that the manager then opens with ``ifstream``. A
+            # FIFO would make the manager's write-then-EOF probe trip, so the
+            # two run back to back over regular files instead of concurrently.
+            for i in range(num_processes):
+                lines.append(": > __s2m_" + str(i) + "; : > __m2s_" + str(i))
+            for i in range(num_processes):
+                extra = (" " + str(i)) if num_processes > 1 else ""
+                lines.append(
+                    "timeout -k 1 " + limit + " " + user_cmd
+                    + " __m2s_" + str(i) + " __s2m_" + str(i) + extra
+                    + "; __su" + str(i) + "=$?"
+                )
+            lines.append("timeout -k 1 " + limit + " " + manager_cmd + " "
+                         + mgr_args + " < __stdin.txt; __sm=$?")
+        else:
+            for i in range(num_processes):
+                lines.append("mkfifo __s2m_" + str(i) + " __m2s_" + str(i)
+                             + " 2>/dev/null")
+            lines.append("timeout -k 1 " + limit + " " + manager_cmd + " "
+                         + mgr_args + " < __stdin.txt &")
+            lines.append("__mgr=$!")
+            for i in range(num_processes):
+                if user_io == 'fifo_io':
+                    extra = (" " + str(i)) if num_processes > 1 else ""
+                    cmd = (user_cmd + " __m2s_" + str(i) + " __s2m_" + str(i)
+                           + extra)
+                    lines.append("timeout -k 1 " + limit + " " + cmd + " &")
+                else:
+                    arg = (" " + str(i)) if num_processes > 1 else ""
+                    lines.append(
+                        "timeout -k 1 " + limit + " " + user_cmd + arg
+                        + " < __m2s_" + str(i) + " > __s2m_" + str(i) + " &"
+                    )
+                lines.append("__u" + str(i) + "=$!")
+            for i in range(num_processes):
+                lines.append("wait $__u" + str(i) + "; __su" + str(i) + "=$?")
+            lines.append("wait $__mgr; __sm=$?")
+        lines.append(
+            'echo "OJ_INTERACTIVE_EXIT $__sm'
+            + "".join(" $__su" + str(i) for i in range(num_processes))
+            + '" 1>&2'
+        )
+        lines.append("exit 0")
+        script = work / "__interactive.sh"
+        script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
+            os.chmod(script, 0o755)
+        except OSError:
+            pass
+
+        fallback_ms = int(self.time_limit_sec * 1000)
+        try:
+            result = self._run(
+                self._timed_command(["sh", "./__interactive.sh"]),
+                self.time_limit_sec + self.INTERACTIVE_GRACE_SEC,
+            )
+        except subprocess.TimeoutExpired:
+            return None, fallback_ms, "Time Limit Exceeded"
+
+        elapsed_ms, memory_kb = self._parse_time_stderr(result.stderr)
+        self.last_memory_kb = memory_kb
+        if elapsed_ms is None:
+            elapsed_ms = fallback_ms
+
+        exits = None
+        for line in (result.stderr or "").splitlines():
+            m = re.search(r"OJ_INTERACTIVE_EXIT((?:\s+-?\d+)+)", line)
+            if m:
+                exits = [int(x) for x in m.group(1).split()]
+        mgr_exit = exits[0] if exits else None
+        user_exits = exits[1:] if exits else []
+
+        limit_kb = self.memory_limit_mb * 1024
+        if memory_kb is not None and memory_kb >= limit_kb:
+            return None, elapsed_ms, "Memory Limit Exceeded"
+        if mgr_exit == 124:
+            return None, elapsed_ms, "Time Limit Exceeded"
+        if 137 in [mgr_exit, *user_exits]:
+            return None, elapsed_ms, "Memory Limit Exceeded"
+
+        stdout = result.stdout or ""
+        if stdout.strip():
+            return stdout, elapsed_ms, None
+        if mgr_exit not in (0, None):
+            return None, elapsed_ms, (
+                "Runtime Error",
+                "Interactive manager exited with code " + str(mgr_exit),
+            )
+        for code in user_exits:
+            if code not in (0, None):
+                return None, elapsed_ms, (
+                    "Runtime Error",
+                    "Solution process exited with code " + str(code),
+                )
+        return stdout, elapsed_ms, None
 
 
 # ── verdict / storage helpers ───────────────────────────────────────────
@@ -764,10 +1120,31 @@ def judge_submission(submission_id, claim=None):
 
         with runner:
             if submission.language == "C++":
-                exe, err = runner.compile_cpp(submission.code)
-                if err:
-                    return save_compile_error(submission, test_cases[0], err, claim=claim)
-                run_fn = lambda stdin: runner.run_executable([exe], stdin)
+                if problem.problem_type == "interactive":
+                    manager_cmd, user_cmd, err = runner.compile_cpp_interactive(
+                        submission.code,
+                        problem.function_files_parsed,
+                    )
+                    if err:
+                        return save_compile_error(
+                            submission, test_cases[0], err, claim=claim
+                        )
+                    icfg = problem.interactive_config_parsed
+                    run_fn = lambda stdin: runner.run_interactive(
+                        manager_cmd, user_cmd, stdin,
+                        icfg['num_processes'], icfg['user_io'],
+                    )
+                else:
+                    exe, err = runner.compile_cpp(
+                        submission.code,
+                        problem_type=problem.problem_type,
+                        function_files=problem.function_files_parsed,
+                    )
+                    if err:
+                        return save_compile_error(
+                            submission, test_cases[0], err, claim=claim
+                        )
+                    run_fn = lambda stdin: runner.run_executable([exe], stdin)
 
             elif submission.language == "C":
                 exe, err = runner.compile_c(submission.code)

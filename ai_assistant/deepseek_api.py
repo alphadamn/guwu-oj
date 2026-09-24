@@ -246,6 +246,7 @@ def stream_answer(
     problem,
     *,
     regenerate: bool = False,
+    continue_from: str = '',
     stream_holder: dict | None = None,
     tool_executor: ToolExecutor | None = None,
 ) -> Iterator[dict]:
@@ -293,6 +294,14 @@ def stream_answer(
     messages = _build_messages(
         problem, regenerate=regenerate, with_judge_tool=use_tools,
     )
+    if continue_from:
+        # Resume an interrupted answer: present the partial output as an
+        # assistant message and ask the model to continue from there.
+        messages.append({'role': 'assistant', 'content': continue_from})
+        messages.append({
+            'role': 'user',
+            'content': '你的回答在上述位置被中断了，请从中断处继续完成回答，不要重复已输出的内容。',
+        })
     tools = [SUBMIT_JUDGE_TOOL] if use_tools else None
 
     # Usage is reported per HTTP request; prompt tokens grow with history, so

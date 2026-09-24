@@ -1,6 +1,7 @@
 import django
 import os
 import logging
+import queue as _queue
 import threading
 import time
 
@@ -11,10 +12,55 @@ django.setup()
 from rq import get_current_job
 from django.core.cache import cache
 
+from submissions.result_queue import push_envelope
+
 logger = logging.getLogger(__name__)
 
 # Timestamp of the last throttled worker-IP report (see _report_worker_ip).
 _ip_reported_at = 0.0
+
+
+class _AsyncPartialPusher:
+    """Background LPUSH for partial-result envelopes.
+
+    The test loop must not block on the round trip to the central Redis
+    for every test case: a fat problem carries hundreds of cases, and on
+    a WAN-linked judge each synchronous LPUSH costs one full RTT
+    (~30-60 ms measured). Partials are best-effort, so a daemon thread
+    drains a queue while the loop runs ahead. ``flush`` waits for the
+    queue to drain so the terminal result envelope is never ordered
+    before its partials on the consumer side.
+    """
+
+    def __init__(self, redis_conn):
+        import redis
+
+        self._q = _queue.Queue()
+        # A dedicated client sharing the connection pool: the worker's
+        # own client is not safe to touch from another thread.
+        self._redis = redis.Redis(connection_pool=redis_conn.connection_pool)
+        self._thread = threading.Thread(
+            target=self._loop, name='oj-partial-push', daemon=True,
+        )
+        self._thread.start()
+
+    def push(self, envelope):
+        self._q.put(envelope)
+
+    def flush(self, timeout=10):
+        deadline = time.monotonic() + timeout
+        while self._q.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    def _loop(self):
+        while True:
+            envelope = self._q.get()
+            try:
+                push_envelope(self._redis, envelope)
+            except Exception:
+                logger.debug('async partial push failed', exc_info=True)
+            finally:
+                self._q.task_done()
 
 
 def _release_legacy_machine(job):
@@ -128,7 +174,6 @@ def _judge_task_dbless(submission_id, job):
     from submissions.claiming import default_worker_id
     from submissions.judge import truncate_text
     from submissions.judge_core import JudgeSpecError, judge_spec
-    from submissions.result_queue import push_envelope
     from submissions.worker_api import (
         ClaimEndpointUnavailable,
         ClaimLostError,
@@ -181,6 +226,10 @@ def _judge_task_dbless(submission_id, job):
         # problem (new key) cannot be served the old bytes.
         store = CaseStore(bundle.get('data_key') or '')
 
+        # Partial-result pushes happen on a background thread: the test
+        # loop must not pay the central-Redis RTT for every case.
+        pusher = _AsyncPartialPusher(job.connection)
+
         def load_case_batch(offset, limit):
             # Pulled mid-judging: the claim response carries no test data,
             # so the gap between claimed_at and judge_started_at no longer
@@ -212,17 +261,13 @@ def _judge_task_dbless(submission_id, job):
             trimmed['error_message'] = truncate_text(
                 case.get('error_message', ''), 2000
             )
-            try:
-                push_envelope(job.connection, {
-                    'kind': 'partial', 'submission_id': submission_id,
-                    'claim_token': str(token), 'worker_id': worker_id,
-                    'case': trimmed,
-                })
-            except Exception:
-                logger.debug(
-                    'Could not push partial result for submission %s',
-                    submission_id, exc_info=True,
-                )
+            # Enqueue for the background pusher; the test loop continues
+            # without waiting for the central-Redis round trip.
+            pusher.push({
+                'kind': 'partial', 'submission_id': submission_id,
+                'claim_token': str(token), 'worker_id': worker_id,
+                'case': trimmed,
+            })
 
         spec = {
             'submission_id': submission_id,
@@ -233,6 +278,16 @@ def _judge_task_dbless(submission_id, job):
             'memory_limit_mb': bundle['memory_limit_mb'],
             'total_cases': bundle.get('total_cases') or 0,
             'cases': bundle.get('cases') or [],
+            # Function-style problems: the claim bundle carries these two
+            # fields (see internal_views.claim_view); without them the
+            # compile_cpp dispatch falls through to the standard path,
+            # which compiles user code as main.cpp standalone and trips
+            # over the grader's `#include "header.h"`.
+            'problem_type': bundle.get('problem_type') or 'standard',
+            'function_files': bundle.get('function_files') or [],
+            # Interactive problems: user-process count and I/O protocol
+            # the manager expects (see problems.Problem.interactive_config).
+            'interactive_config': bundle.get('interactive_config') or {},
         }
         try:
             outcome = judge_spec(
@@ -251,6 +306,7 @@ def _judge_task_dbless(submission_id, job):
         except (JudgeSpecError,) as exc:
             # Permanent data problem: surface as System Error through the
             # fenced write (consumer turns it into a terminal verdict).
+            pusher.flush()
             push_envelope(job.connection, {
                 'kind': 'result', 'submission_id': submission_id,
                 'claim_token': token, 'worker_id': worker_id,
@@ -263,6 +319,7 @@ def _judge_task_dbless(submission_id, job):
             logger.exception(
                 'DBless judging failed for submission %s', submission_id,
             )
+            pusher.flush()
             push_envelope(job.connection, {
                 'kind': 'infra', 'submission_id': submission_id,
                 'claim_token': token, 'worker_id': worker_id,
@@ -270,6 +327,9 @@ def _judge_task_dbless(submission_id, job):
             })
             return None
 
+        # Drain any in-flight partials so they reach the consumer before
+        # the authoritative terminal envelope.
+        pusher.flush()
         push_envelope(
             job.connection,
             _result_envelope(submission_id, token, worker_id, outcome),
