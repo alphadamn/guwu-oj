@@ -33,6 +33,10 @@ from problems.models import Problem, TestCase as ProblemTestCase
 
 User = get_user_model()
 
+# Fixed token so the internal judge endpoints authenticate regardless of the
+# ambient JUDGE_INTERNAL_TOKEN (CI has no .env, so it would otherwise be '').
+TEST_TOKEN = 'test-internal-token'
+
 
 def _make_problem(problem_type='standard', function_files='[]', **kwargs):
     # The custom User model enforces a unique email; pass distinct emails so
@@ -132,6 +136,7 @@ class FingerprintTests(TestCase):
         self.assertNotEqual(before[3], after[3])
 
 
+@override_settings(JUDGE_INTERNAL_TOKEN=TEST_TOKEN)
 class ClaimBundleTests(TestCase):
     def setUp(self):
         self.user = User.objects.create(username='claimer')
@@ -156,7 +161,6 @@ class ClaimBundleTests(TestCase):
 
     def _post_claim(self):
         from django.test import Client
-        from django.conf import settings
         c = Client()
         with patch('submissions.claiming.claim_submission', return_value='tok'):
             resp = c.post(
@@ -166,7 +170,7 @@ class ClaimBundleTests(TestCase):
                     'worker_id': 'w1',
                 }),
                 content_type='application/json',
-                HTTP_X_JUDGE_TOKEN=getattr(settings, 'JUDGE_INTERNAL_TOKEN', '') or 'x',
+                HTTP_X_JUDGE_TOKEN=TEST_TOKEN,
             )
         return resp
 
@@ -193,14 +197,13 @@ class ClaimBundleTests(TestCase):
             language='C++', status='Pending',
         )
         from django.test import Client
-        from django.conf import settings
         c = Client()
         with patch('submissions.claiming.claim_submission', return_value='tok'):
             resp = c.post(
                 '/internal/judge/claim/',
                 data=json.dumps({'submission_id': sub.id, 'worker_id': 'w2'}),
                 content_type='application/json',
-                HTTP_X_JUDGE_TOKEN=getattr(settings, 'JUDGE_INTERNAL_TOKEN', '') or 'x',
+                HTTP_X_JUDGE_TOKEN=TEST_TOKEN,
             )
         body = resp.json()
         self.assertEqual(body['problem_type'], 'standard')

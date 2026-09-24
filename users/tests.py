@@ -1,3 +1,4 @@
+from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
@@ -36,9 +37,17 @@ class RegistrationVerificationCodeTests(TestCase):
     def test_registration_page_uses_header_aware_captcha_loading(self):
         response = self.client.get(reverse('register'))
 
-        self.assertContains(response, "fetch(captchaUrl")
-        self.assertContains(response, "refreshCaptcha();")
+        # The image is fetched from JS so the X-Captcha-Id response header can
+        # be captured; the widget handles that, so the page must not point an
+        # <img src> straight at the captcha endpoint.
+        self.assertContains(response, 'js/captcha-widget.js')
+        self.assertContains(response, 'data-captcha-url="/users/captcha/image/"')
         self.assertNotContains(response, 'src="/users/captcha/image/"')
+
+        widget = finders.find('js/captcha-widget.js')
+        self.assertIsNotNone(widget)
+        with open(widget, encoding='utf-8') as fh:
+            self.assertIn('X-Captcha-Id', fh.read())
 
     def test_invalid_captcha_keeps_email_verification_code_usable(self):
         response = self.client.post(reverse('register'), {
