@@ -1041,6 +1041,44 @@ def _case_status_from_error(error, actual, expected):
     return "Accepted"
 
 
+# ── interactive (Communication) scoring ───────────────────────────────
+
+PARTIAL_SCORE_EPS = 1e-6
+
+
+def interactive_score_from_output(actual):
+    """Parse a Communication manager stdout token as a [0, 1] score.
+
+    The manager (CMS testlib checker mode) prints exactly one numeric
+    token: ``1`` for full score, ``0`` for wrong, or ``%.4lf`` for a
+    partial score. Returns the clamped float, or ``None`` when stdout
+    is missing / not a single finite number.
+    """
+    s = (actual or '').strip()
+    if not s:
+        return None
+    try:
+        score = float(s)
+    except (TypeError, ValueError):
+        return None
+    if score != score or score in (float('inf'), float('-inf')):
+        return None
+    if score < 0.0:
+        return 0.0
+    if score > 1.0:
+        return 1.0
+    return score
+
+
+def interactive_case_verdict(score):
+    """Map a [0, 1] case score to a binary/partial status string."""
+    if score >= 1.0 - PARTIAL_SCORE_EPS:
+        return 'Accepted'
+    if score <= PARTIAL_SCORE_EPS:
+        return 'Wrong Answer'
+    return 'Partial'
+
+
 # ── main entry point ─────────────────────────────────────────────────────
 
 def judge_submission(submission_id, claim=None):

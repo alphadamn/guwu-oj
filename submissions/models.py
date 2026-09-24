@@ -28,6 +28,7 @@ class Submission(models.Model):
     STATUS_CHOICES = [
         ('Pending', 'Pending'),
         ('Accepted', 'Accepted'),
+        ('Partial', 'Partial'),
         ('Wrong Answer', 'Wrong Answer'),
         ('Time Limit Exceeded', 'Time Limit Exceeded'),
         ('Memory Limit Exceeded', 'Memory Limit Exceeded'),
@@ -150,6 +151,7 @@ class Submission(models.Model):
 class SubmissionTestResult(models.Model):
     CASE_STATUS_CHOICES = [
         ('Accepted', 'Accepted'),
+        ('Partial', 'Partial'),
         ('Wrong Answer', 'Wrong Answer'),
         ('Time Limit Exceeded', 'Time Limit Exceeded'),
         ('Memory Limit Exceeded', 'Memory Limit Exceeded'),
@@ -168,6 +170,10 @@ class SubmissionTestResult(models.Model):
     )
     case_index = models.PositiveIntegerField()
     status = models.CharField(max_length=30, choices=CASE_STATUS_CHOICES)
+    # Fractional score in [0, 1] for this case. Communication
+    # (interactive) managers print their own score to stdout; standard
+    # problems leave this NULL (their verdict is purely binary).
+    score = models.FloatField(null=True, blank=True)
     runtime = models.IntegerField(blank=True, null=True)
     actual_output = models.TextField(blank=True)
     expected_output = models.TextField(blank=True)

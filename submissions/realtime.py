@@ -39,6 +39,11 @@ def build_submission_status_payload(submission):
     HTTP polling API, the WebSocket snapshot, and the watchdog."""
     test_results = list(submission.test_results.order_by('case_index'))
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
+    # Authoritative aggregate for Communication problems: sum the
+    # manager-reported [0,1] case scores. Standard cases have score=None,
+    # so ``earned_score`` stays null and the frontend hides the score line.
+    scored = [r for r in test_results if getattr(r, 'score', None) is not None]
+    earned_score = round(sum(r.score for r in scored), 4) if scored else None
     problem = submission.effective_problem
     total_cases = problem.test_cases.count() if problem else 0
     # Lifecycle authority (Phase 2); the verdict-based heuristic below stays
@@ -60,12 +65,14 @@ def build_submission_status_payload(submission):
         'runtime': str(submission.runtime),
         'memory': submission.memory,
         'passed_count': passed_count,
+        'earned_score': earned_score,
         'total_cases': max(total_cases, len(test_results)),
         'done': not judging,
         'test_results': [
             {
                 'case_index': r.case_index,
                 'status': r.status,
+                'score': getattr(r, 'score', None),
                 'runtime': str(r.runtime),
             }
             for r in test_results

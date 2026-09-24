@@ -57,6 +57,8 @@ from .judge import (
     LANG_IMAGE,
     SandboxRunner,
     _case_status_from_error,
+    interactive_case_verdict,
+    interactive_score_from_output,
 )
 
 logger = logging.getLogger(__name__)
@@ -291,6 +293,9 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None,
                 }
                 return outcome
 
+            is_interactive = (
+                submission.problem_type == 'interactive'
+            )
             for index in range(1, total_cases + 1):
                 if check_alive is not None:
                     check_alive()
@@ -313,17 +318,30 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None,
                 ):
                     error = 'Time Limit Exceeded'
 
-                parsed = _case_status_from_error(error, actual, expected)
-                if isinstance(parsed, tuple):
-                    case_status, error_msg = parsed
-                    actual = actual or error_msg
-                else:
-                    case_status = parsed
+                score = None
+                if is_interactive and error is None:
+                    score = interactive_score_from_output(actual)
+                    if score is None:
+                        # Manager exited cleanly but produced no score.
+                        case_status, score = 'Wrong Answer', 0.0
+                    else:
+                        case_status = interactive_case_verdict(score)
                     error_msg = ''
+                else:
+                    parsed = _case_status_from_error(error, actual, expected)
+                    if isinstance(parsed, tuple):
+                        case_status, error_msg = parsed
+                        actual = actual or error_msg
+                    else:
+                        case_status = parsed
+                        error_msg = ''
+                    if is_interactive:
+                        score = 1.0 if case_status == 'Accepted' else 0.0
 
                 case_outcomes.append({
                     'index': tc.case_index,
                     'status': case_status,
+                    'score': score,
                     'runtime_ms': elapsed_ms,
                     'actual_output': actual,
                     'error_message': error_msg,
@@ -466,6 +484,7 @@ def _finalize_outcome(cases, max_runtime, max_memory_kb,
         normalised.append({
             'index': co['index'],
             'status': status,
+            'score': co.get('score'),
             'runtime_ms': co.get('runtime_ms'),
             'actual_output': truncate_text(co.get('actual_output', '')),
             'error_message': truncate_text(co.get('error_message', ''), 2000),

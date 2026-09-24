@@ -137,6 +137,11 @@ def submission_detail(request, submission_id):
     for result in test_results:
         result.expected_output = ''
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
+    scored_results = [r for r in test_results if r.score is not None]
+    earned_score = (
+        round(sum(r.score for r in scored_results), 4)
+        if scored_results else None
+    )
     # should_poll = (
     #     submission.status == 'Pending'
     #     and submission.language in JUDGED_LANGUAGES
@@ -148,6 +153,7 @@ def submission_detail(request, submission_id):
         'submission': submission,
         'test_results': test_results,
         'passed_count': passed_count,
+        'earned_score': earned_score,
         'total_cases': len(test_results),
         'should_poll': should_poll,
     })

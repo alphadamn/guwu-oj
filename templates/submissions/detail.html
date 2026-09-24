@@ -4,7 +4,7 @@
 {% block title %}提交 #{{ submission.id }} - 谷物 OJ{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/submission-detail.css' %}?v=20260913">
+<link rel="stylesheet" href="{% static 'css/submission-detail.css' %}?v=20260924">
 {% endblock %}
 
 {% block content %}
@@ -43,7 +43,7 @@
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-body text-center">
-                        <h3 id="submission-status-text" class="status-{% if submission.status == 'Accepted' %}Accepted{% elif submission.status == 'Wrong Answer' %}Wrong{% elif submission.status == 'Time Limit Exceeded' %}Time{% elif submission.status == 'Memory Limit Exceeded' %}Runtime{% elif submission.status == 'Runtime Error' %}Runtime{% elif submission.status == 'System Error' %}Error{% elif submission.status == 'Pending' %}Pending{% else %}Error{% endif %}">
+                        <h3 id="submission-status-text" class="status-{% if submission.status == 'Accepted' %}Accepted{% elif submission.status == 'Partial' %}Partial{% elif submission.status == 'Wrong Answer' %}Wrong{% elif submission.status == 'Time Limit Exceeded' %}Time{% elif submission.status == 'Memory Limit Exceeded' %}Runtime{% elif submission.status == 'Runtime Error' %}Runtime{% elif submission.status == 'System Error' %}Error{% elif submission.status == 'Pending' %}Pending{% else %}Error{% endif %}">
                             {% if should_poll %}
                                 <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                             {% endif %}
@@ -52,6 +52,9 @@
                         <div id="submission-status-summary">
                             {% if test_results %}
                                 <p class="mb-1">测试点: <strong>{{ passed_count }}/{{ total_cases }}</strong> 通过</p>
+                            {% endif %}
+                            {% if earned_score is not None %}
+                                <p class="mb-1">得分: <strong>{{ earned_score|floatformat:2 }}/{{ total_cases }}</strong></p>
                             {% endif %}
 <!--                            {% if submission.runtime is not None %}-->
                             <p class="mb-0">最大运行时间: {{ submission.runtime }} ms</p>
@@ -80,6 +83,8 @@
                     <div class="case-point">
                         {% if result.status == 'Accepted' %}
                             <span class="badge case-badge case-Accepted" title="{{ result.status }}">AC</span>
+                        {% elif result.status == 'Partial' %}
+                            <span class="badge case-badge case-Partial" title="{{ result.status }}">{% widthratio result.score 1 100 %}%</span>
                         {% elif result.status == 'Wrong Answer' %}
                             <span class="badge case-badge case-Wrong" title="{{ result.status }}">WA</span>
                         {% elif result.status == 'Time Limit Exceeded' %}
@@ -129,6 +134,6 @@
 
 {% block extra_js %}
 {% if should_poll %}
-<script data-cfasync="false" src="{% static 'js/submission-detail.js' %}?v=20260922"></script>
+<script data-cfasync="false" src="{% static 'js/submission-detail.js' %}?v=20260924"></script>
 {% endif %}
 {% endblock %}

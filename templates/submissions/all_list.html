@@ -21,6 +21,7 @@
                         <option value="">所有状态</option>
                         <option value="Pending" {% if request.GET.status == 'Pending' %}selected{% endif %}>Pending</option>
                         <option value="Accepted" {% if request.GET.status == 'Accepted' %}selected{% endif %}>Accepted</option>
+                        <option value="Partial" {% if request.GET.status == 'Partial' %}selected{% endif %}>Partial</option>
                         <option value="Wrong Answer" {% if request.GET.status == 'Wrong Answer' %}selected{% endif %}>Wrong Answer</option>
                         <option value="Time Limit Exceeded" {% if request.GET.status == 'Time Limit Exceeded' %}selected{% endif %}>Time Limit Exceeded</option>
                         <option value="Memory Limit Exceeded" {% if request.GET.status == 'Memory Limit Exceeded' %}selected{% endif %}>Memory Limit Exceeded</option>
