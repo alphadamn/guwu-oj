@@ -234,9 +234,12 @@ def generate(request, problem_id):
     * ``{"type": "done",  "answer_html", ...}`` — exactly one, on success
     * ``{"type": "error", "code", "message"}`` — terminal on failure
 
-    Quota is charged only when the full answer is persisted (``done``).
-    A mid-stream failure or client disconnect leaves ``success=False`` and
-    does not consume the user's quota.
+    Quota is charged when a new explanation **starts** (``success=True`` at
+    creation). If the AI service fails before producing any content, the
+    charge is refunded (``success=False``). A mid-stream disconnect after
+    content was received keeps the charge and saves the partial answer.
+    Interrupted answers can be **continued** without additional charge by
+    passing ``continue_generation_id``.
     """
     problem = get_object_or_404(Problem, id=problem_id, is_public=True)
     user = request.user
@@ -251,51 +254,72 @@ def generate(request, problem_id):
     except (UnicodeDecodeError, json.JSONDecodeError):
         body = {}
     session_id = body.get('session_id')
+    continue_generation_id = body.get('continue_generation_id')
 
-    # Resume the current interaction, or start a fresh one once the previous
-    # session has been marked satisfied.
-    session = None
-    if session_id:
-        session = AISession.objects.filter(
-            id=session_id, user=user, problem=problem,
-        ).first()
-        if session is not None and session.status == AISession.Status.SATISFIED:
-            session = None
-    if session is None:
-        session = (
-            AISession.objects.filter(user=user, problem=problem, status=AISession.Status.ACTIVE)
-            .order_by('-created_at')
-            .first()
+    # --- Continue an interrupted generation (no charge) ------------------
+    if continue_generation_id:
+        generation = get_object_or_404(
+            AIGeneration, id=continue_generation_id, user=user,
+            problem=problem, success=True,
         )
+        if not generation.error_message:
+            return _json_error('该讲解未中断，无需继续。', status=400, code='not_interrupted')
+        session = generation.session
+        if session.status == AISession.Status.SATISFIED:
+            return _json_error('本次互动已结束。', status=403, code='session_closed')
+        is_continuation = True
+        round_no = generation.round_no
+        regenerate = round_no > 1
+        continue_from = generation.answer or ''
+    else:
+        # --- New generation (charge quota at creation) --------------------
+        is_continuation = False
+        continue_from = ''
+
+        # Resume the current interaction, or start a fresh one once the
+        # previous session has been marked satisfied.
+        session = None
+        if session_id:
+            session = AISession.objects.filter(
+                id=session_id, user=user, problem=problem,
+            ).first()
+            if session is not None and session.status == AISession.Status.SATISFIED:
+                session = None
         if session is None:
-            session = AISession.objects.create(user=user, problem=problem)
+            session = (
+                AISession.objects.filter(user=user, problem=problem, status=AISession.Status.ACTIVE)
+                .order_by('-created_at')
+                .first()
+            )
+            if session is None:
+                session = AISession.objects.create(user=user, problem=problem)
 
-    used_rounds = session.successful_generation_count
-    if used_rounds >= MAX_GENERATIONS_PER_SESSION:
-        return _json_error(
-            '本次互动已达上限（初始回答 + 1 次重新生成）。',
-            status=403, code='round_limit',
+        used_rounds = session.successful_generation_count
+        if used_rounds >= MAX_GENERATIONS_PER_SESSION:
+            return _json_error(
+                '本次互动已达上限（初始回答 + 1 次重新生成）。',
+                status=403, code='round_limit',
+            )
+
+        quota_status = get_quota_status(user)
+        if not quota_status.allowed:
+            return _json_error(
+                '本周期的 AI 解题次数已用完，升级会员可获得更多次数。',
+                status=403, code='quota_exceeded',
+                extra={'quota': _quota_context(user)},
+            )
+
+        regenerate = used_rounds >= 1
+        prompt = build_user_prompt(problem, regenerate=regenerate)
+        round_no = used_rounds + 1
+
+        # Charge quota immediately at creation. If the AI fails before
+        # producing any content, ``_persist_failure`` will refund by
+        # setting ``success=False``.
+        generation = AIGeneration.objects.create(
+            session=session, user=user, problem=problem, round_no=round_no,
+            prompt=prompt, success=True,
         )
-
-    quota_status = get_quota_status(user)
-    if not quota_status.allowed:
-        return _json_error(
-            '本周期的 AI 解题次数已用完，升级会员可获得更多次数。',
-            status=403, code='quota_exceeded',
-            extra={'quota': _quota_context(user)},
-        )
-
-    regenerate = used_rounds >= 1
-    prompt = build_user_prompt(problem, regenerate=regenerate)
-    round_no = used_rounds + 1
-
-    # Reserve the round now so concurrent requests can't claim the same
-    # slot, and so a mid-stream disconnect still leaves an audit trail.
-    # ``success=False`` means the row doesn't count towards quota.
-    generation = AIGeneration.objects.create(
-        session=session, user=user, problem=problem, round_no=round_no,
-        prompt=prompt, success=False,
-    )
 
     def event_stream():
         parts: list[str] = []
@@ -303,20 +327,33 @@ def generate(request, problem_id):
         prompt_tokens = 0
         completion_tokens = 0
         finalised = False
+        received_content = False
 
         def _persist_failure(message: str) -> None:
             nonlocal finalised
+            if not is_continuation:
+                # Refund: the AI didn't produce usable content for a new
+                # generation. Continuations never change ``success`` (the
+                # original charge stands).
+                generation.success = False
             generation.error_message = message[:300]
             generation.save()
             finalised = True
 
         def _persist_success(answer: str, reasoning: str) -> None:
             nonlocal finalised
-            generation.reasoning = reasoning
-            generation.answer = answer
-            generation.success = True
-            generation.prompt_tokens = prompt_tokens
-            generation.completion_tokens = completion_tokens
+            if is_continuation:
+                # Append the continuation to the existing partial answer.
+                generation.answer = (generation.answer or '') + answer
+                generation.reasoning = (generation.reasoning or '') + reasoning
+                generation.error_message = ''
+            else:
+                generation.reasoning = reasoning
+                generation.answer = answer
+                generation.success = True
+                generation.prompt_tokens = prompt_tokens
+                generation.completion_tokens = completion_tokens
+                generation.error_message = ''
             generation.save()
             finalised = True
 
@@ -332,6 +369,7 @@ def generate(request, problem_id):
         upstream = stream_answer(
             problem,
             regenerate=regenerate,
+            continue_from=continue_from,
             stream_holder=stream_holder,
             tool_executor=_make_tool_executor(problem, generation),
         )
@@ -360,8 +398,10 @@ def generate(request, problem_id):
             yield _sse({
                 'type': 'start',
                 'session_id': session.id,
+                'generation_id': generation.id,
                 'round': round_no,
                 'regenerate': regenerate,
+                'continue': is_continuation,
                 'max_rounds': MAX_GENERATIONS_PER_SESSION,
                 'max_judge_calls': MAX_JUDGE_TOOL_CALLS,
             })
@@ -382,12 +422,15 @@ def generate(request, problem_id):
 
                 event = payload
                 if event['type'] == 'reasoning':
+                    received_content = True
                     reasoning_parts.append(event['text'])
                     yield _sse({'type': 'reasoning', 'text': event['text']})
                 elif event['type'] == 'delta':
+                    received_content = True
                     parts.append(event['text'])
                     yield _sse({'type': 'delta', 'text': event['text']})
                 elif event['type'] == 'tool_call':
+                    received_content = True
                     # Any answer fragments streamed on this turn belonged to
                     # the tool-call message, not to the final explanation.
                     parts.clear()
@@ -410,13 +453,16 @@ def generate(request, problem_id):
                 return
 
             _persist_success(answer, ''.join(reasoning_parts))
-            new_count = used_rounds + 1
+            new_count = session.successful_generation_count
             yield _sse({
                 'type': 'done',
                 'ok': True,
                 'session_id': session.id,
+                'generation_id': generation.id,
                 'round': new_count,
-                'answer_html': render_markdown(answer),
+                'answer_html': render_markdown(
+                    generation.answer if is_continuation else answer
+                ),
                 'can_regenerate': new_count < MAX_GENERATIONS_PER_SESSION,
                 'regenerate': regenerate,
                 'quota': _quota_context(user),
@@ -446,10 +492,25 @@ def generate(request, problem_id):
                     raw_stream.close()
                 except Exception:  # pragma: no cover - best effort
                     logger.debug('Failed to close upstream AI stream', exc_info=True)
-            # Do not charge quota for a partial response.
             if not finalised:
-                generation.error_message = '连接中断，未完成作答。'[:300]
-                generation.save()
+                if is_continuation:
+                    # Append whatever was received to the existing answer.
+                    generation.answer = (generation.answer or '') + ''.join(parts)
+                    generation.reasoning = (generation.reasoning or '') + ''.join(reasoning_parts)
+                    generation.error_message = '连接中断，已保存部分内容。'[:300]
+                    generation.save()
+                elif received_content:
+                    # New generation with content: keep the charge, save
+                    # the partial answer so the user can continue later.
+                    generation.reasoning = ''.join(reasoning_parts)
+                    generation.answer = ''.join(parts)
+                    generation.error_message = '连接中断，已保存部分内容。'[:300]
+                    generation.save()
+                else:
+                    # New generation without any content: refund the charge.
+                    generation.success = False
+                    generation.error_message = '连接中断，未完成作答。'[:300]
+                    generation.save()
             raise
 
     response = StreamingHttpResponse(

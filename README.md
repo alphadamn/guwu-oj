@@ -20,6 +20,7 @@
   - 提交详情（代码、评测结果、运行时间、内存使用）
   - 评测状态 WebSocket 实时推送（逐测试点刷新，失败自动降级为 HTTP 轮询）
   - 分布式判题：中央 Redis 队列、多机竞争消费、原子抢占 + 租约心跳 + 栅栏写回，测评机可完全无数据库凭证（DB-less）
+  - 直连回源与动态 IP 自愈：NAT 后的测评机公网 IP 频繁变化，静态白名单无法维护，改为「worker 自报 IP + Web 侧 iptables 链同步」自动放行直连端口；直连不可达时自动回退 CDN 回源（详见下方「生产架构：中央判题代理 + DB-less 测评机」）
 
 - 排行榜
   - 用户排名（按已解决题目数排序）
@@ -356,18 +357,56 @@ JUDGE_INTERNAL_TOKEN=<same-secret-as-web>
 
 > 内部 API 固定使用 `X-Judge-Token` 请求头做 HMAC 常量时间比较（`hmac.compare_digest`），并豁免 CSRF；抢占失败返回 `409 {"claimable": false}`，worker 直接空 ACK。经 CDN 暴露时注意：Python urllib 默认 User-Agent 可能被 WAF 拦截，worker 客户端已固定为 `GuwuOJ-JudgeWorker/1.0`。
 
+#### 直连回源与动态 IP 自愈（NAT 后的测评机）
+
+测评机的 `JUDGE_API_BASE` 指向 Web 主机的**直连端口**（绕过 Cloudflare），`JUDGE_API_FALLBACK_BASE` 指向 CDN 上的正式域名兜底：
+
+```dotenv
+# 每台测评机 .env（DB-less）
+JUDGE_API_BASE=http://154.12.60.26:8446          # 直连，绕开 Cloudflare
+JUDGE_API_FALLBACK_BASE=https://guwu.camluni.cn  # 直连不可达时回退 CDN 回源
+```
+
+客户端按 base 逐个尝试：主 base 不可达时自动轮换到 fallback；抢占因网络错误失败后，worker 会**强制重报一次公网 IP** 再重试一次抢占，仍失败才按基础设施故障处理。
+
+NAT 后的测评机公网 IP 每天会变，静态白名单无法维护，因此改为**自报 + 防火墙同步**闭环：
+
+1. worker 定期（`OJ_JUDGE_IP_REPORT_INTERVAL`，默认 600s）以及每次直连抢占失败后，经 CDN 调用 `POST /internal/judge/report_ip/`。
+2. Web 端从**连接本身**取观测到的源 IP（`X-Forwarded-For` → `CF-Connecting-IP` → `X-Real-IP` → `REMOTE_ADDR`，**不信任请求体**），仅接受公网 IPv4，写入 `OJ_JUDGE_DIRECT_STATE`（默认 `/etc/guwu/judge-direct-ips.json`）。
+3. `guwu-oj-judge-firewall.service` 定期调用 `manage.py sync_judge_firewall`，按「静态 IP + 已上报 IP」重建 iptables 链：
+
+```
+INPUT        -p tcp --dport 8446 -j JUDGE_DIRECT
+JUDGE_DIRECT -s <allow>          -j ACCEPT
+JUDGE_DIRECT                     -j DROP      # 兜底拒绝：链被清空也不会暴露端口
+```
+
+> 直连端口（`OJ_JUDGE_DIRECT_PORT`，默认 8446）的源过滤由该 iptables 链全权接管，nginx vhost **不再配置 IP 白名单**（对动态 IP 必然失效）。**启用 nginx vhost 前必须先在 Web 主机跑一次 `sync_judge_firewall` 建链**，否则 8446 处于无人看守状态。
+
+Web 侧 `.env` 相关配置：
+
+```dotenv
+OJ_JUDGE_DIRECT_PORT=8446
+OJ_JUDGE_DIRECT_STATIC_IPS=64.90.3.112           # 静态测评机，逗号分隔，始终放行
+# OJ_JUDGE_DIRECT_CHAIN=JUDGE_DIRECT
+# OJ_JUDGE_DIRECT_STATE=/etc/guwu/judge-direct-ips.json
+# OJ_JUDGE_IP_REPORT_INTERVAL=600
+```
+
 **Web 侧常驻辅助服务**（单元文件均在 `deploy/systemd/`）：
 
 | 服务 | 作用 |
 |------|------|
 | `guwu-oj-judge-reaper.service` | 30 秒巡检一轮，回收心跳超时的判题任务并重新入队（`reap_stale_judgments --loop`） |
 | `guwu-oj-judge-result-consumer.service` | `BLPOP` 消费 `judge:result`，栅栏校验后幂等写库；处理中崩溃的消息启动时自动回队，反复失败的消息进 `judge:result:dead` |
+| `guwu-oj-judge-firewall.service` | 每 5 分钟重建 `JUDGE_DIRECT` 链，把 8446 直连端口放行给静态 IP 与自报 IP（`sync_judge_firewall --loop`，需 root） |
 
 ```bash
 cp deploy/systemd/guwu-oj-judge-reaper.service \
-   deploy/systemd/guwu-oj-judge-result-consumer.service /etc/systemd/system/
+   deploy/systemd/guwu-oj-judge-result-consumer.service \
+   deploy/systemd/guwu-oj-judge-firewall.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now guwu-oj-judge-reaper guwu-oj-judge-result-consumer
+systemctl enable --now guwu-oj-judge-reaper guwu-oj-judge-result-consumer guwu-oj-judge-firewall
 ```
 
 **运维命令**：
@@ -375,6 +414,7 @@ systemctl enable --now guwu-oj-judge-reaper guwu-oj-judge-result-consumer
 ```bash
 python manage.py judge_overview        # 队列深度、在线 worker、状态分布、僵尸数、近 1 小时延迟/错误率
 python manage.py reap_stale_judgments  # 手动回收一轮（--loop 常驻；--judging-timeout/--queued-timeout 调阈值）
+python manage.py sync_judge_firewall   # 重建直连端口 iptables 链（--loop --interval 300 常驻；需 root）
 ```
 
 **回滚**：Web 侧设 `OJ_CENTRAL_QUEUE=false` 即恢复旧的按机投递（迁移 0017 为纯新增列/索引，旧代码直接忽略）；单机回滚 DB-less 只需恢复原 `.env`（含 `DB_*`）并去掉 `OJ_WORKER_DBLESS` 后重启 worker。
@@ -431,7 +471,7 @@ nginx 需将 `location /ws/` 反代到 `127.0.0.1:8447`（Upgrade/Connection 头
 
 ### 12. 启动完整服务（命令汇总）
 
-完整站点由 Web 侧四个常驻服务与每台测评机的 worker 组成（另有 Redis/PostgreSQL 作为基础设施）：
+完整站点由 Web 侧五个常驻服务与每台测评机的 worker 组成（另有 Redis/PostgreSQL 作为基础设施）：
 
 | 组件 | 作用 | systemd 单元 |
 |------|------|-------------|
@@ -440,12 +480,13 @@ nginx 需将 `location /ws/` 反代到 `127.0.0.1:8447`（Upgrade/Connection 头
 | 判题 Worker | RQ 异步评测（中央队列竞争消费，可 DB-less） | `guwu-oj-judge-worker.service`（每台测评机，见 `deploy/systemd/`） |
 | 判题回收器 | 回收心跳超时的僵尸判题任务并重投 | `guwu-oj-judge-reaper.service`（Web 侧，见 `deploy/systemd/`） |
 | 结果消费者 | 消费 `judge:result`，栅栏校验后幂等写库 | `guwu-oj-judge-result-consumer.service`（Web 侧，见 `deploy/systemd/`） |
+| 直连防火墙同步 | 按自报 IP 重建 8446 直连端口的 iptables 链 | `guwu-oj-judge-firewall.service`（Web 侧，见 `deploy/systemd/`） |
 
 ```bash
 # 生产环境 Web 侧：一次性启动/重启
-systemctl start guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer
-systemctl restart guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer
-systemctl status guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer
+systemctl start guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer guwu-oj-judge-firewall
+systemctl restart guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer guwu-oj-judge-firewall
+systemctl status guwu-oj guwu-oj-ws guwu-oj-judge-reaper guwu-oj-judge-result-consumer guwu-oj-judge-firewall
 
 # 每台测评机：
 systemctl restart guwu-oj-judge-worker
@@ -506,8 +547,10 @@ guwu-oj/
 │   ├── judge_core.py        # 纯判题核心（无 ORM/缓存，DB-less worker 使用）
 │   ├── results.py           # 栅栏幂等写回（测试点/solved/积分）与信封处理
 │   ├── result_queue.py      # judge:result 可靠队列原语（处理中队列/ACK/死信）
-│   ├── worker_api.py        # DB-less worker 的内部 HTTP 客户端与 HTTP 心跳
-│   ├── internal_views.py    # /internal/judge/claim|heartbeat/ 内部 API
+│   ├── worker_api.py        # DB-less worker 的内部 HTTP 客户端（双 base 轮换）与 HTTP 心跳
+│   ├── internal_views.py    # /internal/judge/claim|heartbeat|report_ip/ 内部 API
+│   ├── internal_urls.py     # 内部 API 路由（/internal/judge/）
+│   ├── judge_firewall.py    # 直连端口 iptables 链：自报 IP 状态与链重建
 │   └── admin.py             # 提交管理后台
 ├── templates/               # 模板文件
 │   ├── base.html            # 基础模板

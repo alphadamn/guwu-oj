@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -144,4 +144,112 @@ class JudgeContainerSecurityTests(TestCase):
         self.assertIn('apparmor=oj-judge-test', command)
         self.assertIn('/dev/null:rw', command)
         container.__exit__(None, None, None)
+
+
+class CompileCppInteractiveTests(TestCase):
+    """The interactive branch must link the shipped stub into ``user``.
+
+    Contestants write ``#include "sphinx.h"`` and expect the stub to bring
+    ``main`` and the interaction helpers along; a submission that includes
+    the stub itself must not have it linked a second time. ``_run`` is
+    mocked, so only the g++ command lists are inspected (no docker).
+    """
+
+    FILES = [
+        {'name': 'graders/grader_config.json', 'content': '{}'},
+        {
+            'name': 'graders/sphinx.h',
+            'content': 'std::vector<int> find_colours(int N);\n',
+        },
+        {
+            'name': 'graders/stub.cpp',
+            'content': '#include "sphinx.h"\nint main() { return 0; }\n',
+        },
+        {
+            'name': 'graders/manager.cpp',
+            'content': 'int main() { return 0; }\n',
+        },
+    ]
+
+    def _runner(self, tmpdir):
+        from submissions.judge import SandboxRunner
+
+        runner = SandboxRunner(
+            work_dir=str(tmpdir), time_limit_ms=1500, memory_limit_mb=256,
+            image='oj-cpp:latest',
+        )
+        runner._container = MagicMock()
+        runner._global_timeout_sec = 5
+        calls = []
+
+        def fake_run(command, timeout, stdin=None, is_compile=False):
+            calls.append(list(command))
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+        runner._run = fake_run
+        patcher = patch('submissions.judge._pch_include_flags', return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return runner, calls
+
+    def test_stub_is_linked_into_user(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, calls = self._runner(tmp)
+            manager, user, err = runner.compile_cpp_interactive(
+                '#include "sphinx.h"\nint find_colours(int N) { return N; }\n',
+                self.FILES,
+            )
+
+            self.assertIsNone(err, f'unexpected compile error: {err}')
+            self.assertEqual((manager, user), ('./manager', './user'))
+            self.assertTrue((Path(tmp) / 'submission.cpp').exists())
+            # The stub is written but compiled into the user binary rather
+            # than linked on its own: manager.cpp, submission.cpp, stub.cpp.
+            compile_cmds = [c for c in calls if '-c' in c]
+            self.assertEqual(len(compile_cmds), 3)
+            compiled_srcs = [c[c.index('-c') + 1] for c in compile_cmds]
+            self.assertIn('graders/stub.cpp', compiled_srcs)
+            self.assertIn('submission.cpp', compiled_srcs)
+            # ...it is linked into the user binary together with the submission.
+            link = calls[-1]
+            self.assertEqual(link[-1], 'user')
+            self.assertIn('user_submission.o', link)
+            self.assertIn('user_stub.o', link)
+            # The manager is built only from manager.cpp.
+            self.assertIn('manager_manager.o', calls[1])
+            self.assertNotIn('user_stub.o', calls[1])
+
+    def test_stub_already_included_is_not_linked_twice(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, calls = self._runner(tmp)
+            _, _, err = runner.compile_cpp_interactive(
+                '#include "stub.cpp"\nint find_colours(int N) { return N; }\n',
+                self.FILES,
+            )
+
+        self.assertIsNone(err, f'unexpected compile error: {err}')
+        compile_cmds = [c for c in calls if '-c' in c]
+        # manager.cpp + submission.cpp only: the stub is already a textual
+        # #include of the submission.
+        self.assertEqual(len(compile_cmds), 2)
+        link = calls[-1]
+        self.assertIn('user_submission.o', link)
+        self.assertNotIn('user_stub.o', link)
+
+    def test_missing_manager_is_reported(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._runner(tmp)
+            _, _, err = runner.compile_cpp_interactive(
+                '#include "sphinx.h"\n',
+                [f for f in self.FILES if 'manager' not in f['name']],
+            )
+
+        self.assertIn('no manager source', err)
 

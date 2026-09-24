@@ -127,6 +127,7 @@ def finalize_claim(submission_id, token, verdict, runtime=None, memory=None,
            SET status = %s,
                judge_state = %s,
                finished_at = %s,
+               result_written_at = %s,
                runtime = %s,
                memory = %s
          WHERE id = %s
@@ -135,7 +136,7 @@ def finalize_claim(submission_id, token, verdict, runtime=None, memory=None,
     """
     with connection.cursor() as cur:
         cur.execute(sql, [
-            verdict, new_state, now, runtime, memory,
+            verdict, new_state, now, now, runtime, memory,
             submission_id, token,
         ])
         return cur.rowcount == 1
@@ -169,15 +170,65 @@ def mark_queued(submission_id) -> bool:
 
     Terminal rows are never re-dispatched: duplicate deliveries of an old
     broker message hit this and the caller ACKs them as a no-op.
+
+    ``enqueued_at`` is stamped on every dispatch (including reaper/infra
+    requeues) so queue wait is always measured against the attempt that
+    actually got claimed.
     """
     sql = """
         UPDATE submissions_submission
-           SET judge_state = 'QUEUED'
+           SET judge_state = 'QUEUED',
+               enqueued_at = %s
          WHERE id = %s
            AND judge_state IN ('PENDING', 'QUEUED')
     """
     with connection.cursor() as cur:
-        cur.execute(sql, [submission_id])
+        cur.execute(sql, [_now(), submission_id])
+        return cur.rowcount == 1
+
+
+# Lifecycle timing columns a worker may stamp while it owns the claim.
+_PROGRESS_COLUMNS = frozenset({
+    'judge_started_at',
+    'container_acquired_at',
+    'compile_done_at',
+    'tests_done_at',
+})
+
+
+def stamp_progress(submission_id, token, **fields) -> bool:
+    """Stamp lifecycle timing columns on the row ``token`` still owns.
+
+    Observability only — the columns feed bottleneck analysis and never
+    gate judging, so losing the fence is not an error: it just affects
+    zero rows and returns ``False``. A reaped or superseded worker's late
+    stamps therefore cannot overwrite the owner's timings.
+
+    ``token is None`` is the legacy no-claim path (direct
+    ``judge_submission`` calls from tests) and uses an unfenced ORM write.
+    Omitted or ``None`` values default to "now".
+    """
+    unknown = set(fields) - _PROGRESS_COLUMNS
+    if unknown:
+        raise ValueError(f'not a lifecycle timing column: {sorted(unknown)}')
+    stamped = {
+        name: value if value is not None else _now()
+        for name, value in fields.items()
+    }
+    if token is None:
+        from .models import Submission
+
+        return Submission.objects.filter(pk=submission_id).update(**stamped) == 1
+
+    assignments = ', '.join(f'{name} = %s' for name in stamped)
+    sql = f"""
+        UPDATE submissions_submission
+           SET {assignments}
+         WHERE id = %s
+           AND claim_token = %s
+    """
+    with connection.cursor() as cur:
+        cur.execute(sql, [*stamped.values(), submission_id, token])
         return cur.rowcount == 1
 
 

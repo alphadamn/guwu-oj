@@ -143,6 +143,7 @@ main.container {
 .difficulty-shengxuan  { background-color: #1abc9c; }
 .difficulty-noi        { background-color: #f39c12; }
 .status-Accepted { color: #2ecc71; font-weight: bold; }
+.status-Partial { color: #d4a017; font-weight: bold; }
 .status-Wrong { color: #e74c3c; font-weight: bold; }
 .status-Pending { color: #f39c12; font-weight: bold; }
 .status-Error { color: #c0392b; font-weight: bold; }

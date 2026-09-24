@@ -8,6 +8,9 @@ idempotent and fencing-protected:
   side effects happen in ONE transaction gated by the claim token, so a
   crashed consumer redelivers a clean full write instead of a partial one,
   and a stale worker's late envelope affects zero rows;
+* per-case ``partial`` envelopes only feed the live view: they are written
+  one row at a time under the same fence, so they can neither block the
+  terminal write nor overwrite a verdict that already landed;
 * rewards are intrinsically idempotent (M2M add + point ledger keyed on
   (user, event_type, event_key));
 * infra failures are re-enqueued a bounded number of times (Redis
@@ -17,6 +20,7 @@ idempotent and fencing-protected:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from django.db import transaction
 
@@ -27,17 +31,61 @@ from .claiming import (
     next_attempt,
     requeue_claim,
     sleep_backoff,
+    stamp_progress,
 )
 
 logger = logging.getLogger(__name__)
 
+# Worker-reported phase boundaries accepted from the result envelope. The
+# web side owns every other timestamp column.
+_WORKER_TIMING_FIELDS = (
+    'judge_started_at', 'container_acquired_at', 'compile_done_at',
+    'tests_done_at',
+)
+
+
+def _parse_timings(raw):
+    """Parse worker-reported phase timestamps; drop unusable values.
+
+    A DB-less worker never shares the database clock, so these are only as
+    trustworthy as its NTP sync. They feed analysis charts, never a
+    correctness decision, so malformed input is logged and ignored rather
+    than failing an otherwise good verdict.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    parsed = {}
+    for name in _WORKER_TIMING_FIELDS:
+        value = raw.get(name)
+        if not value:
+            continue
+        try:
+            parsed[name] = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            logger.warning(
+                'Ignoring unparseable %s %r in result envelope', name, value,
+            )
+    return parsed
+
 
 def _ordered_case_rows(submission):
-    """Return the 1-based-index -> ORM test-case mapping for a submission."""
+    """Return the 1-based-index -> ORM test-case mapping for a submission.
+
+    Only the primary keys are selected: callers use the returned rows purely
+    to set a foreign key. Loading the full rows would drag every case's
+    ``input_data``/``expected_output`` across the wire -- for a problem with
+    a few large cases that is several megabytes *per incremental progress
+    report*, which starved the result consumer.
+    """
     if submission.contest_problem_id is not None:
-        return list(submission.contest_problem.test_cases.order_by('order', 'id'))
+        return list(
+            submission.contest_problem.test_cases
+            .order_by('order', 'id').only('id')
+        )
     if submission.problem_id is not None:
-        return list(submission.problem.test_cases.order_by('order', 'id'))
+        return list(
+            submission.problem.test_cases.order_by('order', 'id').only('id')
+        )
     return []
 
 
@@ -64,11 +112,14 @@ def grant_accepted_rewards(submission, problem):
 
 
 def write_judge_outcome(submission_id, token, verdict, runtime_ms,
-                        memory_kb, cases):
+                        memory_kb, cases, timings=None):
     """Persist a worker outcome behind its claim fence. Returns ``bool``.
 
     ``False`` means the envelope was stale (claim revoked / row already
-    terminal) and was discarded without any side effect.
+    terminal) and was discarded without any side effect. ``timings`` are
+    the worker-reported phase boundaries (already parsed to datetimes);
+    they are stamped under the same token, so a stale envelope cannot
+    write them either.
     """
     from .models import Submission, SubmissionTestResult
 
@@ -100,6 +151,9 @@ def write_judge_outcome(submission_id, token, verdict, runtime_ms,
                 )
                 return False
 
+            if timings:
+                stamp_progress(submission_id, token, **timings)
+
             SubmissionTestResult.objects.filter(submission_id=submission_id).delete()
             for case in cases:
                 idx = int(case['index'])
@@ -113,6 +167,7 @@ def write_judge_outcome(submission_id, token, verdict, runtime_ms,
                     submission_id=submission_id,
                     case_index=idx,
                     status=case['status'],
+                    score=case.get('score'),
                     runtime=case.get('runtime_ms'),
                     actual_output=(case.get('actual_output') or '')[:4000],
                     expected_output='',
@@ -137,6 +192,66 @@ def write_judge_outcome(submission_id, token, verdict, runtime_ms,
     return True
 
 
+def write_partial_case(submission_id, token, case):
+    """Persist one finished test case mid-judging. Returns ``bool``.
+
+    This is the incremental feed the browser renders while the submission is
+    still running, so each call publishes immediately. It is fenced exactly
+    like the terminal write: a row that is no longer ``JUDGING`` under this
+    token belongs to someone else, so the partial is dropped rather than
+    resurrecting or corrupting a finished result set. The terminal envelope
+    stays authoritative -- it deletes and rewrites every case.
+    """
+    from .models import Submission, SubmissionTestResult
+
+    if token is None or not isinstance(case, dict):
+        return False
+    try:
+        idx = int(case['index'])
+    except (KeyError, TypeError, ValueError):
+        logger.warning(
+            'Ignoring partial result without a usable case index for %s',
+            submission_id,
+        )
+        return False
+
+    submission = (
+        Submission.objects
+        .select_related('problem', 'contest_problem')
+        .filter(pk=submission_id, claim_token=token, judge_state='JUDGING')
+        .first()
+    )
+    if submission is None:
+        # Lease revoked or row already terminal: the verdict is owned
+        # elsewhere, so this progress report has nothing to say.
+        return False
+
+    problem = submission.effective_problem
+    if problem is None:
+        return False
+    case_rows = _ordered_case_rows(submission)
+    tc = case_rows[idx - 1] if 0 < idx <= len(case_rows) else None
+    relation = (
+        {'contest_test_case': tc}
+        if submission.contest_problem_id is not None
+        else {'test_case': tc}
+    )
+    SubmissionTestResult.objects.update_or_create(
+        submission_id=submission_id,
+        case_index=idx,
+        defaults={
+            'status': case.get('status') or 'System Error',
+            'score': case.get('score'),
+            'runtime': case.get('runtime_ms'),
+            'actual_output': (case.get('actual_output') or '')[:4000],
+            'expected_output': '',
+            'error_message': (case.get('error_message') or '')[:2000],
+            **relation,
+        },
+    )
+    return True
+
+
 def fail_unclaimed(submission_id):
     """Terminal FAILED for a row that never reached JUDGING (claim-phase)."""
     from django.db import connection
@@ -147,13 +262,15 @@ def fail_unclaimed(submission_id):
            SET status = 'System Error',
                judge_state = 'FAILED',
                finished_at = %s,
+               result_written_at = %s,
                runtime = 0
          WHERE id = %s
            AND judge_state = 'QUEUED'
            AND claim_token IS NULL
     """
     with connection.cursor() as cur:
-        cur.execute(sql, [timezone.now(), submission_id])
+        now = timezone.now()
+        cur.execute(sql, [now, now, submission_id])
         return cur.rowcount == 1
 
 
@@ -235,6 +352,15 @@ def process_envelope(raw, redis_conn):
         logger.info('Infra envelope for %s -> %s', submission_id, outcome)
         return 'ok'
 
+    if kind == 'partial':
+        # Mid-judging progress. Queue order guarantees this arrives before
+        # the terminal envelope from the same worker, and the write is
+        # fenced on the claim token, so a late partial after the verdict is
+        # silently dropped instead of rewriting a finished case.
+        if write_partial_case(submission_id, token, env.get('case') or {}):
+            publish_submission_changed(submission_id)
+        return 'ok'
+
     if kind != 'result':
         raise ValueError(f'unknown envelope kind {kind!r}')
 
@@ -245,6 +371,7 @@ def process_envelope(raw, redis_conn):
         int(env.get('runtime_ms') or 0),
         env.get('memory_kb'),
         env.get('cases') or [],
+        timings=_parse_timings(env.get('timings')),
     )
     if won:
         publish_submission_changed(submission_id)

@@ -42,10 +42,32 @@ class TestCaseInline(admin.TabularInline):
 
 @admin.register(Problem)
 class ProblemAdmin(admin.ModelAdmin):
-    list_display = ['id', 'title', 'luogu_pid', 'difficulty', 'created_by', 'is_public', 'created_at']
-    list_filter = ['difficulty', 'is_public', 'created_at']
+    list_display = ['id', 'title', 'luogu_pid', 'problem_type', 'difficulty', 'created_by', 'is_public', 'created_at']
+    list_filter = ['problem_type', 'difficulty', 'is_public', 'created_at']
     search_fields = ['title', 'description', 'tags', 'luogu_pid']
-    readonly_fields = ['luogu_pid']
+    readonly_fields = ['luogu_pid', 'created_at', 'updated_at']
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'description', 'input_format', 'output_format',
+                       'sample_input', 'sample_output', 'hint', 'tags',
+                       'luogu_pid'),
+        }),
+        ('题目类型', {
+            'fields': ('problem_type', 'function_files', 'interactive_config'),
+            'description': '函数题（IOI 风格）请把 problem_type 设为 function，并在 function_files '
+                           '填 JSON 数组，例如 [{"name": "problem.h", "content": "..."}, '
+                           '{"name": "grader.cpp", "content": "..."}]。'
+                           '交互题（IOI 风格）把 problem_type 设为 interactive，function_files 放 '
+                           'manager/stub 等文件，interactive_config 填 JSON 对象，例如 '
+                           '{"num_processes": 1, "user_io": "fifo_io"}。标准题忽略这两个字段。',
+        }),
+        ('评测限制', {
+            'fields': ('difficulty', 'time_limit', 'memory_limit', 'is_public'),
+        }),
+        ('元数据', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+        }),
+    )
     inlines = [TestCaseInline]
     change_list_template = 'admin/problems/problem/change_list.html'
 

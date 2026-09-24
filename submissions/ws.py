@@ -151,13 +151,22 @@ async def submission_status_consumer(scope, receive, send, submission_id):
     pubsubs = {}
 
     done = asyncio.Event()
-    state = {'last_text': None, 'last_fetch': 0.0}
+    state = {'last_text': None, 'last_fetch': 0.0, 'refetch_task': None}
     tasks = []
+
+    async def refetch():
+        # Trailing fetch for updates coalesced away: guarantees the newest
+        # committed state is pushed instead of waiting for the watchdog.
+        await asyncio.sleep(FETCH_COALESCE_SEC)
+        if not done.is_set():
+            await push_snapshot(force=True)
 
     async def push_snapshot(force=False):
         loop = asyncio.get_running_loop()
         now = loop.time()
         if not force and now - state['last_fetch'] < FETCH_COALESCE_SEC:
+            if state['refetch_task'] is None or state['refetch_task'].done():
+                state['refetch_task'] = asyncio.create_task(refetch())
             return
         state['last_fetch'] = now
 
@@ -245,6 +254,9 @@ async def submission_status_consumer(scope, receive, send, submission_id):
         if done.is_set():
             return
         done.set()
+        trailing = state.get('refetch_task')
+        if trailing is not None and not trailing.done():
+            trailing.cancel()
         for task in tasks:
             if not task.done():
                 task.cancel()

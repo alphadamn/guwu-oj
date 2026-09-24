@@ -5,7 +5,7 @@
 {% block title %}AI 解题 · {{ problem.title }} - 谷物 OJ{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'ai_assistant/css/ask.css' %}?v=20260912d">
+<link rel="stylesheet" href="{% static 'ai_assistant/css/ask.css' %}?v=20260923b">
 {% endblock %}
 
 {% block content %}
@@ -39,7 +39,7 @@
 
     <div id="ai-conversation">
         {% for gen in generations %}
-        <div class="card border-0 shadow-sm rounded-4 mb-3 ai-message" data-round="{{ gen.round_no }}">
+        <div class="card border-0 shadow-sm rounded-4 mb-3 ai-message" data-round="{{ gen.round_no }}" data-gen-id="{{ gen.id }}">
             <div class="card-header bg-white border-0 pb-0">
                 <h6 class="mb-0 text-primary">
                     <i class="bi bi-chat-square-text"></i>
@@ -47,6 +47,14 @@
                 </h6>
             </div>
             <div class="card-body pt-2">
+                {% if gen.error_message %}
+                <div class="alert alert-warning py-1 px-2 mb-2 small d-flex align-items-center justify-content-between">
+                    <span><i class="bi bi-exclamation-triangle"></i> {{ gen.error_message }}</span>
+                    <button type="button" class="btn btn-outline-primary btn-sm ms-2 btn-continue" data-gen-id="{{ gen.id }}" onclick="if(window.__aiContinue){window.__aiContinue({{ gen.id }})}">
+                        <i class="bi bi-arrow-bar-right"></i> 继续回答
+                    </button>
+                </div>
+                {% endif %}
                 {% if gen.reasoning %}
                 <details class="ai-reasoning" data-phase="done">
                     <summary>
@@ -132,7 +140,95 @@
 {% csrf_token %}
 {{ ai_state|json_script:'ai-page-state' }}
 <script defer src="{% static 'vendor/marked/marked.min.js' %}?v=12.0.2"></script>
-<script defer src="{% static 'ai_assistant/js/ask.js' %}?v=20260912d"></script>
+<script defer data-cfasync="false" src="{% static 'ai_assistant/js/ask.js' %}?v=20260923e"></script>
+<script data-cfasync="false">
+// Inline fallback: ensure __aiContinue works even if ask.js is Cloudflare-cached.
+// If ask.js loads fresh, it overrides this with its own richer implementation.
+window.__aiContinue = function(genId) {
+    var card = document.querySelector('.ai-message[data-gen-id="' + genId + '"]');
+    if (!card) { return; }
+
+    // Remove the interrupted banner + button.
+    var banner = card.querySelector('.alert-warning');
+    if (banner) { banner.remove(); }
+
+    // Show streaming indicator.
+    var body = card.querySelector('.card-body');
+    var statusDiv = document.createElement('div');
+    statusDiv.className = 'text-muted small mb-2';
+    statusDiv.innerHTML = '<span class="ai-spinner text-primary"></span> AI 正在继续作答…';
+    body.appendChild(statusDiv);
+
+    var answerDiv = card.querySelector('.ai-answer') || document.createElement('div');
+    answerDiv.className = 'ai-answer ai-answer-streaming';
+    if (!answerDiv.parentNode) { body.appendChild(answerDiv); }
+
+    var PROBLEM_ID = JSON.parse(document.getElementById('ai-page-state').textContent).problem_id;
+    var csrfInput = document.querySelector('input[name=csrfmiddlewaretoken]');
+    var parts = [];
+
+    fetch('/ai/problem/' + PROBLEM_ID + '/generate/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfInput ? csrfInput.value : '',
+            'Accept': 'text/event-stream, application/json'
+        },
+        body: JSON.stringify({continue_generation_id: genId})
+    }).then(function(resp) {
+        var ctype = resp.headers.get('Content-Type') || '';
+        if (ctype.indexOf('text/event-stream') === -1) {
+            return resp.text().then(function(raw) {
+                var data = {};
+                try { data = JSON.parse(raw); } catch(e) {}
+                statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> ' +
+                    (data.message || '请求失败 (' + resp.status + ')') + '</span>';
+            });
+        }
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        function pump() {
+            return reader.read().then(function(result) {
+                if (result.done) {
+                    statusDiv.remove();
+                    return;
+                }
+                buffer += decoder.decode(result.value, {stream: true});
+                var lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (var i = 0; i < lines.length; i++) {
+                    if (lines[i].startsWith('data:')) {
+                        try {
+                            var ev = JSON.parse(lines[i].slice(5).trim());
+                            if (ev.type === 'delta') {
+                                parts.push(ev.text);
+                                answerDiv.innerHTML = (typeof marked !== 'undefined')
+                                    ? marked.parse(parts.join('')) : parts.join('');
+                            } else if (ev.type === 'done') {
+                                statusDiv.remove();
+                                answerDiv.classList.remove('ai-answer-streaming');
+                                if (ev.answer_html) {
+                                    answerDiv.innerHTML = ev.answer_html;
+                                }
+                            } else if (ev.type === 'error') {
+                                statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> ' +
+                                    (ev.message || '生成失败') + '</span>';
+                            }
+                        } catch(e) {}
+                    }
+                }
+                return pump();
+            });
+        }
+        return pump();
+    }).catch(function(err) {
+        statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> ' +
+            ((err && err.message) ? err.message : '网络错误') + '</span>';
+    });
+};
+</script>
 {% endblock %}
 
 {% block extra_js %}

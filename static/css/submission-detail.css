@@ -22,6 +22,7 @@
     border-radius: 8px !important;
 }
 .case-Accepted { background-color: #2ecc71; color: #fff; }
+.case-Partial { background-color: #f1c40f; color: #5a4a00; }
 .case-Wrong { background-color: #e74c3c; color: #fff; }
 .case-Time { background-color: #f39c12; color: #fff; }
 .case-Runtime { background-color: #9b59b6; color: #fff; }
@@ -52,6 +53,7 @@
     font-weight: 600;
 }
 .status-Accepted { color: #2ecc71; font-weight: bold; }
+.status-Partial { color: #d4a017; font-weight: bold; }
 .status-Wrong { color: #e74c3c; font-weight: bold; }
 .status-Time { color: #f39c12; font-weight: bold; }
 .status-Runtime { color: #9b59b6; font-weight: bold; }

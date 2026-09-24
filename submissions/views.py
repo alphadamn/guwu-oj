@@ -1,3 +1,5 @@
+import re
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -61,6 +63,27 @@ def submit_solution(request, problem_id):
         code = request.POST.get('code')
         language = request.POST.get('language')
 
+        # Function / interactive problems are C++-only by design (the grader
+        # or manager links against the user's submission.cpp). Reject other
+        # languages up front so the user sees an immediate popup rather than
+        # a Compile Error from the judge worker. Same messages.error +
+        # re-render pattern as login failure / captcha failure / oversized
+        # code below.
+        if (
+            problem.problem_type in ('function', 'interactive')
+            and language
+            and language != 'C++'
+        ):
+            kind = '交互题' if problem.problem_type == 'interactive' else '函数题'
+            messages.error(
+                request,
+                f'本题是{kind}（IOI 风格），仅支持 C++ 提交。请切换到 C++ 后再提交。',
+            )
+            return render(request, 'submissions/submit.html', {
+                'problem': problem,
+                'requires_captcha': requires_captcha,
+            })
+
         if requires_captcha and _check_submission_captcha is not None:
             ok, msg = _check_submission_captcha(request)
             if not ok:
@@ -114,6 +137,11 @@ def submission_detail(request, submission_id):
     for result in test_results:
         result.expected_output = ''
     passed_count = sum(1 for r in test_results if r.status == 'Accepted')
+    scored_results = [r for r in test_results if r.score is not None]
+    earned_score = (
+        round(sum(r.score for r in scored_results), 4)
+        if scored_results else None
+    )
     # should_poll = (
     #     submission.status == 'Pending'
     #     and submission.language in JUDGED_LANGUAGES
@@ -125,6 +153,7 @@ def submission_detail(request, submission_id):
         'submission': submission,
         'test_results': test_results,
         'passed_count': passed_count,
+        'earned_score': earned_score,
         'total_cases': len(test_results),
         'should_poll': should_poll,
     })
@@ -163,10 +192,23 @@ def all_submissions(request):
         'user', 'problem', 'contest_problem__contest'
     ).all()
 
-    # Filter by problem
-    problem_id = request.GET.get('problem')
-    if problem_id:
-        submissions = submissions.filter(problem_id=problem_id)
+    # Filter by problem. Accept a numeric id ("2"), an optional "P"-prefixed
+    # id ("P2", matching how problems are displayed), or fall back to a fuzzy
+    # title search. Passing arbitrary text straight into the integer FK column
+    # used to raise a database error (HTTP 500).
+    problem_query = (request.GET.get('problem') or '').strip()
+    if problem_query:
+        pid_match = re.fullmatch(r'P?\s*0*(\d+)', problem_query, flags=re.IGNORECASE)
+        if pid_match:
+            pid = int(pid_match.group(1))
+            # Postgres integer columns cap at 2^31-1; an out-of-range literal
+            # would error at query execution, so treat it as "no such problem".
+            if pid <= 2147483647:
+                submissions = submissions.filter(problem_id=pid)
+            else:
+                submissions = submissions.none()
+        else:
+            submissions = submissions.filter(problem__title__icontains=problem_query)
 
     # Filter by user
     username = request.GET.get('user')

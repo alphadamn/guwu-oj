@@ -519,9 +519,11 @@
         setLoading(true);
 
         var fresh = !!(opts && opts.fresh);
+        var continueGenId = opts && opts.continue_generation_id;
         var payload = {};
         // A satisfied interaction starts a brand-new session server-side.
-        if (SESSION_ID && !fresh && !SATISFIED) { payload.session_id = SESSION_ID; }
+        if (SESSION_ID && !fresh && !SATISFIED && !continueGenId) { payload.session_id = SESSION_ID; }
+        if (continueGenId) { payload.continue_generation_id = continueGenId; }
 
         var controller = new AbortController();
         activeStream = controller;
@@ -573,7 +575,24 @@
                     SESSION_ID = ev.session_id;
                     GEN_COUNT = ev.round;
                     SATISFIED = false;
-                    card = createStreamingCard(ev.round);
+                    if (ev.continue) {
+                        // Continuation: reuse the existing card for this gen.
+                        card = document.querySelector(
+                            '.ai-message[data-gen-id="' + ev.generation_id + '"]'
+                        );
+                        if (card) {
+                            // Reset streaming state on the existing card.
+                            card._finalised = false;
+                            card._answerText = card._answerText || '';
+                            var ansBody = card.querySelector('.ai-answer');
+                            if (ansBody) { ansBody.classList.add('ai-answer-streaming'); }
+                            // Remove the interrupted banner + continue button.
+                            var banner = card.querySelector('.alert-warning');
+                            if (banner) { banner.remove(); }
+                        }
+                    } else {
+                        card = createStreamingCard(ev.round);
+                    }
                 } else if (ev.type === 'reasoning') {
                     if (!card) { card = createStreamingCard(GEN_COUNT || 1); }
                     appendReasoning(card, ev.text);
@@ -599,7 +618,7 @@
                     renderActions(ev);
                 } else if (ev.type === 'error') {
                     finished = true;
-                    discardCard(card);
+                    if (!ev.continue) { discardCard(card); }
                     card = null;
                     showError(ev.message || '生成失败，请稍后再试。');
                     controls.classList.remove('d-none');
@@ -612,7 +631,7 @@
             try { controller.abort(); } catch (e) {}
             setLoading(false);
             controls.classList.remove('d-none');
-            if (!finished && card) { discardCard(card); }
+            if (!finished && card && !continueGenId) { discardCard(card); }
             console.error('[AI] generate failed:', err);
             showError((err && err.message) ? err.message : String(err));
         }).then(function () {
@@ -645,6 +664,12 @@
             generate({fresh: true});
         });
     }
+
+    // Expose for inline onclick handlers (bypasses any JS caching issues).
+    window.__aiContinue = function (genId) {
+        generate({continue_generation_id: genId});
+    };
+
     bindActions();
 
     // Abort an in-flight stream if the user navigates away.

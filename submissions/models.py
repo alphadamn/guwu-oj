@@ -28,6 +28,7 @@ class Submission(models.Model):
     STATUS_CHOICES = [
         ('Pending', 'Pending'),
         ('Accepted', 'Accepted'),
+        ('Partial', 'Partial'),
         ('Wrong Answer', 'Wrong Answer'),
         ('Time Limit Exceeded', 'Time Limit Exceeded'),
         ('Memory Limit Exceeded', 'Memory Limit Exceeded'),
@@ -76,6 +77,27 @@ class Submission(models.Model):
     claimed_at = models.DateTimeField(null=True, blank=True)
     heartbeat_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+
+    # ── Phase-boundary timings (bottleneck analysis) ─────────────────────
+    # One column per pipeline boundary, so the cost of each stage can be
+    # attributed with a plain date subtraction instead of log mining:
+    #
+    #   created_at        -> enqueued_at        request -> broker handoff
+    #   enqueued_at       -> claimed_at         broker queue wait
+    #   claimed_at        -> judge_started_at   worker pickup / setup
+    #   judge_started_at  -> container_acquired_at  container-pool checkout
+    #   container_acquired_at -> compile_done_at    container start + compile
+    #   compile_done_at   -> tests_done_at      test-case execution
+    #   tests_done_at     -> result_written_at  writeback / envelope lag
+    #
+    # Observability only: these never gate judging, and a phase that was
+    # never reached (e.g. no test phase after a Compile Error) stays NULL.
+    enqueued_at = models.DateTimeField(null=True, blank=True)
+    judge_started_at = models.DateTimeField(null=True, blank=True)
+    container_acquired_at = models.DateTimeField(null=True, blank=True)
+    compile_done_at = models.DateTimeField(null=True, blank=True)
+    tests_done_at = models.DateTimeField(null=True, blank=True)
+    result_written_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -129,6 +151,7 @@ class Submission(models.Model):
 class SubmissionTestResult(models.Model):
     CASE_STATUS_CHOICES = [
         ('Accepted', 'Accepted'),
+        ('Partial', 'Partial'),
         ('Wrong Answer', 'Wrong Answer'),
         ('Time Limit Exceeded', 'Time Limit Exceeded'),
         ('Memory Limit Exceeded', 'Memory Limit Exceeded'),
@@ -147,6 +170,10 @@ class SubmissionTestResult(models.Model):
     )
     case_index = models.PositiveIntegerField()
     status = models.CharField(max_length=30, choices=CASE_STATUS_CHOICES)
+    # Fractional score in [0, 1] for this case. Communication
+    # (interactive) managers print their own score to stdout; standard
+    # problems leave this NULL (their verdict is purely binary).
+    score = models.FloatField(null=True, blank=True)
     runtime = models.IntegerField(blank=True, null=True)
     actual_output = models.TextField(blank=True)
     expected_output = models.TextField(blank=True)

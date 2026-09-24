@@ -364,12 +364,23 @@ class ContainerPool:
         raise ContainerPoolUnavailable("pool is shutting down")
 
     def _apply_memory(self, handle, state, memory_mb):
-        """Resize *handle* to *memory_mb*; recycle it on failure.
+        """Ensure *handle*'s cgroup cap is at least *memory_mb*.
 
-        Returns True when the container is usable, False when it was
-        destroyed (caller should loop for a replacement).
+        Only the cgroup ceiling is grown, never shrunk: the problem's
+        memory limit is enforced by measured RSS inside the container
+        (see ``SandboxRunner.run_executable``), so a cap larger than the
+        limit is harmless. Growing only when the limit exceeds the
+        current cap eliminates the per-checkout ``docker update`` that
+        previously dominated checkout latency for the common small-limit
+        problems. Returns True when the container is usable, False when
+        it was destroyed (caller should loop for a replacement).
         """
-        if memory_mb is None or handle.memory_mb == memory_mb:
+        if memory_mb is None:
+            return True
+        # The cap already covers this problem's limit (and any smaller
+        # one): leave it alone so the next small-limit checkout is also
+        # free of docker-update overhead.
+        if memory_mb <= handle.memory_mb:
             return True
         try:
             update_judge_container_memory(handle.cid, memory_mb)

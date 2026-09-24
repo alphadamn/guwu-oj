@@ -11,7 +11,7 @@
         <form method="get" class="mb-4">
             <div class="row g-3">
                 <div class="col-md-3">
-                    <input type="text" class="form-control" name="problem" placeholder="题号" value="{{ request.GET.problem }}">
+                    <input type="text" class="form-control" name="problem" placeholder="题号（如 2 / P2）或题目标题" value="{{ request.GET.problem }}">
                 </div>
                 <div class="col-md-3">
                     <input type="text" class="form-control" name="user" placeholder="用户名" value="{{ request.GET.user }}">
@@ -21,6 +21,7 @@
                         <option value="">所有状态</option>
                         <option value="Pending" {% if request.GET.status == 'Pending' %}selected{% endif %}>Pending</option>
                         <option value="Accepted" {% if request.GET.status == 'Accepted' %}selected{% endif %}>Accepted</option>
+                        <option value="Partial" {% if request.GET.status == 'Partial' %}selected{% endif %}>Partial</option>
                         <option value="Wrong Answer" {% if request.GET.status == 'Wrong Answer' %}selected{% endif %}>Wrong Answer</option>
                         <option value="Time Limit Exceeded" {% if request.GET.status == 'Time Limit Exceeded' %}selected{% endif %}>Time Limit Exceeded</option>
                         <option value="Memory Limit Exceeded" {% if request.GET.status == 'Memory Limit Exceeded' %}selected{% endif %}>Memory Limit Exceeded</option>

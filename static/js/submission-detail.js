@@ -29,6 +29,7 @@
 
     const STATUS_CLASS = {
         Accepted: 'status-Accepted',
+        Partial: 'status-Partial',
         'Wrong Answer': 'status-Wrong',
         'Time Limit Exceeded': 'status-Time',
         'Memory Limit Exceeded': 'status-Runtime',
@@ -69,10 +70,18 @@
         pointsEl.replaceChildren();
 
         results.forEach((r) => {
-            const badge = CASE_BADGE[r.status] || {
-                cls: 'case-Skipped',
-                label: `#${r.case_index}`,
-            };
+            let badge;
+            if (r.status === 'Partial' && r.score != null) {
+                badge = {
+                    cls: 'case-Partial',
+                    label: `${Math.round(r.score * 100)}%`,
+                };
+            } else {
+                badge = CASE_BADGE[r.status] || {
+                    cls: 'case-Skipped',
+                    label: `#${r.case_index}`,
+                };
+            }
             const row = document.createElement('div');
             row.className = 'case-point';
 
@@ -114,6 +123,16 @@
             p.appendChild(strong);
             p.appendChild(document.createTextNode(' 通过'));
             summaryEl.appendChild(p);
+        }
+        if (data.earned_score != null) {
+            const scoreP = document.createElement('p');
+            scoreP.className = 'mb-1';
+            scoreP.appendChild(document.createTextNode('得分: '));
+            const scoreStrong = document.createElement('strong');
+            const earnedShown = Math.round(data.earned_score * 100) / 100;
+            scoreStrong.textContent = `${earnedShown}/${data.total_cases}`;
+            scoreP.appendChild(scoreStrong);
+            summaryEl.appendChild(scoreP);
         }
         if (data.runtime != null && data.runtime !== 'None') {
             const p = document.createElement('p');

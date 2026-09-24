@@ -11,7 +11,14 @@ from django.views.decorators.http import require_POST
 from django.views.decorators.cache import never_cache
 from django.core.cache import cache
 from .models import Problem, Solution, split_stored_tags
-from .forms import ProblemForm, parse_test_cases_from_post, validate_test_cases, save_test_cases
+from .forms import (
+    ProblemForm,
+    parse_function_files_from_post,
+    parse_test_cases_from_post,
+    save_test_cases,
+    validate_function_files,
+    validate_test_cases,
+)
 from .tag_labels import (
     TAG_GROUPS,
     SOURCE_TAGS,
@@ -373,11 +380,25 @@ def create_problem(request):
         form = ProblemForm(request.POST)
         test_cases = parse_test_cases_from_post(request.POST)
         test_error = validate_test_cases(test_cases)
+        function_files = parse_function_files_from_post(request.POST)
+        # problem_type comes through ProblemForm (it's in Meta.fields); pull
+        # it off the cleaned form so validate_function_files matches what
+        # will actually be persisted.
+        p_type = (
+            form.cleaned_data.get('problem_type') if form.is_valid() else
+            request.POST.get('problem_type', 'standard')
+        )
+        files_error = validate_function_files(function_files, p_type)
 
-        if form.is_valid() and not test_error:
+        if form.is_valid() and not test_error and not files_error:
             problem = form.save(commit=False)
             problem.created_by = request.user
             problem.is_public = False
+            # Persist the function-file bundle as JSON; standard problems
+            # store '[]' (the field default) so the judge treats them as
+            # plain main.cpp submissions.
+            import json as _json
+            problem.function_files = _json.dumps(function_files)
             problem.save()
             save_test_cases(problem, test_cases)
             messages.success(request, f'题目 P{problem.id} 上传成功，已添加 {len(test_cases)} 个测试用例。')
@@ -385,6 +406,8 @@ def create_problem(request):
 
         if test_error:
             messages.error(request, test_error)
+        if files_error:
+            messages.error(request, files_error)
     else:
         form = ProblemForm()
 

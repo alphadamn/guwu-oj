@@ -6,5 +6,7 @@ from . import internal_views
 
 urlpatterns = [
     path('claim/', internal_views.claim_view),
+    path('cases/', internal_views.cases_view),
     path('heartbeat/', internal_views.heartbeat_view),
+    path('report_ip/', internal_views.report_ip_view),
 ]

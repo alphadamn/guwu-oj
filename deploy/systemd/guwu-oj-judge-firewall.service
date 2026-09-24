@@ -1,0 +1,17 @@
+[Unit]
+Description=Guwu OJ direct judge-API firewall sync (reported worker IPs)
+After=network.target guwu-oj-web.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/guwu-oj
+EnvironmentFile=/www/wwwroot/guwu-oj/.env
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/python manage.py sync_judge_firewall --loop --interval 300
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

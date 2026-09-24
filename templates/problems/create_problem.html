@@ -81,6 +81,33 @@
             </div>
 
             <hr>
+            <h6 class="mb-3">题目类型</h6>
+            <div class="mb-3" id="problem-type-row">
+                {% for radio in form.problem_type %}
+                <div class="form-check form-check-inline">
+                    {{ radio.tag }}
+                    <label class="form-check-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label>
+                </div>
+                {% endfor %}
+            </div>
+            <p class="text-muted small" id="problem-type-help">
+                <strong>标准题</strong>：用户提交完整 <code>main.cpp</code>，从 stdin 读输入、向 stdout 写输出。
+                <strong>函数题</strong>（IOI 风格）：用户只提交函数实现，题目提供 grader/header；判题时把用户代码与这些文件一起编译链接。
+                <strong>交互题</strong>（IOI 风格）：题目提供 manager/stub，用户的 <code>main</code> 与 manager 通过管道通信，判定结果由 manager 打印。
+            </p>
+
+            <div id="function-files-section" style="display:none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0">题目提供的文件 <span class="badge bg-primary" id="file-count">2</span></h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="add-file-btn">
+                        <i class="bi bi-plus"></i> 添加文件
+                    </button>
+                </div>
+                <div id="function-files-container"></div>
+                <p class="text-muted small">函数题默认两行：一个 <code>problem.h</code>（函数声明）+ 一个 <code>grader.cpp</code>（含 <code>main</code>，调用用户函数并打印结果）；交互题默认一个 <code>manager.cpp</code>（含 <code>main</code>，驱动用户进程并打印判定）。用户提交的代码会被写入 <code>submission.cpp</code> 并与这些文件一起编译链接。</p>
+            </div>
+
+            <hr>
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h6 class="mb-0">测试用例 <span class="badge bg-primary" id="case-count">3</span></h6>
                 <button type="button" class="btn btn-sm btn-outline-primary" id="add-case-btn">
@@ -101,5 +128,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/problem-create.js' %}?v=20260913"></script>
+<script src="{% static 'js/problem-create.js' %}?v=2026092401"></script>
 {% endblock %}
