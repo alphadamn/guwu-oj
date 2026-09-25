@@ -1,7 +1,7 @@
 # 谷物 OJ 运维常用指令手册
 
 > 适用主机：web 源站（/www/wwwroot/guwu-oj）。判题机相关命令需在对应判题主机上执行，已单独标注。
-> 最后核对：2026-09-16。
+> 最后核对：2026-09-25。
 
 ## 0. 环境速查
 
@@ -11,11 +11,11 @@
 | Python 虚拟环境 | `/www/wwwroot/guwu-oj/venv` |
 | Web 服务 | `guwu-oj.service`（Granian，12 workers，UDS `/run/guwu-oj/guwu-oj.sock`） |
 | WebSocket 服务 | `guwu-oj-ws.service`（Granian ASGI，仅监听 127.0.0.1:8447，nginx `/ws/` 反代） |
-| 判题 worker（判题机） | `guwu-oj-judge-worker.service`，单进程线程池并发 `OJ_JUDGE_CONCURRENCY`（默认 4） |
-| 判题机 | judge-1 `64.90.3.112`（权重 3）、judge-2 `192.168.196.147`（权重 2）、judge-3 已停用 |
-| 队列优先级（高→低） | `{base}-pro` → `{base}-plus` → `{base}`（免费）→ `{base}-ai`（AI 验证） |
+| 判题 worker（判题机） | `guwu-oj-judge-worker.service`，Celery worker（`celery -A oj_project worker -Q judge -P threads`），单进程线程池并发 `OJ_JUDGE_CONCURRENCY`（judge-1=4，judge-2=3） |
+| 判题机 | judge-1 `64.90.3.112`（`/root/guwu-oj`）、judge-2 `192.168.196.147`（`/home/oscar/guwu-oj`），均竞争消费中央 `judge` 队列；`JUDGE_MACHINES` 仅用于健康检查与 WS 多机订阅 |
+| 队列优先级（高→低） | Celery 单队列 `judge` + 消息优先级桶：pro=0 → plus=3 → free=6 → ai=9（数字越小越先消费） |
 | PostgreSQL | `ojdb` @ 127.0.0.1:5432（TLS），库用户走 `.env` |
-| Redis | 本机 db1：缓存/限流；判题机 db0：RQ 队列 |
+| Redis | 本机 db1：缓存/限流；中央 broker db0：Celery 判题队列 + `judge:result`（TLS + 密码） |
 | 管理命令入口 | `venv/bin/python manage.py ...` |
 
 通用约定：
@@ -179,25 +179,18 @@ list(Submission.objects.filter(status='System Error')
      .order_by('-created_at').values_list('id', 'user__username', 'created_at')[:20])
 ```
 
-查看各判题机四个优先级队列的实时积压：
+查看中央 Celery 队列四个优先级桶的实时积压、worker 心跳与提交生命周期：
 
 ```bash
-venv/bin/python manage.py shell -c "
-from submissions.judge_load_balancer import load_balancer
-for m in load_balancer.get_enabled_machines():
-    r = load_balancer._machine_redis(m, decode_responses=True)
-    base = m['queue']
-    for q in (base+'-pro', base+'-plus', base, base+'-ai'):
-        print(m['name'], q, r.llen('rq:queue:'+q))
-"
+venv/bin/python manage.py judge_overview
 ```
 
-RQ 统计（web 本机的 default/high/low/ai 回退队列）：
+输出包含：`judge`(pro=0) / `judge:3`(plus) / `judge:6`(free) / `judge:9`(ai) 四个桶深度、`judge:worker:celery:<host>` 心跳在线状态（90s TTL）、PENDING/QUEUED/JUDGING/DONE/FAILED 分布、僵尸任务数与近 1 小时判题量。
+
+逐台判题机健康检查（Redis 连通性 + 中央 broker worker 心跳 + Docker/镜像）：
 
 ```bash
-venv/bin/python manage.py rqstats          # 一次
-venv/bin/python manage.py rqstats -i 2     # 每 2 秒刷新
-venv/bin/python manage.py rqstats -j       # JSON
+venv/bin/python manage.py check_judge_health
 ```
 
 ### 3.1 卡住的 Pending 重新入队
@@ -247,8 +240,8 @@ assert bot.is_active is False          # 必须停用，禁止登录
 ### 4.1 观测（只读）
 
 ```bash
-# 队列积压（见第 3 节，持续刷新）
-venv/bin/python manage.py rqstats -i 2
+# 队列积压（见第 3 节）
+venv/bin/python manage.py judge_overview
 
 # Web 资源
 free -h
@@ -296,7 +289,7 @@ c.save()
 
 ### 4.3 扩容（谨慎）
 
-- **判题能力**：在判题机上修改 `/root/guwu-oj/.env`（或部署目录下 `.env`）中的 `OJ_JUDGE_CONCURRENCY`（单 worker 内线程数），然后 `systemctl restart guwu-oj-judge-worker`。总产能 = 机器数 × 每机并发。需配合判题机 CPU/核数与 docker 容量，不要超过物理能力。
+- **判题能力**：在判题机上修改部署目录下 `.env` 中的 `OJ_JUDGE_CONCURRENCY`（单 Celery worker 内线程数），然后 `systemctl restart guwu-oj-judge-worker`。总产能 = 各机并发之和（当前 judge-1=4 + judge-2=3 = 7）。需配合判题机 CPU/核数与 docker 容量，不要超过物理能力。
 - **Web workers**：Granian `--workers 12` 与 unit 的 `MemoryHigh=2200M / MemoryMax=3200M` 是配套的。**加 worker 必须同步调大两个内存阈值**（每 worker 常态约 150MB），否则会被 memcg 限流导致两个 CDN 域名同时 504（2026-09-13 事故）。改 unit 后：
   ```bash
   systemctl daemon-reload && systemctl restart guwu-oj

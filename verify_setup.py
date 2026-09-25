@@ -265,7 +265,7 @@ def check_dependencies():
         'psycopg2',
         'redis',
         'django-redis',
-        'django-rq',
+        'celery',
         'docker',
     ]
     

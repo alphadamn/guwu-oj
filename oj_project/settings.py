@@ -262,7 +262,8 @@ def _rq_machine_connection(machine):
     password = machine.get('password') or _rq_redis_password()
     kwargs = {
         'socket_connect_timeout': 5,
-        # RQ's blocking pub/sub listener must not inherit a short read timeout.
+        # The blocking pub/sub listener (WS status push) must not inherit a
+        # short read timeout.
         # Health and load-balancer clients explicitly set their own 3-second
         # timeout in JudgeLoadBalancer._machine_redis.
         'socket_timeout': None,

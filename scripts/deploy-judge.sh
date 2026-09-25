@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy the current checked-out revision to the judge host and restart its RQ worker.
+# Deploy the current checked-out revision to the judge host and restart its Celery worker.
 set -euo pipefail
 
 JUDGE_HOST="${JUDGE_HOST:-64.90.3.112}"

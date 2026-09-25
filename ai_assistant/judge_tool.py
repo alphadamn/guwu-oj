@@ -7,7 +7,7 @@ never a staff account):
 
 * keeps the user's own submission history / statistics clean;
 * makes the verification runs auditable (filter Submission by that user);
-* lets the normal RQ judge pipeline be reused unchanged.
+* lets the normal Celery judge pipeline be reused unchanged.
 
 The caller (``deepseek_api.stream_answer``) enforces the per-generation call
 cap; this module only validates arguments, creates the row, enqueues the
@@ -196,7 +196,7 @@ def _build_result_payload(
 
 
 def _wait_for_verdict(submission: Submission, timeout: float, poll_interval: float) -> bool:
-    """Block until the RQ worker finishes judging. ``False`` on timeout."""
+    """Block until the Celery worker finishes judging. ``False`` on timeout."""
     deadline = time.monotonic() + timeout
     while True:
         submission.refresh_from_db(fields=['status'])

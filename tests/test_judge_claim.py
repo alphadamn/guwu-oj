@@ -6,7 +6,7 @@ Covers:
 * fenced terminal writeback (stale tokens affect zero rows),
 * dispatch gate (terminal rows cannot be re-enqueued),
 * zombie reaping of stale JUDGING / QUEUED rows,
-* end-to-end duplicate delivery through the RQ task (exactly one verdict
+* end-to-end duplicate delivery through the Celery task (exactly one verdict
   transition and one set of side effects),
 * bounded infra-failure retries,
 * idempotent per-case result writes.

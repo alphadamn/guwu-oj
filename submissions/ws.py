@@ -8,8 +8,8 @@ Delivery model
 --------------
 1. On connect: authenticate, authorize (owner or staff), subscribe to the
    per-submission channel on the web cache Redis AND every enabled judge
-   Redis (remote judges publish on the instance co-located with their RQ
-   queue), then send the current database snapshot.
+   Redis (remote judges publish on the instance co-located with their
+   broker), then send the current database snapshot.
 2. Every Redis notification triggers a fresh snapshot push.
 3. A slow database watchdog (every ``WATCHDOG_INTERVAL`` s) self-heals any
    missed/unreachable pub/sub message and closes the socket at terminal

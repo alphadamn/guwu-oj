@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Judge-system stress test.
 
-Submits a batch of solutions straight through the ORM + RQ judge queue
+Submits a batch of solutions straight through the ORM + Celery judge queue
 (bypassing web views / captchas / rate limits) against a live judge worker,
 then polls until every submission reaches a terminal status and reports
 latency percentiles and throughput.

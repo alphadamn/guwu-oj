@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive setup for a Guwu OJ web host or judge (RQ worker) host.
+# Interactive setup for a Guwu OJ web host or judge (Celery worker) host.
 #
 #   sudo bash scripts/oj-setup.sh              # interactive, applies changes
 #   sudo bash scripts/oj-setup.sh --dry-run    # print every action, change nothing
@@ -204,13 +204,13 @@ PY
 
 # --------------------------------------------------------------- collection --
 welcome() {
-  ui_msg "Welcome" "This wizard configures a Guwu OJ web server or judge (RQ worker) host.\n\nProject dir: $PROJECT_DIR\nEnv file:    $ENV_FILE\nLog file:    $LOG_FILE\n\nNothing is installed or changed until you review and confirm the plan at the end.$([[ $DRY_RUN == 1 ]] && printf '\n\nDRY-RUN MODE: no changes will actually be made.')"
+  ui_msg "Welcome" "This wizard configures a Guwu OJ web server or judge (Celery worker) host.\n\nProject dir: $PROJECT_DIR\nEnv file:    $ENV_FILE\nLog file:    $LOG_FILE\n\nNothing is installed or changed until you review and confirm the plan at the end.$([[ $DRY_RUN == 1 ]] && printf '\n\nDRY-RUN MODE: no changes will actually be made.')"
 }
 
 ask_role() {
   ROLE=$(ui_menu "What is this machine?" \
     "web|Web server (Django + PostgreSQL, admin UI, cache Redis)" \
-    "judge|Judge worker (RQ worker + Docker sandbox only)" \
+    "judge|Judge worker (Celery worker + Docker sandbox only)" \
     "both|Both (single-box / dev setup)") || die "Cancelled."
 }
 
@@ -226,8 +226,8 @@ ask_web_steps() {
 ask_judge_steps() {
   ui_yesno "Install Docker (required for the sandboxed judge containers)?" yes && INSTALL_DOCKER=1
   (( INSTALL_DOCKER )) && ui_yesno "Build the oj-judge sandbox image now (scripts/build-judge-image.sh)?" yes && BUILD_JUDGE_IMAGE=1
-  ui_yesno "Install Redis locally for this judge's own RQ queue?" yes && INSTALL_REDIS=1
-  ui_yesno "Install the systemd unit for the judge RQ worker?" yes && INSTALL_JUDGE_UNIT=1
+  ui_yesno "Install Redis locally for this judge's own Celery broker?" yes && INSTALL_REDIS=1
+  ui_yesno "Install the systemd unit for the judge Celery worker?" yes && INSTALL_JUDGE_UNIT=1
 }
 
 ask_redis_tls() {
@@ -313,7 +313,9 @@ ask_redis() {
     (( REDIS_TLS )) && CFG[CACHE_REDIS_CA_CERT]="$REDIS_TLS_DIR/ca.crt"
   fi
 
-  # RQ Redis: the queue endpoint this host owns (judge) or talks to (web).
+  # Judge broker Redis: the endpoint this host owns (judge) or talks to (web).
+  # RQ_REDIS_* remain the env var names; they build CELERY_BROKER_URL when
+  # JUDGE_BROKER_URL is unset.
   if [[ "$ROLE" == web ]]; then
     CFG[RQ_REDIS_HOST]=127.0.0.1
     CFG[JUDGE_1_HOST]=$(ui_input "judge-1 Redis host as seen from the web server (127.0.0.1 for single-box)" "127.0.0.1") || die "Cancelled."
@@ -327,20 +329,20 @@ ask_redis() {
       ui_yesno "Does judge-1 Redis require TLS?" yes && CFG[RQ_REDIS_TLS]=true || CFG[RQ_REDIS_TLS]=false
     fi
   else
-    # Judge / both: the RQ queue lives on this machine.
+    # Judge / both: the Celery broker Redis lives on this machine.
     CFG[RQ_REDIS_HOST]=127.0.0.1
     CFG[JUDGE_1_HOST]=127.0.0.1
     CFG[JUDGE_1_PORT]=6379
     CFG[JUDGE_1_REDIS_DB]=0
     if (( INSTALL_REDIS )); then
-      CFG[RQ_REDIS_PASSWORD]=$(ask_password "Password for this judge's local RQ Redis") || die "Cancelled."
+      CFG[RQ_REDIS_PASSWORD]=$(ask_password "Password for this judge's local broker Redis") || die "Cancelled."
     else
-      CFG[RQ_REDIS_PASSWORD]=$(ui_input "Existing local RQ Redis password" "" --password) || die "Cancelled."
+      CFG[RQ_REDIS_PASSWORD]=$(ui_input "Existing local broker Redis password" "" --password) || die "Cancelled."
     fi
     CFG[RQ_REDIS_TLS]=$( (( REDIS_TLS )) && echo true || echo false )
     (( REDIS_TLS )) && CFG[RQ_REDIS_CA_CERT]="$REDIS_TLS_DIR/ca.crt"
   fi
-  CFG[RQ_REDIS_PORT]=$(ui_input "RQ Redis port on this host" "6379") || die "Cancelled."
+  CFG[RQ_REDIS_PORT]=$(ui_input "Broker Redis port on this host" "6379") || die "Cancelled."
   CFG[RQ_REDIS_DB]=0
 }
 

@@ -19,7 +19,7 @@
   - 提交记录查看
   - 提交详情（代码、评测结果、运行时间、内存使用）
   - 评测状态 WebSocket 实时推送（逐测试点刷新，失败自动降级为 HTTP 轮询）
-  - 分布式判题：中央 Redis 队列、多机竞争消费、原子抢占 + 租约心跳 + 栅栏写回，测评机可完全无数据库凭证（DB-less）
+  - 分布式判题：Celery + 中央 Redis 队列（单队列 + 消息优先级）、多机竞争消费、原子抢占 + 租约心跳 + 栅栏写回，测评机可完全无数据库凭证（DB-less）
   - 直连回源与动态 IP 自愈：NAT 后的测评机公网 IP 频繁变化，静态白名单无法维护，改为「worker 自报 IP + Web 侧 iptables 链同步」自动放行直连端口；直连不可达时自动回退 CDN 回源（详见下方「生产架构：中央判题代理 + DB-less 测评机」）
 
 - 排行榜
@@ -37,7 +37,7 @@
 - Bootstrap
 - PostgreSQL
 - Docker (用于沙箱评测环境)
-- Redis+RQ (缓存 + 任务队列 + pub/sub 状态推送)
+- Redis + Celery (缓存 + 判题任务队列 + pub/sub 状态推送)
 - Granian 双服务：WSGI 主站 + 独立 ASGI WebSocket 服务（不引入 Channels）
 
 ## 安装步骤
@@ -203,13 +203,26 @@ systemctl start guwu-oj
 redis-server
 ```
 
-### 9. 启动 RQ Worker (用于异步评测)
+### 9. 启动 Celery Worker (用于异步评测)
+
+判题任务由 Celery 投递到中央 Redis 的单一逻辑队列 `judge`，队列优先级通过消息优先级实现（Redis transport 的优先级桶），**数字越小越先消费**：
+
+| 优先级（高→低） | 用户层级 | Celery priority | Redis 桶 |
+|----------------|----------|-----------------|----------|
+| pro | Pro 订阅 | 0 | `judge` |
+| plus | Plus 订阅 | 3 | `judge:3` |
+| free（默认） | 免费用户 | 6 | `judge:6` |
+| ai | AI 讲解判题验证（专用服务账号） | 9 | `judge:9` |
 
 #### Redis 密码与 TLS 配置
 
-判题队列 Redis 必须同时启用 TLS 和密码认证。不要将真实密码写入版本控制；在 Web 服务器和每台判题机的受限 `.env` 文件中设置相同的 `RQ_REDIS_PASSWORD`。密码至少 12 个字符，并包含字母、数字和特殊字符。
+判题队列 Redis 必须同时启用 TLS 和密码认证。不要将真实密码写入版本控制；在 Web 服务器和每台判题机的受限 `.env` 文件中设置相同的密码。密码至少 12 个字符，并包含字母、数字和特殊字符。
+
+判题机通过 `JUDGE_BROKER_URL` 指向中央 Redis（推荐，Web 与判题机同址部署时也可省略，回退到 `RQ_REDIS_*` 变量）：
 
 ```dotenv
+JUDGE_BROKER_URL=rediss://:<generated-secret>@judge-redis.example.internal:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
+# Web 端未设置 JUDGE_BROKER_URL 时，broker 由下列变量拼出：
 RQ_REDIS_HOST=judge-redis.example.internal
 RQ_REDIS_PORT=6379
 RQ_REDIS_DB=0
@@ -218,7 +231,7 @@ RQ_REDIS_TLS=true
 RQ_REDIS_CA_CERT=/etc/redis/tls/ca.crt
 ```
 
-Redis 服务端必须使用相同密码配置 `requirepass`，并保持 `port 0` 与 TLS 端口配置。每次修改密码时，先更新所有 Web/判题机 `.env` 文件，再重启 Redis，最后重启所有 RQ worker。Django-RQ 从 `RQ_QUEUES` 的 URL 和 `REDIS_CONNECTION_KWARGS` 自动读取密码与 TLS 参数；`rqworker` 命令不应额外传入 Redis URL。
+Redis 服务端必须使用相同密码配置 `requirepass`，并保持 `port 0` 与 TLS 端口配置。每次修改密码时，先更新所有 Web/判题机 `.env` 文件，再重启 Redis，最后重启所有 Celery worker。
 
 可使用下列命令验证认证与 TLS，其中未提供密码的命令必须返回 `NOAUTH Authentication required`：
 
@@ -227,84 +240,42 @@ REDISCLI_AUTH="$RQ_REDIS_PASSWORD" redis-cli --tls --cacert "$RQ_REDIS_CA_CERT" 
   -h "$RQ_REDIS_HOST" -p "$RQ_REDIS_PORT" ping
 ```
 
-**macOS 用户需要设置环境变量:**
+**开发环境启动 worker（线程池，并行度由 `OJ_JUDGE_CONCURRENCY` 控制，默认 4）：**
 ```bash
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker default high low
+celery -A oj_project worker -Q judge -P threads -c 4 -l info
 ```
 
-**Linux 用户:**
-```bash
-python manage.py rqworker default high low
-```
+> 生产环境使用 systemd 单元 `guwu-oj-judge-worker.service`（ExecStart 已封装上述命令），不要在生产用 `runserver` 旁挂 worker。
 
-#### 多判题机部署 (Multi-Judge)
+#### 多判题机部署
 
-For production TLS/password and mTLS deployment, follow [Add a TLS + Password Judge Machine](docs/judge-machine-tls.md). It is the authoritative guide for per-machine credential paths, Django admin configuration, worker setup, verification, and credential rotation.
+所有判题机运行**完全相同**的 worker 单元，竞争消费中央 Redis 上的同一个 `judge` 队列；添加一台测评机不需要任何 Django 侧配置，只需让它指向同一个中央 Redis（设置 `JUDGE_BROKER_URL`）。
 
-支持将评测任务分发到多个判题机并行处理，提升系统吞吐量。
-
-**1. 配置判题机**
-
-在 `settings.py` 中添加 `JUDGE_MACHINES`：
-
-```python
-JUDGE_MACHINES = [
-    {
-        'name': 'judge-1',
-        'host': 'localhost',
-        'port': 6379,
-        'db': 0,
-        'queue': 'judge-1',
-        'enabled': True,
-        'weight': 1,
-    },
-    {
-        'name': 'judge-2',
-        'host': '192.168.1.100',
-        'port': 6379,
-        'db': 0,
-        'queue': 'judge-2',
-        'enabled': True,
-        'weight': 1,
-    },
-]
-```
-
-**2. 启用多判题模式**
+**1. 在各判题机上启动 Celery Worker**
 
 ```bash
-export OJ_MULTI_JUDGE_ENABLED=true
+# 两台机器命令完全一致（-n 的 %h 自动取主机名）
+celery -A oj_project worker -Q judge -P threads -c ${OJ_JUDGE_CONCURRENCY:-4} -n judge@%h -l info
+# 或直接：
+systemctl enable --now guwu-oj-judge-worker
 ```
 
-**3. 在各判题机上启动 RQ Worker**
+每个 worker 进程内部以线程池并行评测多个提交，单机并行度由 `OJ_JUDGE_CONCURRENCY` 控制（judge-1=4，judge-2=3，即 m 台机器并行度之和为总评测能力）。worker 启动时预热各语言 Docker 容器池，并把 `judge:worker:celery:<host>` 心跳（90s TTL，30s 刷新）写入中央 Redis。
+
+**2. 检查判题机健康状态**
 
 ```bash
-# 判题机 1
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-1 --worker-class oj_project.customrq.AutoReconnectWorker
-
-# 判题机 2
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES python manage.py rqworker judge-2 --worker-class oj_project.customrq.AutoReconnectWorker
+python manage.py check_judge_health   # 逐台 Redis + 中央 broker worker 心跳
+python manage.py judge_overview       # 四个优先级桶深度、在线 worker、租约、延迟
 ```
 
-每个 worker 进程内部以线程池并行评测多个提交，单机并行度由 `OJ_JUDGE_CONCURRENCY` 控制（默认 4，即 m 台机器 × 4 = m×n 的并行评测能力）。
-
-**4. 检查判题机健康状态**
-
-```bash
-python manage.py check_judge_health
-```
-
-负载均衡策略：
-- **加权随机分配**：根据 `weight` 字段按比例分发任务
-- **健康检查**：每 30 秒检查一次 Redis 连接，自动跳过不健康的机器
-- **降级兜底**：所有机器不可用时自动回退到 `default` 队列
-- 关闭多判题模式（`OJ_MULTI_JUDGE_ENABLED=false`）即恢复单机模式
+健康检查与 WebSocket 推送的多机 Redis 订阅仍使用 `JUDGE_MACHINES_JSON` / Admin 中的 `JudgeMachine` 记录（仅 Web 进程使用：健康探测和状态发布订阅），它不再参与任务分发。
 
 #### 生产架构：中央判题代理 + DB-less 测评机（推荐）
 
-旧的「每机一个队列 + 加权分发 + worker 直连 PostgreSQL」之外，现支持三阶段演进后的生产判题架构。各阶段均由环境变量开关控制，可独立部署、独立回滚：
+旧的「每机一个队列 + 加权分发 + worker 直连 PostgreSQL」已废弃，当前生产判题架构为 Celery 中央队列 + 抢占租约 + DB-less 测评机：
 
-1. **中央队列（central broker）**：Web 端只把判题任务投到中央 Redis 的四条优先级车道（`judge:queue-pro` / `-plus` / `judge:queue` / `judge:queue-ai`），所有测评机运行相同的 worker 单元竞争消费。添加测评机无需任何 Django 侧配置，只需让它指向同一个中央 Redis。
+1. **中央队列（Celery + central broker）**：Web 端只把判题任务投到中央 Redis 的单一 Celery 队列 `judge`，优先级通过消息优先级桶区分（pro=0 / plus=3 / free=6 / ai=9，数字越小越先消费），所有测评机运行相同的 worker 单元竞争消费。添加测评机无需任何 Django 侧配置，只需让它指向同一个中央 Redis（`JUDGE_BROKER_URL`）。
 2. **抢占 / 租约 / 栅栏（claim · lease · fence）**：`Submission` 增加 `judge_state`（PENDING/QUEUED/JUDGING/DONE/FAILED）、`worker_id`、`claim_token`、`claimed_at` / `heartbeat_at` / `finished_at` 字段（迁移 `0017`，旧 `status` 判定字段保持不变）。worker 开工前用单条 `UPDATE ... WHERE judge_state IN (...) RETURNING` 原子抢占；判题期间每 15 秒经心跳续租；结果写回带 `claim_token` 栅栏——丢失租约的 worker 无法覆盖新 owner 的结果，重复投递也只有一台机器真正判题。僵尸任务由常驻 reaper 按 JUDGING 300s / QUEUED 600s 阈值自动回收重投。
 3. **DB-less 测评机**：开启后测评机进程内**不存在任何 PostgreSQL 凭证**（`DATABASES` 退化为惰性 sqlite 仅用于 Django 引导）。worker 通过 HTTPS 调用 Web 内部 API 抢占任务并取回代码与测试点，判题期间 HTTP 心跳续租，判完把结果信封 `LPUSH` 到中央 Redis 的 `judge:result` 列表；Web 端常驻消费者以「处理中队列 + ACK + 死信」的可靠队列模式取出信封，经同一套栅栏逻辑幂等写库（测试点、solved 关系、积分均幂等）。
 
@@ -314,10 +285,10 @@ python manage.py check_judge_health
  worker ───────────────────────────────▶│ Django: 原子抢占 / 心跳校验          │
                                         │ result consumer ──▶ PostgreSQL       │
                                         └──────▲──────────────▲───────────────┘
-                                               │ BRPOPLPUSH    │
-                                  judge:result │   judge:queue │ LPUSH 任务
+                                               │ BRPOPLPUSH    │ Celery LPUSH
+                                  judge:result │   judge 队列   │ (priority 桶)
                             ┌──────────────────┴───────────────┴──────────┐
-                            │        中央 Redis（TLS + 密码，4 车道）        │
+                            │      中央 Redis（TLS + 密码，单队列+优先级）   │
                             └──────▲──────────────────────────▲────────────┘
                                    │ 竞争消费                  │ 竞争消费
                           ┌────────┴────────┐        ┌────────┴────────┐
@@ -331,12 +302,10 @@ python manage.py check_judge_health
 **环境变量**（Web `.env`）：
 
 ```dotenv
-# Phase 1：启用中央队列投递
-OJ_CENTRAL_QUEUE=true
-OJ_CENTRAL_QUEUE_NAME=judge:queue
+# Celery broker（省略时由 RQ_REDIS_* 拼出本机 TLS Redis 地址）
 JUDGE_BROKER_URL=rediss://:<password>@<central-redis-host>:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
 
-# Phase 3：内部判题 API（worker 用此令牌鉴权，务必使用高强度随机值）
+# 内部判题 API（worker 用此令牌鉴权，务必使用高强度随机值）
 JUDGE_INTERNAL_TOKEN=<generated-secret>
 ```
 
@@ -344,10 +313,9 @@ JUDGE_INTERNAL_TOKEN=<generated-secret>
 
 ```dotenv
 OJ_ROLE=worker
-OJ_JUDGE_QUEUE=judge:queue
 JUDGE_BROKER_URL=rediss://:<password>@<central-redis-host>:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
 
-# Phase 3 DB-less
+# DB-less
 OJ_WORKER_DBLESS=true
 JUDGE_API_BASE=https://<web-host>
 JUDGE_INTERNAL_TOKEN=<same-secret-as-web>
@@ -417,7 +385,7 @@ python manage.py reap_stale_judgments  # 手动回收一轮（--loop 常驻；--
 python manage.py sync_judge_firewall   # 重建直连端口 iptables 链（--loop --interval 300 常驻；需 root）
 ```
 
-**回滚**：Web 侧设 `OJ_CENTRAL_QUEUE=false` 即恢复旧的按机投递（迁移 0017 为纯新增列/索引，旧代码直接忽略）；单机回滚 DB-less 只需恢复原 `.env`（含 `DB_*`）并去掉 `OJ_WORKER_DBLESS` 后重启 worker。
+**回滚**：Celery 是当前唯一的判题分发路径（旧 RQ lane 与 `OJ_CENTRAL_QUEUE` 开关已移除）；如需回到 DB 直连判题，恢复 worker 原 `.env`（含 `DB_*`）、去掉 `OJ_WORKER_DBLESS` 后重启 worker 即可，抢占/栅栏逻辑在 DB 路径同样生效（迁移 0017 为纯新增列/索引）。
 
 ### 10. 验证环境配置 (可选)
 
@@ -445,7 +413,7 @@ python manage.py test
 
 ### 11. 启动 WebSocket 实时状态服务
 
-提交状态推送由独立的 ASGI 进程提供，必须与主站分别启动（共需运行：主站 + Redis + RQ worker + WebSocket 服务）。
+提交状态推送由独立的 ASGI 进程提供，必须与主站分别启动（共需运行：主站 + Redis + Celery worker + WebSocket 服务）。
 
 **开发环境**（主站仍可用 `runserver`，另开一个终端启动 ASGI 服务）：
 
@@ -477,7 +445,7 @@ nginx 需将 `location /ws/` 反代到 `127.0.0.1:8447`（Upgrade/Connection 头
 |------|------|-------------|
 | 主站 | Django（Granian WSGI，Unix socket） | `guwu-oj.service` |
 | WebSocket | 提交状态 ASGI 推送（127.0.0.1:8447） | `guwu-oj-ws.service`（见 `deploy/systemd/`） |
-| 判题 Worker | RQ 异步评测（中央队列竞争消费，可 DB-less） | `guwu-oj-judge-worker.service`（每台测评机，见 `deploy/systemd/`） |
+| 判题 Worker | Celery 异步评测（中央 `judge` 队列竞争消费，可 DB-less） | `guwu-oj-judge-worker.service`（每台测评机，见 `deploy/systemd/`） |
 | 判题回收器 | 回收心跳超时的僵尸判题任务并重投 | `guwu-oj-judge-reaper.service`（Web 侧，见 `deploy/systemd/`） |
 | 结果消费者 | 消费 `judge:result`，栅栏校验后幂等写库 | `guwu-oj-judge-result-consumer.service`（Web 侧，见 `deploy/systemd/`） |
 | 直连防火墙同步 | 按自报 IP 重建 8446 直连端口的 iptables 链 | `guwu-oj-judge-firewall.service`（Web 侧，见 `deploy/systemd/`） |
@@ -493,7 +461,7 @@ systemctl restart guwu-oj-judge-worker
 
 # 开发环境：分别在三个终端运行
 python manage.py runserver                          # 主站
-python manage.py rqworker default high low         # 判题 worker（macOS 需加 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES）
+celery -A oj_project worker -Q judge -P threads -c 4 -l info  # 判题 worker
 granian oj_project.asgi:application --interface asgi --host 127.0.0.1 --port 8447 --workers 1
 ```
 
@@ -513,6 +481,7 @@ guwu-oj/
 ├── README.md                # 项目说明
 ├── oj_project/              # Django 项目配置
 │   ├── __init__.py
+│   ├── celery.py            # Celery app（判题任务队列，Redis 优先级桶）
 │   ├── settings.py          # 项目设置
 │   ├── urls.py              # 主 URL 配置
 │   ├── wsgi.py              # WSGI 配置（主站）
@@ -541,7 +510,8 @@ guwu-oj/
 │   ├── ws.py                # WebSocket ASGI consumer
 │   ├── realtime.py          # Redis pub/sub 与状态载荷构建
 │   ├── signals.py           # post_save 触发推送
-│   ├── judge_queue.py       # 判题任务入队（中央/旧队列双模式）
+│   ├── celery_worker.py     # Celery worker 信号：容器池预热 + worker 心跳
+│   ├── judge_queue.py       # 判题任务入队（单队列 judge + pro/plus/free/ai 优先级）
 │   ├── claiming.py          # 原子抢占、心跳续租、栅栏 finalize、僵尸回收
 │   ├── judge.py             # 判题流程（DB 路径）
 │   ├── judge_core.py        # 纯判题核心（无 ORM/缓存，DB-less worker 使用）
@@ -599,13 +569,13 @@ WHITENOISE_MAX_AGE = 31536000  # 1 year
 
 ### 异步评测系统
 
-项目使用 Django-RQ 实现异步评测，避免评测阻塞 HTTP 请求：
+项目使用 Celery（Redis transport）实现异步评测，避免评测阻塞 HTTP 请求：
 
-- 评测任务通过中央 Redis 队列异步执行（`OJ_CENTRAL_QUEUE=true`），支持多台测评机竞争消费与多条优先级车道（`judge:queue-pro` / `-plus` / 默认 / `-ai`）
+- 评测任务通过中央 Redis 的单一 Celery 队列 `judge` 异步执行，支持多台测评机竞争消费；四级优先级走消息优先级桶（pro=0 / plus=3 / free=6 / ai=9，数字越小越先消费，AI 讲解验证最低）
 - 原子抢占 + 租约心跳 + claim-token 栅栏：重复投递只有一台机器真正判题，worker 崩溃后由 reaper 自动回收重投，结果写回与积分/通过等副作用全部幂等
 - DB-less 模式下测评机不持有任何 PostgreSQL 凭证：经 HTTPS 内部 API 抢占任务，结果经 `judge:result` 队列由 Web 侧消费者幂等写库
 - 评测结果自动更新到数据库
-- 支持基础设施故障自动重试（有次数上限）与错误日志记录，可用 `python manage.py judge_overview` 查看队列与租约状态
+- 支持基础设施故障自动重试（有次数上限）与错误日志记录，可用 `python manage.py judge_overview` 查看优先级桶深度、worker 心跳与租约状态
 
 ### 提交状态实时推送（WebSocket）
 

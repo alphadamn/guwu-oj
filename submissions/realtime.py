@@ -81,7 +81,7 @@ def build_submission_status_payload(submission):
 
 
 def publish_submission_changed(submission_id):
-    """Fire-and-forget pub/sub notify from any sync process (RQ worker/web).
+    """Fire-and-forget pub/sub notify from any sync process (Celery worker/web).
 
     Never raises: real-time push is best-effort. The WebSocket endpoint also
     runs a slow database watchdog, so a missing notification cannot freeze

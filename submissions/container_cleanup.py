@@ -17,7 +17,7 @@ def _cleanup_loop():
 
 
 def start_container_cleanup():
-    """Start judge container cleanup daemon (RQ worker only)."""
+    """Start judge container cleanup daemon (Celery judge worker only)."""
     global _started
     with _start_lock:
         if _started:
