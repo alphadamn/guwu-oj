@@ -68,7 +68,6 @@ INSTALLED_APPS = [
     'handbook',
     'mathfilters',
     'search',
-    'django_rq',
     'django_ratelimit',
     'django_prometheus',
     'health',
@@ -308,8 +307,8 @@ def _parse_redis_broker_url(url):
 
     The returned dict has the same shape as one ``JUDGE_MACHINES_JSON`` item
     (host/port/db/password/tls/ca_cert_path/...), so it can be fed directly
-    into ``_rq_queue_entry`` and ``_rq_machine_connection``. TLS query params
-    follow redis-py naming: ``ssl_ca_certs``, ``ssl_certfile``, ``ssl_keyfile``.
+    into ``_rq_machine_connection``. TLS query params follow redis-py naming:
+    ``ssl_ca_certs``, ``ssl_certfile``, ``ssl_keyfile``.
     Credentials stay in the environment file, never in logs.
     """
     parsed = urlparse(url)
@@ -339,25 +338,6 @@ def _parse_redis_broker_url(url):
 
 def _rq_redis_kwargs():
     return _rq_machine_connection({})
-
-
-def _rq_queue_entry(machine):
-    connection = _rq_machine_connection(machine)
-    client_kwargs = {
-        key: value for key, value in connection.items()
-        if key not in {'password', 'ssl', 'ssl_cert_reqs'}
-    }
-    return {
-        'HOST': machine['host'],
-        'PORT': machine['port'],
-        'DB': machine['db'],
-        'PASSWORD': connection.get('password'),
-        'SSL': connection.get('ssl', False),
-        'SSL_CERT_REQS': connection.get('ssl_cert_reqs', 'required'),
-        'REDIS_CLIENT_KWARGS': client_kwargs,
-        'DEFAULT_TIMEOUT': 3600,
-        'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-    }
 
 
 if not DEMO_MODE:
@@ -409,13 +389,6 @@ if not DEMO_MODE:
         'port': rq_port,
         'db': rq_db,
     }
-    RQ_QUEUES = {
-        'default': _rq_queue_entry(default_rq_machine),
-        'high': _rq_queue_entry(default_rq_machine),
-        'low': _rq_queue_entry(default_rq_machine),
-        # Lowest-priority lane for AI-explanation judge-tool verification runs.
-        'ai': _rq_queue_entry(default_rq_machine),
-    }
 
     default_judge_machines = [
         {
@@ -446,24 +419,47 @@ if not DEMO_MODE:
     # How many submissions one judge worker process runs in parallel (threads).
     OJ_JUDGE_CONCURRENCY = int(os.environ.get('OJ_JUDGE_CONCURRENCY', '4'))
 
-    # ── Central judge broker (target architecture, Phase 1) ─────────────
-    # JUDGE_BROKER_URL is an optional redis:// / rediss:// URL pointing at the
-    # single central broker every judge worker pulls from. When set it
-    # overrides RQ_REDIS_* for (a) the worker's own queue registration and
-    # (b) the central judge lanes below — the legacy per-machine dispatch
-    # path keeps using RQ_REDIS_* / JUDGE_MACHINES_*, so flipping
-    # OJ_CENTRAL_QUEUE off restores the previous behaviour exactly.
-    # Without JUDGE_BROKER_URL the central lanes run on the default RQ Redis
-    # (on the web host this already is the central broker).
-    central_broker = None
+    # ── Celery judge broker ─────────────────────────────────────────────
+    # All judge tasks go to a single logical Celery queue ``judge`` on the
+    # central Redis broker; every judge machine competes for jobs there.
+    # Priority is expressed with Redis priority buckets (kombu
+    # ``priority_steps``): a task's numeric priority p lands in bucket
+    # ``steps[bisect(steps, p) - 1]`` and buckets are BRPOP-consumed in
+    # ascending step order, so LOWER p = consumed first.
+    # Mapping (see submissions/judge_queue.py): pro=0 > plus=3 > free=6 > ai=9.
+    #
+    # JUDGE_BROKER_URL (rediss://…, with ssl_* query params) is set on judge
+    # workers and points at this host's central Redis; on the web host the
+    # broker is the local Redis described by RQ_REDIS_*.
     broker_url = os.environ.get('JUDGE_BROKER_URL', '').strip()
     if broker_url:
-        central_broker = _parse_redis_broker_url(broker_url)
-    OJ_CENTRAL_QUEUE = _env_enabled('OJ_CENTRAL_QUEUE', False)
-    OJ_CENTRAL_QUEUE_NAME = os.environ.get('OJ_CENTRAL_QUEUE_NAME', 'judge:queue')
+        CELERY_BROKER_URL = broker_url
+    else:
+        CELERY_BROKER_URL = _redis_url(
+            rq_host, rq_port, rq_db, _rq_redis_password(),
+            _env_enabled('RQ_REDIS_TLS'),
+            os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt'),
+        )
+    CELERY_BROKER_TRANSPORT_OPTIONS = {
+        'queue_order_strategy': 'priority',
+        'priority_steps': [0, 3, 6, 9],
+        'sep': ':',
+    }
+    CELERY_TASK_DEFAULT_QUEUE = 'judge'
+    # Free tier; see submissions/judge_queue.PRIORITY_* / celery_priority().
+    CELERY_TASK_DEFAULT_PRIORITY = 6
+    CELERY_TASK_SERIALIZER = 'json'
+    CELERY_ACCEPT_CONTENT = ['json']
+    # Results ride the project's own reliable ``judge:result`` Redis queue.
+    CELERY_TASK_IGNORE_RESULT = True
+    CELERY_TASK_TIME_LIMIT = 3600
+    # One message in flight per worker thread: prefetching more would hold
+    # high-priority jobs hostage behind a busy worker's buffer.
+    CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
-    # Phase 2 claim/lease: stable worker identity (defaults to hostname) and
-    # the heartbeat cadence; the reaper reaps claims silent for ~5 min.
+    # Claim/lease: stable worker identity (defaults to hostname) and the
+    # heartbeat cadence; the reaper reaps claims silent for ~5 min.
     OJ_WORKER_ID = os.environ.get('OJ_WORKER_ID', '').strip()
     OJ_JUDGE_HEARTBEAT_SECS = int(os.environ.get('OJ_JUDGE_HEARTBEAT_SECS', '15'))
     OJ_JUDGE_LEASE_TIMEOUT_SECS = int(
@@ -510,43 +506,10 @@ if not DEMO_MODE:
         if ip.strip()
     ]
 
-    # Judge-priority lanes consumed by the rqworker command, in drain order:
-    # {base}-pro > {base}-plus > {base} (free users) > {base}-ai. django-rq
-    # resolves every CLI queue name through RQ_QUEUES and raises KeyError for
-    # an unregistered name, so all four variants must exist on the worker.
+    # Judge-priority tiers consumed from the ``judge`` queue via Redis
+    # priority buckets (ascending bucket = consumed first):
+    # pro=0 > plus=3 > free=6 > ai=9.
     JUDGE_PRIORITY_SUFFIXES = ('-pro', '-plus', '', '-ai')
-
-    # A judge host normally has credentials only for its own local Redis endpoint.
-    # Register that queue and its priority lanes even when its web-side
-    # JUDGE_MACHINES_JSON lives solely on the web host. Workers pointing at
-    # the central broker via JUDGE_BROKER_URL consume that instead.
-    if OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE:
-        worker_machine = central_broker or default_rq_machine
-        for _suffix in JUDGE_PRIORITY_SUFFIXES:
-            RQ_QUEUES[f'{OJ_JUDGE_QUEUE}{_suffix}'] = _rq_queue_entry(worker_machine)
-
-    if not (OJ_ROLE == 'worker' and OJ_JUDGE_QUEUE):
-        for machine in JUDGE_MACHINES:
-            if machine.get('enabled', True):
-                for _suffix in JUDGE_PRIORITY_SUFFIXES:
-                    RQ_QUEUES[f'{machine["queue"]}{_suffix}'] = _rq_queue_entry(machine)
-        if OJ_CENTRAL_QUEUE:
-            central_machine = central_broker or default_rq_machine
-            for _suffix in JUDGE_PRIORITY_SUFFIXES:
-                RQ_QUEUES[f'{OJ_CENTRAL_QUEUE_NAME}{_suffix}'] = _rq_queue_entry(central_machine)
-
-    RQ = {
-        # Pin enqueue timing explicitly rather than relying on the default,
-        # which changed in django-rq 4.0 (AUTOCOMMIT/'auto' -> 'on_db_commit').
-        # 'on_db_commit' keeps the judge task from starting before the
-        # Submission row is committed and visible to the worker.
-        # django-rq 2.x ignores this key and always enqueues immediately;
-        # django-rq 4+ returns None from enqueue() in this mode when inside a
-        # transaction, so callers must not assume a Job is returned
-        # (see submissions/judge_queue.py).
-        'COMMIT_MODE': 'on_db_commit',
-        'exception_handler': 'django_rq.handlers.sentry',
-    }
 else:
     CACHE_REDIS_CONNECTION_KWARGS = {}
     CACHE_REDIS_DIRECT_CONNECTION_KWARGS = {}
@@ -557,11 +520,14 @@ else:
             'LOCATION': os.path.join(tempfile.gettempdir(), 'oj_demo_cache'),
         }
     }
-    RQ_QUEUES = {}
     JUDGE_MACHINES = []
     OJ_MULTI_JUDGE_ENABLED = False
-    OJ_CENTRAL_QUEUE = False
-    OJ_CENTRAL_QUEUE_NAME = 'judge:queue'
+    # No broker in demo mode: enqueue_judge() skips dispatch entirely.
+    CELERY_BROKER_URL = None
+    CELERY_BROKER_TRANSPORT_OPTIONS = {}
+    CELERY_TASK_DEFAULT_QUEUE = 'judge'
+    CELERY_TASK_DEFAULT_PRIORITY = 6
+    CELERY_TASK_IGNORE_RESULT = True
     OJ_JUDGE_QUEUE = ''
     OJ_WORKER_ID = ''
     OJ_JUDGE_HEARTBEAT_SECS = 15

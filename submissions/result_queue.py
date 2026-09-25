@@ -37,6 +37,22 @@ def dead_letter_queue_name() -> str:
     return f'{result_queue_name()}:dead'
 
 
+def broker_client():
+    """Redis client connected to the central judge broker.
+
+    The broker URL (``settings.CELERY_BROKER_URL``) is the single source of
+    truth on both sides: workers push outcome envelopes onto it, the web-side
+    consumer pops them. ``redis.Redis.from_url`` understands the ``ssl_*``
+    query parameters used by ``rediss://`` broker URLs.
+    """
+    import redis
+
+    url = getattr(settings, 'CELERY_BROKER_URL', None)
+    if not url:
+        raise RuntimeError('CELERY_BROKER_URL is not configured')
+    return redis.Redis.from_url(url)
+
+
 def push_envelope(redis_conn, envelope, queue_name=None):
     """LPUSH a JSON envelope (worker side)."""
     name = queue_name or result_queue_name()

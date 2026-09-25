@@ -1,5 +1,5 @@
 [Unit]
-Description=Guwu OJ RQ Judge Worker (central broker)
+Description=Guwu OJ Celery Judge Worker (central broker)
 After=network.target docker.service redis-server.service
 Wants=docker.service
 
@@ -9,11 +9,13 @@ User=root
 WorkingDirectory=/root/guwu-oj
 EnvironmentFile=/root/guwu-oj/.env
 Environment=OJ_ROLE=worker
-# Central-broker judge worker (Phase 1).
+# Central-broker judge worker.
 # Every judge machine runs the same unit: it competes for jobs on the central
-# broker lanes (JUDGE_BROKER_URL in .env). Adding a machine = install this
+# broker queue (JUDGE_BROKER_URL in .env). Adding a machine = install this
 # unit + point JUDGE_BROKER_URL at the central Redis; no Django-side config.
-ExecStart=/root/guwu-oj/venv/bin/python manage.py rqworker judge:queue-pro judge:queue-plus judge:queue judge:queue-ai --worker-class oj_project.customrq.AutoReconnectWorker
+# Threads pool keeps the same concurrency model as the old thread-pool RQ
+# worker (OJ_JUDGE_CONCURRENCY parallel judge jobs per process).
+ExecStart=/bin/sh -c 'exec /root/guwu-oj/venv/bin/celery -A oj_project worker -Q judge -P threads -c $${OJ_JUDGE_CONCURRENCY:-4} -n judge@%h -l info'
 Restart=always
 RestartSec=5
 StandardOutput=journal

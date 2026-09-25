@@ -1,18 +1,12 @@
-import django
-import os
 import logging
 import queue as _queue
 import threading
 import time
 
-# Setup Django before importing models
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oj_project.settings')
-django.setup()
-
-from rq import get_current_job
+from celery import shared_task
 from django.core.cache import cache
 
-from submissions.result_queue import push_envelope
+from submissions.result_queue import broker_client, push_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -63,27 +57,11 @@ class _AsyncPartialPusher:
                 self._q.task_done()
 
 
-def _release_legacy_machine(job):
-    """Legacy per-machine busy-slot release (no-op for central lanes)."""
-    try:
-        from submissions.judge_load_balancer import load_balancer
-        from submissions.judge_queue import is_central_queue_name
-
-        queue_name = job.origin if job else None
-        if queue_name is not None and not is_central_queue_name(queue_name):
-            load_balancer.release_machine(
-                job.meta.get('submission_id') if job else None,
-                queue_name=queue_name,
-            )
-    except Exception as exc:
-        logger.warning('Error releasing judge machine: %s', exc)
-
-
 def _retry_or_fail(submission_id, claim, exc):
     """Bounded at-least-once redelivery for infra/unexpected failures.
 
     Thin wrapper over the shared results helper; the result-queue consumer
-    (Phase 3) uses the same logic for DB-less workers' failure envelopes.
+    uses the same logic for DB-less workers' failure envelopes.
     """
     from django_redis import get_redis_connection
 
@@ -97,28 +75,27 @@ def _retry_or_fail(submission_id, claim, exc):
     )
 
 
-def judge_submission_task(submission_id):
+@shared_task(bind=True, name='submissions.judge_submission_task')
+def judge_submission_task(self, submission_id):
     """
-    Async task to judge a submission (RQ worker).
+    Async task to judge a submission (Celery worker).
 
-    Phase 2: every job first performs an atomic claim. A job that loses the
+    Every job first performs an atomic claim. A job that loses the
     race (duplicate delivery, or an already-terminal submission) is ACKed as
     a no-op. The winner runs a heartbeat thread while judging; every verdict
     write is fenced by its claim token, so a worker whose lease was revoked
     cannot overwrite the owner's results or trigger side effects twice.
 
-    Phase 3: with OJ_WORKER_DBLESS enabled the worker holds no PostgreSQL
+    With OJ_WORKER_DBLESS enabled the worker holds no PostgreSQL
     credentials at all — it claims via HTTP, judges with the pure core, and
     pushes an outcome envelope onto ``judge:result`` for the web consumer.
     """
     from django.conf import settings
 
-    job = get_current_job()
-
     if getattr(settings, 'OJ_WORKER_DBLESS', False):
-        return _judge_task_dbless(submission_id, job)
+        return _judge_task_dbless(submission_id)
 
-    return _judge_task_db(submission_id, job)
+    return _judge_task_db(submission_id)
 
 
 def _result_envelope(submission_id, token, worker_id, outcome):
@@ -168,7 +145,7 @@ def _report_worker_ip(client, worker_id, force=False):
     ).start()
 
 
-def _judge_task_dbless(submission_id, job):
+def _judge_task_dbless(submission_id):
     """DB-less worker path: HTTP claim -> judge core -> result list."""
     from submissions.case_store import CaseStore
     from submissions.claiming import default_worker_id
@@ -183,6 +160,8 @@ def _judge_task_dbless(submission_id, job):
 
     worker_id = default_worker_id()
     client = JudgeApiClient()
+    # All result/partial envelopes ride the Celery broker connection.
+    broker = broker_client()
 
     _report_worker_ip(client, worker_id)
 
@@ -204,7 +183,7 @@ def _judge_task_dbless(submission_id, job):
             logger.error(
                 'Claim API unavailable for %s: %r', submission_id, retry_exc,
             )
-            push_envelope(job.connection, {
+            push_envelope(broker, {
                 'kind': 'infra', 'submission_id': submission_id,
                 'claim_token': None, 'worker_id': worker_id,
                 'error': f'claim endpoint unavailable: {retry_exc}',
@@ -228,7 +207,7 @@ def _judge_task_dbless(submission_id, job):
 
         # Partial-result pushes happen on a background thread: the test
         # loop must not pay the central-Redis RTT for every case.
-        pusher = _AsyncPartialPusher(job.connection)
+        pusher = _AsyncPartialPusher(broker)
 
         def load_case_batch(offset, limit):
             # Pulled mid-judging: the claim response carries no test data,
@@ -307,7 +286,7 @@ def _judge_task_dbless(submission_id, job):
             # Permanent data problem: surface as System Error through the
             # fenced write (consumer turns it into a terminal verdict).
             pusher.flush()
-            push_envelope(job.connection, {
+            push_envelope(broker, {
                 'kind': 'result', 'submission_id': submission_id,
                 'claim_token': token, 'worker_id': worker_id,
                 'verdict': 'System Error', 'runtime_ms': 0,
@@ -320,7 +299,7 @@ def _judge_task_dbless(submission_id, job):
                 'DBless judging failed for submission %s', submission_id,
             )
             pusher.flush()
-            push_envelope(job.connection, {
+            push_envelope(broker, {
                 'kind': 'infra', 'submission_id': submission_id,
                 'claim_token': token, 'worker_id': worker_id,
                 'error': f'{type(exc).__name__}: {exc}',
@@ -331,7 +310,7 @@ def _judge_task_dbless(submission_id, job):
         # the authoritative terminal envelope.
         pusher.flush()
         push_envelope(
-            job.connection,
+            broker,
             _result_envelope(submission_id, token, worker_id, outcome),
         )
         logger.info(
@@ -343,7 +322,7 @@ def _judge_task_dbless(submission_id, job):
         heartbeat.stop()
 
 
-def _judge_task_db(submission_id, job):
+def _judge_task_db(submission_id):
     from submissions.claiming import (
         Claim,
         ClaimLostError,
@@ -365,7 +344,6 @@ def _judge_task_db(submission_id, job):
             'not claimable (worker %s)',
             submission_id, worker_id,
         )
-        _release_legacy_machine(job)
         return None
 
     claim = Claim(submission_id, token, worker_id)
@@ -395,7 +373,6 @@ def _judge_task_db(submission_id, job):
             publish_submission_changed(submission_id)
     finally:
         claim.stop()
-        _release_legacy_machine(job)
 
     # Clear relevant caches
     try:

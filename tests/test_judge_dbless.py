@@ -556,11 +556,8 @@ class DblessTaskGlueTests(TestCase):
             language='Python', code='print(1)',
         )
 
-    def _fake_job(self):
-        job = MagicMock()
-        job.origin = 'judge:queue'
-        job.connection = MagicMock()
-        return job
+    def _fake_broker(self):
+        return MagicMock()
 
     def test_success_pushes_result_envelope(self):
         from submissions.tasks import judge_submission_task
@@ -579,8 +576,8 @@ class DblessTaskGlueTests(TestCase):
             'cases': [{'index': 1, 'status': 'Accepted', 'runtime_ms': 4,
                        'actual_output': '', 'error_message': ''}],
         }
-        job = self._fake_job()
-        with patch('submissions.tasks.get_current_job', return_value=job), \
+        broker = self._fake_broker()
+        with patch('submissions.tasks.broker_client', return_value=broker), \
              patch('submissions.worker_api.JudgeApiClient') as Api, \
              patch('submissions.judge_core.judge_spec',
                    return_value=outcome) as spec_mock:
@@ -590,7 +587,7 @@ class DblessTaskGlueTests(TestCase):
 
         self.assertEqual(result, self.submission.id)
         spec_mock.assert_called_once()
-        pushed = job.connection.lpush.call_args[0]
+        pushed = broker.lpush.call_args[0]
         self.assertEqual(pushed[0], 'judge:result')
         env = json.loads(pushed[1])
         self.assertEqual(env['kind'], 'result')
@@ -600,13 +597,13 @@ class DblessTaskGlueTests(TestCase):
     def test_claim_loss_acks_silently(self):
         from submissions.tasks import judge_submission_task
 
-        job = self._fake_job()
-        with patch('submissions.tasks.get_current_job', return_value=job), \
+        broker = self._fake_broker()
+        with patch('submissions.tasks.broker_client', return_value=broker), \
              patch('submissions.worker_api.JudgeApiClient') as Api:
             Api.return_value.claim.return_value = {'claimable': False}
             result = judge_submission_task(self.submission.id)
         self.assertIsNone(result)
-        job.connection.lpush.assert_not_called()
+        broker.lpush.assert_not_called()
         # The row was never claimed (no DB in the task path at all).
         self.submission.refresh_from_db()
         self.assertEqual(self.submission.judge_state, 'PENDING')
@@ -627,10 +624,10 @@ class DblessTaskGlueTests(TestCase):
         }
         outcome = {'verdict': 'Accepted', 'runtime_ms': 1, 'memory_kb': 1,
                    'cases': []}
-        job = self._fake_job()
+        broker = self._fake_broker()
         with override_settings(OJ_CASE_CACHE_DIR=root,
                                OJ_CASE_CACHE_MAX_SIZE='0'), \
-             patch('submissions.tasks.get_current_job', return_value=job), \
+             patch('submissions.tasks.broker_client', return_value=broker), \
              patch('submissions.worker_api.JudgeApiClient') as Api, \
              patch('submissions.judge_core.judge_spec',
                    return_value=outcome) as spec_mock:

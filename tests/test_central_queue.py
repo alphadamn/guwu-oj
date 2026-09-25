@@ -1,13 +1,13 @@
-"""Tests for the central judge queue dispatch (target architecture, Phase 1).
+"""Tests for the central judge queue dispatch (Celery).
 
 Covers the broker URL parser, the self-describing task payload, the
-``OJ_CENTRAL_QUEUE`` feature flag routing in ``enqueue_judge`` (including the
-fallback to the legacy per-machine path), and the central-lane name check the
-worker task uses to skip legacy busy-slot bookkeeping.
+Celery message-priority mapping (pro > plus > free > ai, lowest number
+drains first on the Redis transport) and the ``enqueue_judge`` dispatch
+path (mark_queued gate, on_commit dispatch, no-broker degradation).
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -15,10 +15,10 @@ from django.utils import timezone
 
 from oj_project.settings import _parse_redis_broker_url
 from submissions.judge_queue import (
+    JUDGE_QUEUE,
     _build_task_payload,
-    _central_queue_name,
+    celery_priority,
     enqueue_judge,
-    is_central_queue_name,
 )
 from submissions.models import Submission
 
@@ -112,38 +112,42 @@ class BuildTaskPayloadTests(TestCase):
         self.assertIsNone(payload['memory_limit'])
 
 
-class CentralQueueNameTests(TestCase):
-    def test_lane_names_cover_priority_tiers(self):
-        self.assertEqual(_central_queue_name('pro'), 'judge:queue-pro')
-        self.assertEqual(_central_queue_name('plus'), 'judge:queue-plus')
-        self.assertEqual(_central_queue_name('default'), 'judge:queue')
-        self.assertEqual(_central_queue_name('ai'), 'judge:queue-ai')
+class CeleryPriorityTests(TestCase):
+    def test_tier_ordering_pro_first_ai_last(self):
+        self.assertEqual(celery_priority('pro'), 0)
+        self.assertEqual(celery_priority('plus'), 3)
+        self.assertEqual(celery_priority('default'), 6)
+        self.assertEqual(celery_priority('ai'), 9)
+        # The Redis transport drains lower numbers first.
+        self.assertLess(celery_priority('pro'), celery_priority('plus'))
+        self.assertLess(celery_priority('plus'), celery_priority('default'))
+        self.assertLess(celery_priority('default'), celery_priority('ai'))
 
-    def test_is_central_queue_name_independent_of_flag(self):
-        # Workers do not set OJ_CENTRAL_QUEUE, so the check must rely on the
-        # unambiguous queue name alone, flag on or off.
-        self.assertTrue(is_central_queue_name('judge:queue'))
-        self.assertTrue(is_central_queue_name('judge:queue-pro'))
-        self.assertFalse(is_central_queue_name('judge:queue-pro-max'))
-        self.assertFalse(is_central_queue_name('judge-1-pro'))
-        self.assertFalse(is_central_queue_name(None))
+    def test_unknown_tier_falls_back_to_free(self):
+        self.assertEqual(celery_priority('nonsense'), 6)
+
+    def test_free_user_resolves_to_default_tier(self):
+        from submissions.judge_queue import (
+            PRIORITY_DEFAULT,
+            resolve_submission_priority,
+        )
+
+        user = get_user_model().objects.create_user(
+            username='free-priority-user', password='safe-test-password',
+        )
+        submission = SimpleNamespace(user=user)
+        self.assertEqual(resolve_submission_priority(submission), PRIORITY_DEFAULT)
 
 
-CENTRAL_RQ_QUEUES = {
-    'judge:queue-pro': {}, 'judge:queue-plus': {}, 'judge:queue': {},
-    'judge:queue-ai': {}, 'default': {},
-}
-
-
-class EnqueueJudgeRoutingTests(TestCase):
+class EnqueueJudgeDispatchTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
-            username='central-route-user', password='safe-test-password',
+            username='dispatch-user', password='safe-test-password',
         )
         from problems.models import Problem
 
         self.problem = Problem.objects.create(
-            title='Central routing', description='',
+            title='Dispatch', description='',
             input_format='', output_format='',
             time_limit=1000, memory_limit=256, created_by=self.user,
         )
@@ -151,70 +155,46 @@ class EnqueueJudgeRoutingTests(TestCase):
             problem=self.problem, user=self.user, language='Python', code='print(1)',
         )
 
-    @override_settings(
-        OJ_CENTRAL_QUEUE=True,
-        OJ_CENTRAL_QUEUE_NAME='judge:queue',
-        RQ_QUEUES=CENTRAL_RQ_QUEUES,
-    )
-    def test_central_mode_enqueues_to_central_lane_with_payload(self):
-        with patch('submissions.judge_queue.get_queue') as get_queue_mock:
-            queue_mock = get_queue_mock.return_value
-            queue_mock.name = 'judge:queue'
-            job = enqueue_judge(self.submission.id)
+    def test_enqueues_with_queue_and_priority_after_commit(self):
+        with patch('submissions.judge_queue.judge_submission_task') as task, \
+             patch('submissions.judge_queue.resolve_submission_priority',
+                   return_value='ai'):
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                result = enqueue_judge(self.submission.id)
 
-        get_queue_mock.assert_called_once_with('judge:queue')
-        args, kwargs = queue_mock.enqueue.call_args
-        self.assertEqual(args[0].__name__, 'judge_submission_task')
-        self.assertEqual(args[1], self.submission.id)
-        meta = kwargs['meta']
-        self.assertEqual(meta['dispatch_mode'], 'central')
-        self.assertEqual(meta['submission_id'], self.submission.id)
-        self.assertEqual(meta['payload']['submission_id'], self.submission.id)
-        self.assertEqual(
-            meta['payload']['test_case_set_id'], f'problem:{self.problem.id}',
+        self.assertEqual(result, self.submission.id)
+        self.assertEqual(len(callbacks), 1)
+        task.apply_async.assert_called_once_with(
+            args=[self.submission.id], queue=JUDGE_QUEUE, priority=9,
         )
-        self.assertEqual(job, queue_mock.enqueue.return_value)
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'QUEUED')
 
-    @override_settings(
-        OJ_CENTRAL_QUEUE=True,
-        OJ_CENTRAL_QUEUE_NAME='judge:queue',
-        RQ_QUEUES=CENTRAL_RQ_QUEUES,
-        OJ_MULTI_JUDGE_ENABLED=False,
-    )
-    def test_central_enqueue_failure_falls_back_to_legacy(self):
-        legacy_queue = MagicMock()
-        legacy_queue.name = 'low'
-        with patch(
-            'submissions.judge_queue.get_queue',
-            side_effect=[ConnectionError('broker down'), legacy_queue],
-        ) as get_queue_mock:
-            job = enqueue_judge(self.submission.id)
-
-        self.assertEqual(
-            [call.args[0] for call in get_queue_mock.call_args_list],
-            ['judge:queue', 'low'],
-        )
-        legacy_args, legacy_kwargs = legacy_queue.enqueue.call_args
-        self.assertEqual(legacy_args[1], self.submission.id)
-        self.assertNotIn('meta', legacy_kwargs)
-        self.assertEqual(job, legacy_queue.enqueue.return_value)
-
-    def test_flag_off_uses_legacy_path_only(self):
-        with override_settings(
-            OJ_CENTRAL_QUEUE=False, OJ_MULTI_JUDGE_ENABLED=False,
-            RQ_QUEUES={'default': {}},
-        ), patch('submissions.judge_queue.get_queue') as get_queue_mock:
-            queue_mock = get_queue_mock.return_value
-            enqueue_judge(self.submission.id)
-
-        get_queue_mock.assert_called_once_with('low')
-
-    @override_settings(OJ_CENTRAL_QUEUE=True, RQ_QUEUES={'default': {}})
-    def test_unregistered_central_lane_falls_back(self):
-        # Flag on but the central lane missing from RQ_QUEUES (e.g. DEMO_MODE
-        # leftovers) must degrade to the legacy path, not raise.
-        with patch('submissions.judge_queue.get_queue') as get_queue_mock:
-            queue_mock = get_queue_mock.return_value
-            with override_settings(OJ_MULTI_JUDGE_ENABLED=False):
+    def test_free_tier_dispatch_uses_default_priority(self):
+        with patch('submissions.judge_queue.judge_submission_task') as task:
+            with self.captureOnCommitCallbacks(execute=True):
                 enqueue_judge(self.submission.id)
-        get_queue_mock.assert_called_once_with('low')
+
+        task.apply_async.assert_called_once_with(
+            args=[self.submission.id], queue=JUDGE_QUEUE, priority=6,
+        )
+
+    def test_terminal_row_is_not_dispatched(self):
+        from submissions.claiming import claim_submission, finalize_claim
+
+        token = claim_submission(self.submission.id, 'worker-a')
+        finalize_claim(self.submission.id, token, 'Accepted')
+
+        with patch('submissions.judge_queue.judge_submission_task') as task:
+            self.assertIsNone(enqueue_judge(self.submission.id))
+            task.apply_async.assert_not_called()
+
+    @override_settings(CELERY_BROKER_URL=None)
+    def test_no_broker_configured_leaves_row_queued(self):
+        # DEMO_MODE has no broker: the row is parked in QUEUED (the reaper
+        # can recover it later) and nothing is dispatched.
+        with patch('submissions.judge_queue.judge_submission_task') as task:
+            self.assertIsNone(enqueue_judge(self.submission.id))
+            task.apply_async.assert_not_called()
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'QUEUED')

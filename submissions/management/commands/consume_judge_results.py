@@ -31,17 +31,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from django.conf import settings
-        from django_rq import get_queue
-
         from submissions import result_queue
         from submissions.results import process_envelope
 
-        # Same Redis the central judge lanes live on; workers push results
-        # onto the connection their job arrived on.
-        conn = get_queue(
-            getattr(settings, 'OJ_CENTRAL_QUEUE_NAME', 'judge:queue')
-        ).connection
+        # Same central Redis the Celery judge lanes live on; workers push
+        # results onto the broker they consumed the job from.
+        conn = result_queue.broker_client()
 
         recovered = result_queue.recover_processing(conn)
         if recovered:

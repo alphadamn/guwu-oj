@@ -200,16 +200,15 @@ class DispatchGateTests(TestCase):
         self.problem = _make_problem(self.user)
         self.submission = _make_submission(self.user, self.problem)
 
-    @override_settings(OJ_CENTRAL_QUEUE=False, OJ_MULTI_JUDGE_ENABLED=False)
     def test_terminal_row_enqueue_is_a_noop(self):
         token = claim_submission(self.submission.id, 'worker-a')
         finalize_claim(self.submission.id, token, 'Accepted')
 
         from submissions.judge_queue import enqueue_judge
-        with patch('submissions.judge_queue.get_queue') as get_queue:
+        with patch('submissions.judge_queue.judge_submission_task') as task:
             job = enqueue_judge(self.submission.id)
         self.assertIsNone(job)
-        get_queue.assert_not_called()
+        task.apply_async.assert_not_called()
 
     def test_mark_queued_transitions_pending(self):
         self.assertTrue(mark_queued(self.submission.id))

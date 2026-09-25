@@ -351,20 +351,4 @@ class JudgeLoadBalancer:
                 return machine
         return candidates[-1]
 
-    def get_queue_for_machine(self, machine):
-        if not machine:
-            return 'default'
-
-        return {
-            'name': machine['queue'],
-            'connection_config': {
-                'HOST': machine['host'],
-                'PORT': machine['port'],
-                'DB': machine['db'],
-                'DEFAULT_TIMEOUT': 3600,
-                'WORKER_CLASS': 'oj_project.customrq.AutoReconnectWorker',
-            }
-        }
-
-
 load_balancer = JudgeLoadBalancer()

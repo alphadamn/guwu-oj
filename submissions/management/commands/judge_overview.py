@@ -1,20 +1,18 @@
 """Judge fleet observability snapshot.
 
-Prints queue depths per central lane, online workers, lifecycle-state
-counts, stuck claims, recent latency percentiles and the System Error
-rate. Read-only; safe to run any time.
+Prints queue depths per Celery priority bucket, online workers (broker
+heartbeat keys), lifecycle-state counts, stuck claims, recent latency
+percentiles and the System Error rate. Read-only; safe to run any time.
 
     python manage.py judge_overview
 """
 
 import statistics
+import time
 from collections import Counter
 
 from django.db.models import Avg, Count, F
 from django.utils import timezone
-
-from django_rq import get_connection
-from rq import Queue, Worker
 
 from django.core.management.base import BaseCommand
 
@@ -23,51 +21,59 @@ from submissions.judge_queue import (
     PRIORITY_DEFAULT,
     PRIORITY_PLUS,
     PRIORITY_PRO,
+    celery_priority,
 )
 from submissions.models import Submission
+from submissions.result_queue import broker_client
+
+
+def _bucket_list_name(queue, priority):
+    """Physical Redis list for a Celery priority bucket (kombu ``sep``)."""
+    return queue if priority == 0 else f'{queue}:{priority}'
 
 
 class Command(BaseCommand):
     help = 'Print a judge fleet snapshot: queues, workers, states, latency.'
 
     def handle(self, *args, **options):
-        conn = get_connection()
+        conn = broker_client()
         now = timezone.now()
 
         # ── Queues ──────────────────────────────────────────────────────
         from django.conf import settings
-        base = getattr(settings, 'OJ_CENTRAL_QUEUE_NAME', 'judge:queue')
+        base = getattr(settings, 'CELERY_TASK_DEFAULT_QUEUE', 'judge')
         lanes = [
-            (PRIORITY_PRO, f'{base}-pro'),
-            (PRIORITY_PLUS, f'{base}-plus'),
-            (PRIORITY_DEFAULT, base),
-            (PRIORITY_AI, f'{base}-ai'),
+            (PRIORITY_PRO, celery_priority(PRIORITY_PRO)),
+            (PRIORITY_PLUS, celery_priority(PRIORITY_PLUS)),
+            (PRIORITY_DEFAULT, celery_priority(PRIORITY_DEFAULT)),
+            (PRIORITY_AI, celery_priority(PRIORITY_AI)),
         ]
-        self.stdout.write('── Queues (central broker) ──')
+        self.stdout.write('── Queues (central broker, Celery priority buckets) ──')
         total_depth = 0
-        for label, name in lanes:
-            depth = Queue(name, connection=conn).count
+        for label, pri in lanes:
+            name = _bucket_list_name(base, pri)
+            depth = conn.llen(name)
             total_depth += depth
-            self.stdout.write(f'  {name:20s} {label:8s} depth={depth}')
+            self.stdout.write(f'  {name:12s} {label:8s} depth={depth}')
         self.stdout.write(f'  total pending jobs: {total_depth}')
 
-        # ── Workers ─────────────────────────────────────────────────────
-        workers = Worker.all(connection=conn)
+        # ── Workers (broker heartbeat keys written by celery_worker) ────
         self.stdout.write('\n── Workers ──')
-        state_counter = Counter()
-        for w in workers:
-            state = w.get_state()
-            state_counter[state] += 1
-            current = ''
-            job = w.get_current_job()
-            if job is not None:
-                current = f'  current={job.func_name}({job.args})'
+        online = 0
+        for key in conn.scan_iter(match='judge:worker:*'):
+            raw = conn.get(key)
+            try:
+                age = time.time() - float(raw)
+            except (TypeError, ValueError):
+                continue
+            fresh = age <= 90
+            online += 1 if fresh else 0
+            name = key.decode() if isinstance(key, bytes) else key
             self.stdout.write(
-                f'  {w.name[:12]:14s} state={state:7s} host={w.hostname}{current}'
+                f'  {name:40s} last_beat={age:6.0f}s ago '
+                f'{"(online)" if fresh else "(STALE)"}'
             )
-        self.stdout.write(
-            f'  online: {len(workers)} ({dict(state_counter)})'
-        )
+        self.stdout.write(f'  online: {online}')
 
         # ── Lifecycle states ────────────────────────────────────────────
         self.stdout.write('\n── Submission lifecycle (all time) ──')

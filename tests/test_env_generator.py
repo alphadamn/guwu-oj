@@ -108,23 +108,6 @@ class JudgeMachineSettingsTests(TestCase):
         with self.assertRaisesMessage(ValueError, 'requires both client_cert_path'):
             _parse_judge_machines(incomplete_client_cert, [])
 
-    def test_queue_configuration_keeps_machine_tls_credentials_separate(self):
-        from oj_project.settings import _rq_queue_entry
-
-        queue = _rq_queue_entry({
-            'host': 'judge.internal', 'port': 6380, 'db': 2,
-            'tls': True, 'password': 'per-machine-password',
-            'ca_cert_path': '/tls/ca.crt',
-            'client_cert_path': '/tls/judge.crt',
-            'client_key_path': '/tls/judge.key',
-        })
-
-        self.assertEqual(queue['PASSWORD'], 'per-machine-password')
-        self.assertTrue(queue['SSL'])
-        self.assertEqual(queue['REDIS_CLIENT_KWARGS']['ssl_ca_certs'], '/tls/ca.crt')
-        self.assertEqual(queue['REDIS_CLIENT_KWARGS']['ssl_certfile'], '/tls/judge.crt')
-        self.assertEqual(queue['REDIS_CLIENT_KWARGS']['ssl_keyfile'], '/tls/judge.key')
-
     def test_empty_json_configuration_uses_legacy_fallback(self):
         from oj_project.settings import _parse_judge_machines
 

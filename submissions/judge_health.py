@@ -49,9 +49,9 @@ def _central_broker_client():
     global _central_client_cache
     if _central_client_cache is None:
         try:
-            from django_rq import get_connection
+            from submissions.result_queue import broker_client
 
-            _central_client_cache = get_connection()
+            _central_client_cache = broker_client()
         except Exception as exc:
             logger.warning('Could not resolve central broker connection: %s', exc)
             _central_client_cache = False
@@ -61,11 +61,10 @@ def _central_broker_client():
 def check_central_worker_heartbeat():
     """Fleet-level worker liveness on the central broker.
 
-    With ``OJ_CENTRAL_QUEUE`` every worker consumes the shared central lanes
-    (``judge:queue`` / ``-pro`` / ``-plus`` / ``-ai``) and writes its
-    ``judge:worker:<lane>`` epoch heartbeat there instead of into each
-    machine's local Redis. Heartbeats are therefore fleet-level: one fresh
-    key on any lane means the worker fleet is alive and draining.
+    Every Celery judge worker consumes the shared ``judge`` queue and writes
+    its ``judge:worker:celery:<host>`` epoch heartbeat onto the central
+    broker. Heartbeats are therefore fleet-level: one fresh key means the
+    worker fleet is alive and draining.
     """
     client = _central_broker_client()
     if client is None:
@@ -134,16 +133,10 @@ def evaluate_machine_health(machine, redis_client, check_local_docker=False):
     redis_ok = check_redis_ping(redis_client)
     checks['redis'] = (redis_ok, 'ok' if redis_ok else 'ping failed')
 
-    from django.conf import settings
-
-    if getattr(settings, 'OJ_CENTRAL_QUEUE', False):
-        # Central queue: all workers heartbeat to the shared broker rather
-        # than to this machine's local Redis, so liveness is fleet-level.
-        hb_ok, hb_detail = check_central_worker_heartbeat()
-        checks['worker'] = (hb_ok, hb_detail)
-    else:
-        hb_ok = redis_ok and check_worker_heartbeat(redis_client, machine['queue'])
-        checks['worker'] = (hb_ok, 'ok' if hb_ok else 'no recent worker heartbeat')
+    # Celery workers heartbeat to the shared central broker rather than to
+    # any machine-local Redis, so liveness is fleet-level.
+    hb_ok, hb_detail = check_central_worker_heartbeat()
+    checks['worker'] = (hb_ok, hb_detail)
 
     if check_local_docker:
         docker_ok, docker_detail = check_docker_daemon()
