@@ -5,9 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="429 错误 - 请求过于频繁">
   <title>429 | 请求过于频繁</title>
-  <link rel="stylesheet" href="{% static 'css/429.css' %}?v=20260913">
+  <script>
+  (function(){try{var t=localStorage.getItem('oj-theme');
+  if(t!=='light'&&t!=='dark'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}
+  document.documentElement.setAttribute('data-bs-theme',t);}catch(e){}})();
+  </script>
+  <link rel="stylesheet" href="{% static 'css/429.css' %}?v=20260926">
+  <link rel="stylesheet" href="{% static 'css/oj-theme-v5b.css' %}?v=5b">
 </head>
-<body>
+<body class="error-page">
   <div class="error-card" role="main" aria-labelledby="error-message-title">
     <div class="error-icon">
       ⏱️🚫

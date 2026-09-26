@@ -1,0 +1,462 @@
+/* ==========================================================================
+   谷物 OJ 暗色主题（统一来源）
+   --------------------------------------------------------------------------
+   本文件在所有页面（base.html / 404 / 429）无条件加载；亮色规则与暗色
+   覆盖都集中在此，避免散落在各分页 CSS。Cloudflare 静态缓存忽略查询
+   字符串，新增/修改样式时使用“新文件路径”而不是 ?v= 才能可靠刷新。
+   data-bs-theme 属性由 base.html <head> 内联脚本提前设置，无 FOUC。
+   ========================================================================== */
+
+/* ---- 亮色模式基础类（从 base-extra.css 迁移，保证未缓存旧文件时也可用） ---- */
+.alert-error-soft {
+    background: rgba(220, 38, 38, 0.10);
+    color: #b91c1c;
+}
+
+/* ==========================================================================
+   1. 设计变量（深石板色系，与 #0f172a 导航栏一致）
+   ========================================================================== */
+html[data-bs-theme="dark"] {
+    --oj-primary: #60a5fa;
+    --oj-primary-dark: #3b82f6;
+    --oj-accent: #fbbf24;
+    --oj-accent-soft: rgba(245, 158, 11, 0.15);
+    --oj-bg: #0b1220;
+    --oj-surface: #111a2c;
+    --oj-text: #e2e8f0;
+    --oj-text-muted: #94a3b8;
+    --oj-nav-bg: rgba(2, 6, 23, 0.85);
+    --oj-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+    --oj-shadow-hover: 0 12px 40px rgba(0, 0, 0, 0.6);
+    --oj-surface-glass: rgba(17, 26, 44, 0.78);
+    --oj-border: rgba(148, 163, 184, 0.18);
+    --oj-focus: 0 0 0 4px rgba(96, 165, 250, 0.25);
+    color-scheme: dark;
+    /* 全局 BS 变量（被组件类直接消费的部分） */
+    --bs-border-color: #2a3650;
+    --bs-secondary-bg: #16203a;
+    --bs-tertiary-bg: #16203a;
+    --bs-secondary-color: #94a3b8;
+    --bs-emphasis-color: #f1f5f9;
+    --bs-heading-color: #f1f5f9;
+}
+
+/* Bootstrap 5.3 在组件类自身重新声明局部 CSS 变量，:root/html 级别的覆盖
+   会被压过（.card 计算值仍为 #212529），必须在组件类层级统一表面色。 */
+html[data-bs-theme="dark"] .card {
+    --bs-card-bg: #111a2c;
+    --bs-card-cap-bg: #16203a;
+    --bs-card-border-color: #2a3650;
+}
+html[data-bs-theme="dark"] .dropdown-menu {
+    --bs-dropdown-bg: #111a2c;
+    --bs-dropdown-border-color: #2a3650;
+    --bs-dropdown-link-color: #e2e8f0;
+    --bs-dropdown-link-hover-color: #f1f5f9;
+    --bs-dropdown-link-hover-bg: #1b2740;
+    --bs-dropdown-link-active-color: #ffffff;
+    --bs-dropdown-link-active-bg: #3b82f6;
+    --bs-dropdown-header-color: #94a3b8;
+    --bs-dropdown-divider-bg: rgba(148, 163, 184, 0.18);
+}
+html[data-bs-theme="dark"] .modal-content {
+    --bs-modal-bg: #111a2c;
+    --bs-modal-border-color: #2a3650;
+    --bs-modal-header-border-color: #2a3650;
+    --bs-modal-footer-border-color: #2a3650;
+}
+html[data-bs-theme="dark"] .list-group {
+    --bs-list-group-bg: transparent;
+    --bs-list-group-color: #e2e8f0;
+    --bs-list-group-border-color: #2a3650;
+    --bs-list-group-action-color: #e2e8f0;
+    --bs-list-group-action-hover-color: #f1f5f9;
+    --bs-list-group-action-hover-bg: #1b2740;
+    --bs-list-group-action-active-color: #f1f5f9;
+    --bs-list-group-action-active-bg: #1b2740;
+    --bs-list-group-disabled-color: #64748b;
+    --bs-list-group-active-color: #ffffff;
+    --bs-list-group-active-bg: #3b82f6;
+    --bs-list-group-active-border-color: #3b82f6;
+}
+html[data-bs-theme="dark"] .accordion {
+    --bs-accordion-bg: #111a2c;
+    --bs-accordion-color: #e2e8f0;
+    --bs-accordion-border-color: #2a3650;
+    --bs-accordion-active-bg: #16203a;
+    --bs-accordion-active-color: #f1f5f9;
+    --bs-accordion-btn-focus-box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.25);
+}
+html[data-bs-theme="dark"] .nav-tabs {
+    --bs-nav-tabs-border-color: #2a3650;
+    --bs-nav-tabs-link-hover-border-color: #2a3650 #2a3650 #111a2c;
+    --bs-nav-tabs-link-active-color: #f1f5f9;
+    --bs-nav-tabs-link-active-bg: #111a2c;
+    --bs-nav-tabs-link-active-border-color: #2a3650 #2a3650 #111a2c;
+}
+html[data-bs-theme="dark"] .pagination {
+    --bs-pagination-color: #cbd5e1;
+    --bs-pagination-bg: transparent;
+    --bs-pagination-border-color: #2a3650;
+    --bs-pagination-hover-color: #f1f5f9;
+    --bs-pagination-hover-bg: #1b2740;
+    --bs-pagination-focus-color: #f1f5f9;
+    --bs-pagination-focus-bg: #1b2740;
+    --bs-pagination-active-color: #ffffff;
+    --bs-pagination-active-bg: #3b82f6;
+    --bs-pagination-active-border-color: #3b82f6;
+    --bs-pagination-disabled-color: #64748b;
+    --bs-pagination-disabled-bg: transparent;
+}
+html[data-bs-theme="dark"] .offcanvas {
+    --bs-offcanvas-bg: #111a2c;
+    --bs-offcanvas-color: #e2e8f0;
+    --bs-offcanvas-border-color: #2a3650;
+}
+html[data-bs-theme="dark"] .popover {
+    --bs-popover-bg: #111a2c;
+    --bs-popover-border-color: #2a3650;
+    --bs-popover-header-bg: #16203a;
+    --bs-popover-body-color: #e2e8f0;
+}
+html[data-bs-theme="dark"] .toast {
+    --bs-toast-bg: #111a2c;
+    --bs-toast-color: #e2e8f0;
+    --bs-toast-border-color: #2a3650;
+    --bs-toast-header-bg: #16203a;
+    --bs-toast-header-color: #94a3b8;
+}
+html[data-bs-theme="dark"] .progress {
+    --bs-progress-bg: #1e293b;
+}
+
+html[data-bs-theme="dark"] body {
+    background-color: var(--oj-bg);
+    color: var(--oj-text);
+}
+
+html[data-bs-theme="dark"] body::before {
+    opacity: 0.35;
+}
+
+/* ==========================================================================
+   2. 全局 Bootstrap 工具类/变体补丁（亮底黑字重灾区）
+   ========================================================================== */
+
+/* 结构性 .bg-white / .bg-light 一律转为深色表面；
+   需要保持浅色的元素（如二维码）显式加 .force-light */
+html[data-bs-theme="dark"] .bg-white:not(.force-light),
+html[data-bs-theme="dark"] .bg-light:not(.force-light) {
+    background-color: var(--oj-surface) !important;
+    color: var(--oj-text);
+}
+
+html[data-bs-theme="dark"] .force-light {
+    background-color: #ffffff !important;
+    color: #1e293b !important;
+}
+
+/* 浅灰徽章（标签、排名、commit sha、配额等） */
+html[data-bs-theme="dark"] .badge.bg-light,
+html[data-bs-theme="dark"] .badge.bg-white {
+    background-color: #1e293b !important;
+    border-color: #334155;
+    color: #cbd5e1 !important;
+}
+
+/* table-light 是写死浅色的表格变体，data-bs-theme 不会自动适配 */
+html[data-bs-theme="dark"] .table-light,
+html[data-bs-theme="dark"] .table-light > :not(caption) > * > * {
+    --bs-table-bg: #0f172a;
+    --bs-table-color: var(--oj-text);
+    --bs-table-border-color: #26334d;
+    --bs-table-hover-bg: #16203a;
+    --bs-table-hover-color: var(--oj-text);
+    background-color: #0f172a;
+    color: var(--oj-text);
+}
+
+html[data-bs-theme="dark"] .table-light th {
+    color: var(--oj-text-muted);
+}
+
+/* ==========================================================================
+   3. main.css 组件
+   ========================================================================== */
+html[data-bs-theme="dark"] .problem-section-title {
+    color: var(--oj-text);
+}
+
+html[data-bs-theme="dark"] .card-header-gradient {
+    background: linear-gradient(135deg, #16203a, #1b2947);
+    border-bottom-color: rgba(148, 163, 184, 0.2);
+}
+
+html[data-bs-theme="dark"] .feature-icon.blue {
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.16), rgba(59, 130, 246, 0.28));
+    color: #93c5fd;
+}
+
+html[data-bs-theme="dark"] .feature-icon.amber {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.14), rgba(245, 158, 11, 0.26));
+    color: #fcd34d;
+}
+
+html[data-bs-theme="dark"] .feature-icon.rose {
+    background: linear-gradient(135deg, rgba(251, 113, 133, 0.14), rgba(225, 29, 72, 0.26));
+    color: #fda4af;
+}
+
+html[data-bs-theme="dark"] .recent-table a {
+    color: var(--oj-primary);
+}
+
+/* ==========================================================================
+   4. base-extra.css：同意弹窗 / 处罚弹窗 / 错误提示
+   ========================================================================== */
+html[data-bs-theme="dark"] .alert-error-soft {
+    background: rgba(220, 38, 38, 0.18);
+    color: #fca5a5;
+}
+
+html[data-bs-theme="dark"] .guwu-punishment-features li {
+    color: #d8c7f5;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-bs-theme="dark"] .oj-analytics-consent__dialog {
+    border-color: rgba(148, 163, 184, 0.25);
+    background: linear-gradient(145deg, #111a2c 0%, #0d1830 100%);
+}
+
+html[data-bs-theme="dark"] .oj-analytics-consent__icon {
+    color: #93c5fd;
+    background: #1e293b;
+}
+
+html[data-bs-theme="dark"] .oj-analytics-consent__body { color: #cbd5e1; }
+
+html[data-bs-theme="dark"] .oj-analytics-consent__note {
+    color: #94a3b8;
+    background: rgba(59, 130, 246, 0.12);
+}
+
+html[data-bs-theme="dark"] .modal-footer.bg-light {
+    background-color: var(--oj-surface) !important;
+}
+
+/* ==========================================================================
+   5. 题面 Markdown（problem-markdown.css）
+   ========================================================================== */
+html[data-bs-theme="dark"] .problem-markdown { color: #cbd5e1; }
+
+html[data-bs-theme="dark"] .problem-markdown pre {
+    background-color: #0f172a;
+    border-color: rgba(148, 163, 184, 0.25);
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.1);
+}
+
+html[data-bs-theme="dark"] .problem-markdown code {
+    background-color: #1e293b;
+    color: #e2e8f0;
+}
+
+html[data-bs-theme="dark"] .problem-markdown pre code { color: inherit; }
+
+html[data-bs-theme="dark"] .problem-markdown th,
+html[data-bs-theme="dark"] .problem-markdown td { border-color: #334155; }
+
+html[data-bs-theme="dark"] .problem-markdown blockquote { color: #94a3b8; }
+
+html[data-bs-theme="dark"] .problem-markdown a { color: #60a5fa; }
+
+/* ==========================================================================
+   6. 提交相关
+   ========================================================================== */
+html[data-bs-theme="dark"] .code-block {
+    background-color: #0f172a;
+    color: #e2e8f0;
+}
+
+html[data-bs-theme="dark"] .case-overview { background-color: #0f172a; }
+
+html[data-bs-theme="dark"] .case-point .case-label { color: #94a3b8; }
+
+html[data-bs-theme="dark"] .case-point .case-runtime { color: #cbd5e1; }
+
+html[data-bs-theme="dark"] .submission-captcha-card {
+    background: var(--oj-surface);
+    border-color: #26334d;
+}
+
+/* submit.html 内联浅红渐变 alert（模板已改用 .alert-danger-soft，兜底旧缓存） */
+.alert-danger-soft {
+    background: linear-gradient(135deg, #fee2e2, #fecaca);
+}
+html[data-bs-theme="dark"] .alert-danger-soft {
+    background: rgba(220, 38, 38, 0.16) !important;
+}
+html[data-bs-theme="dark"] .alert-danger[style] {
+    background: rgba(220, 38, 38, 0.16) !important;
+    color: #fca5a5 !important;
+}
+
+/* ==========================================================================
+   7. 题库标签筛选（problem-list.css）
+   ========================================================================== */
+html[data-bs-theme="dark"] .tag-group-title { color: #94a3b8; }
+
+html[data-bs-theme="dark"] .tag-btn {
+    color: #e2e8f0;
+    background: #1e293b;
+    border-color: #334155;
+}
+
+html[data-bs-theme="dark"] .tag-btn:hover {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: rgba(96, 165, 250, 0.45);
+    color: #93c5fd;
+}
+
+html[data-bs-theme="dark"] .tag-btn.is-disabled,
+html[data-bs-theme="dark"] .tag-btn.is-disabled:hover {
+    color: #475569;
+    background: rgba(30, 41, 59, 0.5);
+    border-color: rgba(51, 65, 85, 0.6);
+}
+
+html[data-bs-theme="dark"] .tag-btn-count { color: #64748b; }
+
+html[data-bs-theme="dark"] .tag-selected-label { color: #94a3b8; }
+
+/* ==========================================================================
+   8. 手册（handbook.css）
+   ========================================================================== */
+html[data-bs-theme="dark"] .handbook-group-header {
+    border-top-color: #26334d;
+}
+
+html[data-bs-theme="dark"] .handbook-article-body h2 {
+    border-bottom-color: #26334d;
+}
+
+html[data-bs-theme="dark"] .handbook-article-body code {
+    background: #1e293b;
+    color: #e2e8f0;
+}
+
+/* ==========================================================================
+   9. 搜索 / 积分 / 开发者日志 / 竞赛
+   ========================================================================== */
+html[data-bs-theme="dark"] #search-loading-overlay {
+    background: rgba(11, 18, 32, 0.75);
+}
+
+html[data-bs-theme="dark"] .search-spinner {
+    border-color: #26334d;
+    border-top-color: #3b82f6;
+}
+
+html[data-bs-theme="dark"] .search-error {
+    background: rgba(220, 38, 38, 0.12);
+    color: #fca5a5;
+    border-color: rgba(220, 38, 38, 0.35);
+}
+
+html[data-bs-theme="dark"] .points-copy-input { background: #1e293b; }
+html[data-bs-theme="dark"] .points-amount-positive { color: #4ade80; }
+html[data-bs-theme="dark"] .points-amount-negative { color: #f87171; }
+
+html[data-bs-theme="dark"] .component-row,
+html[data-bs-theme="dark"] .commit-item { border-bottom-color: #26334d; }
+
+html[data-bs-theme="dark"] .uptime-bar { background: #1e293b; }
+
+html[data-bs-theme="dark"] .contest-question-number {
+    background: rgba(99, 102, 241, 0.25);
+    color: #c7d2fe;
+}
+
+/* ==========================================================================
+   10. 404 / 429 独立页（body 带 .error-page 作用域，避免影响主站）
+   ========================================================================== */
+html[data-bs-theme="dark"] body.error-page {
+    background: linear-gradient(145deg, #0b1220 0%, #0d1526 100%);
+}
+
+html[data-bs-theme="dark"] .error-card {
+    background: rgba(17, 26, 44, 0.96);
+    border-color: rgba(148, 163, 184, 0.18);
+    box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.55), 0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+html[data-bs-theme="dark"] .error-message { color: #e2e8f0; }
+html[data-bs-theme="dark"] .error-description { color: #94a3b8; }
+
+html[data-bs-theme="dark"] .suggestion {
+    color: #94a3b8;
+    background: #1e293b;
+}
+
+html[data-bs-theme="dark"] .btn-secondary {
+    background: rgba(30, 41, 59, 0.85);
+    color: #e2e8f0;
+    border-color: #334155;
+}
+
+html[data-bs-theme="dark"] .btn-secondary:hover {
+    background: #1e293b;
+    border-color: #475569;
+}
+
+html[data-bs-theme="dark"] .footer-note { border-top-color: #1e293b; }
+html[data-bs-theme="dark"] .footer-note a { color: #8ba0bd; }
+
+html[data-bs-theme="dark"] .hint {
+    background: #111a2c;
+    color: #94a3b8;
+    border-color: #26334d;
+}
+
+/* ==========================================================================
+   主题切换过渡动画（亮/暗通用，JS 切换时给 <html> 临时加 .oj-theme-transition）
+   ========================================================================== */
+html.oj-theme-transition,
+html.oj-theme-transition *,
+html.oj-theme-transition *::before,
+html.oj-theme-transition *::after {
+    transition:
+        background-color 0.35s ease,
+        color 0.35s ease,
+        border-color 0.35s ease,
+        box-shadow 0.35s ease,
+        fill 0.35s ease,
+        stroke 0.35s ease !important;
+}
+
+/* 切换按钮图标翻转动画（JS 在点击时给 <i> 加 .oj-icon-swap） */
+[data-theme-toggle] i {
+    display: inline-block;
+}
+
+[data-theme-toggle] i.oj-icon-swap {
+    animation: ojThemeIconSwap 0.4s ease;
+}
+
+@keyframes ojThemeIconSwap {
+    0%   { transform: rotate(0deg) scale(1); opacity: 1; }
+    50%  { transform: rotate(180deg) scale(0.55); opacity: 0.35; }
+    100% { transform: rotate(360deg) scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html.oj-theme-transition,
+    html.oj-theme-transition *,
+    html.oj-theme-transition *::before,
+    html.oj-theme-transition *::after {
+        transition: none !important;
+    }
+    [data-theme-toggle] i.oj-icon-swap {
+        animation: none;
+    }
+}

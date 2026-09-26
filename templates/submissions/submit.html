@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/code-editor.css' %}">
-<link rel="stylesheet" href="{% static 'css/submission-submit.css' %}?v=20260913">
+<link rel="stylesheet" href="{% static 'css/submission-submit.css' %}?v=20260926">
 {% endblock %}
 
 {% block content %}
@@ -66,7 +66,7 @@
                     </div>
                     {% if requires_captcha %}
                     {% if captcha_error_message %}
-                    <div class="mb-3 alert alert-danger d-flex align-items-start gap-2 border-0 rounded shadow-sm" role="alert" style="background:linear-gradient(135deg,#fee2e2,#fecaca);">
+                    <div class="mb-3 alert alert-danger-soft d-flex align-items-start gap-2 border-0 rounded shadow-sm" role="alert">
                         <i class="bi bi-exclamation-circle-fill fs-5 text-danger"></i>
                         <div class="flex-grow-1">
                             <div class="fw-semibold text-danger-emphasis">无法提交</div>
