@@ -22,6 +22,7 @@ urlpatterns = [
     path('health/', include('health.urls')),
     path('devlog/', include('devlog.urls')),
     path('ai/', include('ai_assistant.urls')),
+    path('tickets/', include('tickets.urls')),
     path('internal/judge/', include('submissions.internal_urls')),
     path('', include('django_prometheus.urls')),
     path('privacy-policy/', TemplateView.as_view(template_name='legal/privacy_policy.html'), name='privacy_policy'),

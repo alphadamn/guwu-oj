@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}我的工单 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-life-preserver"></i> 我的工单</h5>
+        <a href="{% url 'tickets:ticket_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1"></i>提交新工单</a>
+    </div>
+    <div class="card-body">
+        {% if page_obj.object_list %}
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>主题</th>
+                        <th>分类</th>
+                        <th>状态</th>
+                        <th>提交时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ticket in page_obj %}
+                    <tr>
+                        <td class="fw-semibold">{{ ticket.subject }}</td>
+                        <td>{{ ticket.get_category_display }}</td>
+                        <td>
+                            <span class="badge {% if ticket.status == 'pending' %}bg-warning text-dark{% elif ticket.status == 'processing' %}bg-primary{% elif ticket.status == 'resolved' %}bg-success{% else %}bg-secondary{% endif %}">{{ ticket.get_status_display }}</span>
+                        </td>
+                        <td class="text-muted small">{{ ticket.created_at|date:'Y-m-d H:i' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if page_obj.has_other_pages %}
+        <ul class="pagination justify-content-center mt-3 mb-0">
+            {% if page_obj.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}">上一页</a></li>
+            {% endif %}
+            <li class="page-item disabled"><span class="page-link">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span></li>
+            {% if page_obj.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}">下一页</a></li>
+            {% endif %}
+        </ul>
+        {% endif %}
+        {% else %}
+        <p class="text-muted mb-0">还没有提交过工单。<a href="{% url 'tickets:ticket_create' %}">去提交第一个</a></p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

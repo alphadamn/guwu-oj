@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% load crispy_forms_tags %}
+
+{% block title %}提交工单 - 谷物 OJ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-life-preserver"></i> 提交工单</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">
+                    <i class="bi bi-info-circle me-1"></i>遇到问题或有功能建议？提交工单后所有管理员会收到邮件通知并尽快处理。
+                </p>
+                <form method="post">
+                    {% csrf_token %}
+                    {{ form.website }}
+                    {{ form.subject|as_crispy_field }}
+                    {{ form.category|as_crispy_field }}
+                    {{ form.body|as_crispy_field }}
+                    {{ form.contact_email|as_crispy_field }}
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-send me-1"></i>提交工单</button>
+                    <a href="{% url 'tickets:my_tickets' %}" class="btn btn-outline-secondary">我的工单</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

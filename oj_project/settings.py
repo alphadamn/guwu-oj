@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     'health',
     'devlog',
     'ai_assistant',
+    'tickets',
 ]
 
 if not TEST_MODE:
@@ -1069,6 +1070,14 @@ SIMPLEUI_CONFIG = {
                  'url': '/admin/ai_assistant/aitoolcall/'},
                 {'name': '订阅计费配置', 'icon': 'fas fa-credit-card',
                  'url': '/admin/ai_assistant/billingconfig/'},
+            ],
+        },
+        {
+            'name': '工单反馈',
+            'icon': 'fas fa-life-ring',
+            'models': [
+                {'name': '工单', 'icon': 'fas fa-ticket-alt',
+                 'url': '/admin/tickets/ticket/'},
             ],
         },
         {
