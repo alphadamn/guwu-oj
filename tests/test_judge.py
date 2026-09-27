@@ -114,6 +114,67 @@ class CompileErrorResultTests(TestCase):
         self.assertEqual(result.actual_output, compiler_message)
 
 
+class TimerReportParsingTests(TestCase):
+    def test_parses_ojrun_microsecond_report(self):
+        from submissions.judge import SandboxRunner
+
+        elapsed_ms, memory_kb = SandboxRunner._parse_time_stderr(
+            None, "OJ_TIME 4096 0.012345\n"
+        )
+        self.assertEqual(elapsed_ms, 12)
+        self.assertEqual(memory_kb, 4096)
+
+    def test_parses_gnu_time_report(self):
+        from submissions.judge import SandboxRunner
+
+        elapsed_ms, memory_kb = SandboxRunner._parse_time_stderr(
+            None, "OJ_TIME 2048 1.23\n"
+        )
+        self.assertEqual(elapsed_ms, 1230)
+        self.assertEqual(memory_kb, 2048)
+
+
+class TimedCommandSelectionTests(TestCase):
+    def _runner(self, container):
+        import submissions.judge as judge
+        from submissions.judge import SandboxRunner
+
+        judge._ojrun_available_cache.clear()
+        runner = SandboxRunner.__new__(SandboxRunner)
+        runner._container = container
+        return runner
+
+    def test_uses_ojrun_when_probe_succeeds(self):
+        container = SimpleNamespace(
+            cid="c1",
+            exec=MagicMock(return_value=SimpleNamespace(returncode=0)),
+        )
+        runner = self._runner(container)
+
+        command = runner._timed_command(["./main"])
+        self.assertEqual(command, ["/opt/oj/ojrun", "./main"])
+
+        # The probe result is cached per container: no second exec.
+        runner._timed_command(["./main"])
+        self.assertEqual(container.exec.call_count, 1)
+
+    def test_falls_back_to_gnu_time_when_probe_fails(self):
+        container = SimpleNamespace(
+            cid="c2",
+            exec=MagicMock(return_value=SimpleNamespace(returncode=1)),
+        )
+        runner = self._runner(container)
+
+        command = runner._timed_command(["./main"])
+        self.assertEqual(command, ["/usr/bin/time", "-f", "OJ_TIME %M %e", "./main"])
+
+    def test_falls_back_when_container_has_no_cid(self):
+        runner = self._runner(SimpleNamespace(cid=None))
+
+        command = runner._timed_command(["./main"])
+        self.assertEqual(command[0], "/usr/bin/time")
+
+
 class JudgeContainerSecurityTests(TestCase):
     def test_committed_profile_allows_unconfined_lifecycle_signals(self):
         from pathlib import Path
@@ -126,6 +187,8 @@ class JudgeContainerSecurityTests(TestCase):
         self.assertIn('signal (receive) peer=unconfined,', profile)
         self.assertIn('deny signal peer=oj-judge,', profile)
         self.assertNotIn('deny signal,', profile)
+        # ojrun timer binary is bind-mounted at /opt/oj and must be exec-able.
+        self.assertIn('/opt/oj/** rix,', profile)
 
     @patch('submissions.sandbox.ensure_judge_image_available')
     @patch('submissions.sandbox.ensure_docker_ready')
@@ -143,6 +206,24 @@ class JudgeContainerSecurityTests(TestCase):
         command = run.call_args.args[0]
         self.assertIn('apparmor=oj-judge-test', command)
         self.assertIn('/dev/null:rw', command)
+        container.__exit__(None, None, None)
+
+    @patch('submissions.sandbox.ensure_judge_image_available')
+    @patch('submissions.sandbox.ensure_docker_ready')
+    @patch('submissions.sandbox.subprocess.run')
+    def test_container_mounts_ojrun_when_host_binary_present(
+        self, run, _docker_ready, _image_available,
+    ):
+        from submissions.sandbox import JudgeContainer
+
+        run.return_value = SimpleNamespace(returncode=0, stdout='judge-id\n', stderr='')
+        with patch('submissions.sandbox.ojrun_host_dir', return_value='/host/ojbin'):
+            container = JudgeContainer('/tmp/oj-judge-test', 64, 'oj-python:latest')
+            container.__enter__()
+
+        command = run.call_args.args[0]
+        mount_entry = next(x for x in command if ':/opt/oj:ro' in x)
+        self.assertEqual(mount_entry, '/host/ojbin:/opt/oj:ro')
         container.__exit__(None, None, None)
 
 

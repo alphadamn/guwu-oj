@@ -13,8 +13,8 @@ Performance / stability changes vs the previous naive approach:
 * `docker info` is cached in-process (with a short TTL) instead of being
   invoked on every test case.
 * The subprocess timeout honours the caller-supplied value. A small fixed
-  safety margin (1 s) is added so the in-container `/usr/bin/time` report
-  (the authoritative verdict) has time to be written.
+  safety margin (1 s) is added so the in-container timer report (ojrun, or
+  `/usr/bin/time` on hosts without it) has time to be written.
 * `stdin` bytes are never re-encoded; text mode is used only for stdin=None.
 * Container cleanup runs once on `__exit__`; periodic housekeeping is
   handled by `submissions.docker_cleanup.cleanup_stale_judge_containers`.
@@ -196,6 +196,27 @@ def exit_indicates_memory_limit(returncode):
     return returncode in (137, -9)
 
 
+# Path ojrun is mounted at inside judge containers (see below).
+OJRUN_CONTAINER_PATH = "/opt/oj/ojrun"
+
+
+def ojrun_host_dir():
+    """Host dir holding the static ojrun timer binary, or None.
+
+    ojrun (docker/judge/ojrun.c) replaces GNU time for per-case timing:
+    microsecond wall-clock resolution instead of 10 ms. It is bind-mounted
+    read-only into every judge container so images need no rebuild; a judge
+    host without the binary simply falls back to /usr/bin/time.
+    """
+    path = Path(__file__).resolve().parent.parent / "docker" / "judge" / "ojbin"
+    try:
+        if (path / "ojrun").is_file():
+            return str(path)
+    except OSError:
+        pass
+    return None
+
+
 def _kill_container(cid):
     if not cid:
         return
@@ -251,6 +272,9 @@ def build_judge_run_args(
         "-v", f"{work_dir}:/sandbox:rw",
         "-w", "/sandbox",
     ]
+    ojbin = ojrun_host_dir()
+    if ojbin:
+        args.extend(["-v", f"{ojbin}:/opt/oj:ro"])
     cache = ccache_dir() if image in CCACHE_IMAGES else None
     if cache:
         args.extend([

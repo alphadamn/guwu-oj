@@ -34,6 +34,12 @@ profile oj-judge flags=(attach_disconnected) {
   /pch/ r,
   /pch/** rm,
 
+  # ojrun: static per-case timing wrapper bind-mounted read-only from the
+  # judge host (replaces /usr/bin/time with µs-resolution wall clock +
+  # wait4 rusage). Execute-only launch path; the mount itself is ro.
+  /opt/oj/ r,
+  /opt/oj/** rix,
+
 
   # A login shell runs the timed test command and sources /etc/profile, whose
   # Debian default loops over /etc/profile.d/*.sh. Denying that turned every

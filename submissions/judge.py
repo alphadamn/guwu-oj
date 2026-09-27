@@ -16,8 +16,9 @@ Key performance / stability changes:
   ``docker exec``.
 * **Honest per-case timeout.** ``_run()`` uses ``timeout_sec + 1 s`` —
   no more ``max(timeout, 5)`` inflation. The authoritative verdict
-  comes from ``/usr/bin/time`` inside the container; the outer 1 s
-  margin just gives the timer a chance to write its report.
+  comes from the in-container timer (``ojrun``, falling back to
+  ``/usr/bin/time``); the outer 1 s margin just gives the timer a
+  chance to write its report.
 * **Docker availability cached** in-process for 30 s (see
   ``submissions.sandbox.docker_available``).
 * **No ``docker ps`` / ``docker inspect`` storm.** Orphan cleanup is the
@@ -49,6 +50,7 @@ from .claiming import ClaimLostError, finalize_claim, stamp_progress
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
     CCACHE_IMAGES,
+    OJRUN_CONTAINER_PATH,
     DockerNotAvailableError,
     JudgeContainer,
     ccache_dir,
@@ -130,6 +132,9 @@ def _clean_kotlin_output(text):
 # beyond one tiny exec and never breaks compilation.
 _pch_available_cache = {}
 _c_pch_available_cache = {}
+
+# Per-container probe results for the ojrun timer mount (keyed by cid).
+_ojrun_available_cache = {}
 
 
 def _pch_include_flags(runner, image):
@@ -285,13 +290,37 @@ class SandboxRunner:
                 )
         return elapsed_ms, memory_kb
 
+    def _ojrun_available(self):
+        # The ojrun timer (bind-mounted at container creation) is preferred
+        # over GNU time: microsecond wall-clock resolution instead of the
+        # 10 ms granularity of `%e`. Probe once per container — a pool
+        # container created before the binary was deployed has no mount, so
+        # a per-process cache keyed by cid keeps those containers on the
+        # /usr/bin/time fallback instead of failing every test case.
+        cid = getattr(self._container, "cid", None)
+        if not cid:
+            return False
+        if cid not in _ojrun_available_cache:
+            if len(_ojrun_available_cache) > 512:
+                _ojrun_available_cache.clear()
+            try:
+                probe = self._container.exec(
+                    ["/usr/bin/test", "-x", OJRUN_CONTAINER_PATH], 5
+                )
+                _ojrun_available_cache[cid] = probe.returncode == 0
+            except Exception:
+                _ojrun_available_cache[cid] = False
+        return _ojrun_available_cache[cid]
+
     def _timed_command(self, cmd):
-        # Call /usr/bin/time directly instead of wrapping in `bash -lc`.
+        # Call the timer directly instead of wrapping in `bash -lc`.
         # Spawning a login shell per test case cost ~10-30 ms on the host
         # (profile sourcing, fork/exec of bash); for a problem with many
-        # short cases that overhead dominated the test phase. The time
-        # utility execs the program directly, and stdin flows through
+        # short cases that overhead dominated the test phase. The timer
+        # execs the program directly, and stdin flows through
         # `docker exec -i` unchanged.
+        if self._ojrun_available():
+            return [OJRUN_CONTAINER_PATH, *cmd]
         return ["/usr/bin/time", "-f", "OJ_TIME %M %e", *cmd]
 
     # ── low-level runner ────────────────────────────────────────────────
