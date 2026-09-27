@@ -180,20 +180,6 @@ html[data-bs-theme="dark"] .table-light th {
     color: var(--oj-text-muted);
 }
 
-/* 普通 .table 的 --bs-table-bg 取 var(--bs-body-bg)，Bootstrap 暗色默认是 #212529，
-   在 #111a2c 卡片上会形成一块灰黑色方块；暗色下改为透明以贴合所在表面 */
-html[data-bs-theme="dark"] .table {
-    --bs-table-bg: transparent;
-    --bs-table-color: var(--oj-text);
-    --bs-table-border-color: #2a3650;
-    --bs-table-striped-bg: #16203a;
-    --bs-table-striped-color: var(--oj-text);
-    --bs-table-hover-bg: #16203a;
-    --bs-table-hover-color: var(--oj-text);
-    --bs-table-active-bg: #1b2740;
-    --bs-table-active-color: var(--oj-text);
-}
-
 /* ==========================================================================
    3. main.css 组件
    ========================================================================== */
@@ -430,47 +416,4 @@ html[data-bs-theme="dark"] .hint {
     background: #111a2c;
     color: #94a3b8;
     border-color: #26334d;
-}
-
-/* ==========================================================================
-   主题切换过渡动画（亮/暗通用，JS 切换时给 <html> 临时加 .oj-theme-transition）
-   ========================================================================== */
-html.oj-theme-transition,
-html.oj-theme-transition *,
-html.oj-theme-transition *::before,
-html.oj-theme-transition *::after {
-    transition:
-        background-color 0.35s ease,
-        color 0.35s ease,
-        border-color 0.35s ease,
-        box-shadow 0.35s ease,
-        fill 0.35s ease,
-        stroke 0.35s ease !important;
-}
-
-/* 切换按钮图标翻转动画（JS 在点击时给 <i> 加 .oj-icon-swap） */
-[data-theme-toggle] i {
-    display: inline-block;
-}
-
-[data-theme-toggle] i.oj-icon-swap {
-    animation: ojThemeIconSwap 0.4s ease;
-}
-
-@keyframes ojThemeIconSwap {
-    0%   { transform: rotate(0deg) scale(1); opacity: 1; }
-    50%  { transform: rotate(180deg) scale(0.55); opacity: 0.35; }
-    100% { transform: rotate(360deg) scale(1); opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    html.oj-theme-transition,
-    html.oj-theme-transition *,
-    html.oj-theme-transition *::before,
-    html.oj-theme-transition *::after {
-        transition: none !important;
-    }
-    [data-theme-toggle] i.oj-icon-swap {
-        animation: none;
-    }
 }
