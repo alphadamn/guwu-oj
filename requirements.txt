@@ -30,7 +30,7 @@ webdriver-manager>=4.1.2
 django-crontab
 django-simpleui
 redis
-cryptography>=50.0.0
+cryptography>=50.0.1
 pyotp>=2.9.0
 
 # 验证码（ALTCHA v2 工作量证明）
