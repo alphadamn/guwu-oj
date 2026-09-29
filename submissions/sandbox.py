@@ -110,7 +110,98 @@ def ensure_judge_image_available(image):
 
 def _memory_flags(memory_mb):
     mem = max(int(memory_mb), 32)
-    return ["--memory", f"{mem}m", "--memory-swap", f"{mem}m"]
+    flags = ["--memory", f"{mem}m", "--memory-swap", f"{mem}m"]
+    # Extra soft reclaim limit (cgroup memory.low / memory.high), kept
+    # alongside the hard cap above.  The kernel uses it to decide which
+    # containers to reclaim from first; a submission approaching its hard
+    # limit gets throttled before the OOM kill, smoothing degradation.
+    fraction = getattr(settings, "OJ_DOCKER_MEMORY_RESERVATION_FRACTION", 0.0)
+    if fraction > 0:
+        reservation = min(max(32, int(mem * fraction)), mem)
+        flags += ["--memory-reservation", f"{reservation}m"]
+    return flags
+
+
+# ── block-device auto-detection (cached) ─────────────────────────────────
+
+_root_device_cache = {"device": None, "ts": 0.0}
+_ROOT_DEVICE_TTL_SEC = 300
+
+
+def _detect_root_block_device():
+    """Return the block device backing ``/``, or ``None`` if unknown.
+
+    Used to attach ``--device-*-bps`` I/O caps.  Cached for 5 minutes so
+    the per-container ``docker run`` never pays a ``df`` call.
+    """
+    entry = _root_device_cache
+    now = time.monotonic()
+    cached = entry["device"]
+    if cached is not None and (now - entry["ts"]) < _ROOT_DEVICE_TTL_SEC:
+        return cached if cached != "" else None
+    device = None
+    try:
+        result = subprocess.run(
+            ["df", "--output=source", "/"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            lines = result.stdout.strip().splitlines()
+            if len(lines) > 1:
+                src = lines[-1].strip()
+                if src.startswith("/dev/"):
+                    device = src
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    # Cache even the "not found" sentinel so we don't retry every call.
+    entry["device"] = device or ""
+    entry["ts"] = now
+    return device
+
+
+def _io_flags():
+    """Disk I/O cgroup flags: blkio weight + per-device BPS/IOPS caps."""
+    flags = []
+    weight = getattr(settings, "OJ_DOCKER_BLKIO_WEIGHT", 0)
+    if weight > 0:
+        flags += ["--blkio-weight", str(weight)]
+    read_bps = getattr(settings, "OJ_DOCKER_IO_READ_BPS", "")
+    write_bps = getattr(settings, "OJ_DOCKER_IO_WRITE_BPS", "")
+    read_iops = getattr(settings, "OJ_DOCKER_IO_READ_IOPS", 0)
+    write_iops = getattr(settings, "OJ_DOCKER_IO_WRITE_IOPS", 0)
+    if read_bps or write_bps or read_iops or write_iops:
+        dev = _detect_root_block_device()
+        if dev:
+            if read_bps:
+                flags += ["--device-read-bps", f"{dev}:{read_bps}"]
+            if write_bps:
+                flags += ["--device-write-bps", f"{dev}:{write_bps}"]
+            if read_iops:
+                flags += ["--device-read-iops", f"{dev}:{read_iops}"]
+            if write_iops:
+                flags += ["--device-write-iops", f"{dev}:{write_iops}"]
+    return flags
+
+
+def _cpu_flags():
+    """CPU cgroup flags: core quota + relative shares."""
+    flags = []
+    cpu_limit = getattr(settings, "OJ_DOCKER_CPU_LIMIT", "")
+    if cpu_limit and cpu_limit != "0":
+        flags += ["--cpus", cpu_limit]
+    shares = getattr(settings, "OJ_DOCKER_CPU_SHARES", 0)
+    if shares > 0:
+        flags += ["--cpu-shares", str(shares)]
+    return flags
+
+
+def _tmpfs_flag():
+    """tmpfs /tmp mount string with an optional size cap."""
+    size = getattr(settings, "OJ_DOCKER_TMPFS_SIZE", "").strip()
+    spec = "exec,mode=777"
+    if size:
+        spec = f"exec,mode=777,size={size}"
+    return ["--tmpfs", f"/tmp:{spec}"]
 
 
 def _runtime_user_flags():
@@ -259,12 +350,14 @@ def build_judge_run_args(
         "--ulimit", "nofile={0}:{0}".format(
             max(16, int(getattr(settings, "OJ_DOCKER_NOFILE_LIMIT", 64)))
         ),
+        *_io_flags(),
+        *_cpu_flags(),
         "--security-opt", "no-new-privileges=true",
         "--security-opt", f"seccomp={_seccomp_flag(is_compile)}",
         "--cap-drop", "ALL",
         "--read-only",
         "--security-opt", f"apparmor={_apparmor_flag()}",
-        "--tmpfs", "/tmp:exec,mode=777",
+        *_tmpfs_flag(),
         "--device", "/dev/null:rw",
         "--device", "/dev/zero:r",
         "--device", "/dev/random:r",
@@ -335,14 +428,22 @@ def update_judge_container_memory(cid, memory_mb):
     MLE), so each checkout is resized to ``max(problem limit, 512)`` —
     exactly what the one-container-per-submission path used. Takes a few
     tens of milliseconds, vs ≈0.5–1.5 s for a fresh ``docker run``.
+
+    The soft reservation (``--memory-reservation``) is also recalculated
+    so it tracks the new hard cap at the configured fraction.
     """
     mem = max(int(memory_mb), 32)
+    update_args = ["docker", "update",
+                    "--memory", f"{mem}m",
+                    "--memory-swap", f"{mem}m"]
+    fraction = getattr(settings, "OJ_DOCKER_MEMORY_RESERVATION_FRACTION", 0.0)
+    if fraction > 0:
+        reservation = min(max(32, int(mem * fraction)), mem)
+        update_args += ["--memory-reservation", f"{reservation}m"]
+    update_args.append(cid)
     try:
         result = subprocess.run(
-            ["docker", "update",
-             "--memory", f"{mem}m",
-             "--memory-swap", f"{mem}m",
-             cid],
+            update_args,
             capture_output=True,
             text=True,
             timeout=10,

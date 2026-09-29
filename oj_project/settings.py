@@ -798,6 +798,30 @@ OJ_DOCKER_NOFILE_LIMIT = int(os.environ.get('OJ_DOCKER_NOFILE_LIMIT', '64'))
 # The profile must be loaded on every judge host before containers are started.
 OJ_DOCKER_APPARMOR_PROFILE = os.environ.get('OJ_DOCKER_APPARMOR_PROFILE', 'oj-judge').strip()
 
+# ── cgroup resource limits (applied to every judge container) ─────────────
+# Disk I/O: relative weight (10–1000, 0 = default) + absolute caps on the
+# auto-detected root block device.  BPS accepts Docker units (50mb, 1gb);
+# IOPS are raw integers.  Empty/0 disables the respective cap.
+OJ_DOCKER_BLKIO_WEIGHT = int(os.environ.get('OJ_DOCKER_BLKIO_WEIGHT', '100'))
+OJ_DOCKER_IO_READ_BPS = os.environ.get('OJ_DOCKER_IO_READ_BPS', '50mb').strip()
+OJ_DOCKER_IO_WRITE_BPS = os.environ.get('OJ_DOCKER_IO_WRITE_BPS', '50mb').strip()
+OJ_DOCKER_IO_READ_IOPS = int(os.environ.get('OJ_DOCKER_IO_READ_IOPS', '0'))
+OJ_DOCKER_IO_WRITE_IOPS = int(os.environ.get('OJ_DOCKER_IO_WRITE_IOPS', '0'))
+# tmpfs /tmp size cap (Docker size suffix: 64m, 1g).  Empty = unlimited.
+OJ_DOCKER_TMPFS_SIZE = os.environ.get('OJ_DOCKER_TMPFS_SIZE', '64m').strip()
+# Soft memory reclaim point as a fraction of the hard --memory cap (0–1).
+# 0 disables; 0.75 means the kernel starts reclaiming at 75 % of the hard
+# limit, giving a softer degradation before the OOM kill.  This is the
+# "extra" memory cgroup limit, kept alongside the existing hard cap.
+OJ_DOCKER_MEMORY_RESERVATION_FRACTION = float(
+    os.environ.get('OJ_DOCKER_MEMORY_RESERVATION_FRACTION', '0.75')
+)
+# CPU: quota in cores (1.0 = one full core, 0 = unlimited) + relative
+# shares (2–262144, default 1024; 0 = default).  Low shares deprioritise
+# judge containers against host workloads.
+OJ_DOCKER_CPU_LIMIT = os.environ.get('OJ_DOCKER_CPU_LIMIT', '1.0').strip()
+OJ_DOCKER_CPU_SHARES = int(os.environ.get('OJ_DOCKER_CPU_SHARES', '256'))
+
 # ── Warm per-language judge container pool (judge workers only) ──────────
 # A pool of long-lived `sleep infinity` containers is maintained per judge
 # image on each worker, so submissions skip the ~0.5-1.5s `docker run`

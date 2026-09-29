@@ -283,6 +283,79 @@ class JudgeContainerSecurityTests(TestCase):
         container.__exit__(None, None, None)
 
 
+class CgroupLimitsTests(TestCase):
+    """The docker run argv must carry I/O, CPU, tmpfs, and dual-memory caps."""
+
+    @patch('submissions.sandbox.ensure_judge_image_available')
+    @patch('submissions.sandbox.ensure_docker_ready')
+    @patch('submissions.sandbox.subprocess.run')
+    def _run_container(self, run, _docker_ready, _image_available, **overrides):
+        from submissions.sandbox import JudgeContainer, _root_device_cache
+
+        _root_device_cache["device"] = None  # force re-detect
+        run.return_value = SimpleNamespace(
+            returncode=0, stdout='judge-id\n', stderr='',
+        )
+        with override_settings(**overrides):
+            container = JudgeContainer(
+                '/tmp/oj-judge-test', 256, 'oj-python:latest'
+            )
+            container.__enter__()
+        command = run.call_args.args[0]
+        container.__exit__(None, None, None)
+        return command
+
+    def test_io_flags_include_blkio_weight_and_device_bps(self):
+        cmd = self._run_container(
+            OJ_DOCKER_BLKIO_WEIGHT=100,
+            OJ_DOCKER_IO_READ_BPS='50mb',
+            OJ_DOCKER_IO_WRITE_BPS='50mb',
+            OJ_DOCKER_IO_READ_IOPS=0,
+            OJ_DOCKER_IO_WRITE_IOPS=0,
+        )
+        self.assertIn('--blkio-weight', cmd)
+        weight_idx = cmd.index('--blkio-weight')
+        self.assertEqual(cmd[weight_idx + 1], '100')
+
+    def test_cpu_flags_present(self):
+        cmd = self._run_container(
+            OJ_DOCKER_CPU_LIMIT='1.0',
+            OJ_DOCKER_CPU_SHARES=256,
+        )
+        self.assertIn('--cpus', cmd)
+        cpus_idx = cmd.index('--cpus')
+        self.assertEqual(cmd[cpus_idx + 1], '1.0')
+        self.assertIn('--cpu-shares', cmd)
+
+    def test_tmpfs_has_size_cap(self):
+        cmd = self._run_container(OJ_DOCKER_TMPFS_SIZE='64m')
+        tmpfs_entry = next(x for x in cmd if x.startswith('/tmp:'))
+        self.assertIn('size=64m', tmpfs_entry)
+
+    def test_memory_reservation_fraction_applied(self):
+        cmd = self._run_container(
+            OJ_DOCKER_MEMORY_RESERVATION_FRACTION=0.75,
+        )
+        self.assertIn('--memory-reservation', cmd)
+        idx = cmd.index('--memory-reservation')
+        # 256 MB hard cap → 75 % = 192 MB reservation.
+        self.assertEqual(cmd[idx + 1], '192m')
+
+    def test_memory_reservation_disabled_when_fraction_zero(self):
+        cmd = self._run_container(
+            OJ_DOCKER_MEMORY_RESERVATION_FRACTION=0.0,
+        )
+        self.assertNotIn('--memory-reservation', cmd)
+
+    def test_existing_pids_and_nofile_limits_preserved(self):
+        cmd = self._run_container()
+        self.assertIn('--pids-limit', cmd)
+        self.assertIn('--ulimit', cmd)
+        # Hard memory cap is still there alongside the reservation.
+        self.assertIn('--memory', cmd)
+        self.assertIn('--memory-swap', cmd)
+
+
 class CompileCppInteractiveTests(TestCase):
     """The interactive branch must link the shipped stub into ``user``.
 
