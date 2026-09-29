@@ -111,7 +111,9 @@ profile oj-judge flags=(attach_disconnected) {
   /proc/*/coredump_filter rw,
 
   # Docker's PID namespace hides host processes; allow procfs reads needed by
-  # managed runtimes while ptrace and signal remain prohibited below.
+  # managed runtimes and by the container-pool sanitiser, which enumerates
+  # tasks with a /proc/[0-9]* glob (readdir needs the directory itself).
+  /proc/ r,
   /proc/** r,
 
 
@@ -168,10 +170,19 @@ profile oj-judge flags=(attach_disconnected) {
 
 
 
-  # Docker/runc runs unconfined and must be able to terminate a judge process.
-  # Keep submissions from signalling another confined judge container.
+  # Signalling policy.
+  #
+  # runc / dockerd are unconfined and must be able to terminate judge tasks
+  # (host-side timeouts, ``docker kill`` on pool recycle).
   signal (receive) peer=unconfined,
-  deny signal peer=oj-judge,
+  #
+  # Processes inside ONE container may signal each other. Without this the
+  # profile denied kill() between its own tasks, silently disabling the
+  # compile-step ``timeout 1``, ojrun/TLE termination, interactive
+  # ``timeout -k``, and the pool sanitiser's stray-process kill. Signalling
+  # ANOTHER container stays impossible regardless of this rule: every
+  # container owns a separate PID namespace, so foreign PIDs are unaddressable.
+  signal peer=oj-judge,
 
 
 

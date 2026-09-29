@@ -175,8 +175,54 @@ class TimedCommandSelectionTests(TestCase):
         self.assertEqual(command[0], "/usr/bin/time")
 
 
+class CompileTimeoutEnforcementTests(TestCase):
+    """Compile deadlines must be enforced INSIDE the container."""
+
+    def _runner(self, returncode=0):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from submissions.judge import SandboxRunner
+
+        runner = SandboxRunner.__new__(SandboxRunner)
+        runner.exec_workdir = None
+        runner._container = SimpleNamespace(
+            exec=MagicMock(
+                return_value=SimpleNamespace(
+                    returncode=returncode, stdout='', stderr=''
+                )
+            )
+        )
+        return runner
+
+    def test_compile_commands_wrapped_in_group_timer(self):
+        runner = self._runner()
+        runner._run(["g++", "-c", "main.cpp"], 25, is_compile=True)
+        cmd = runner._container.exec.call_args.args[0]
+        self.assertEqual(
+            cmd[:6],
+            ["/usr/bin/timeout", "-s", "TERM", "-k", "5", "25"],
+        )
+        self.assertIn("g++", cmd)
+        # Host timeout only needs to cover the SIGKILL grace + margin.
+        host_timeout = runner._container.exec.call_args.args[1]
+        self.assertAlmostEqual(host_timeout, 31.0, delta=0.5)
+
+    def test_non_compile_commands_are_not_wrapped(self):
+        runner = self._runner()
+        runner._run(["./main"], 2.0, is_compile=False)
+        cmd = runner._container.exec.call_args.args[0]
+        self.assertEqual(cmd, ["./main"])
+
+    def test_in_container_deadline_raises_timeout_expired(self):
+        import subprocess
+
+        runner = self._runner(returncode=124)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            runner._run(["g++", "-c", "main.cpp"], 25, is_compile=True)
+
+
 class JudgeContainerSecurityTests(TestCase):
-    def test_committed_profile_allows_unconfined_lifecycle_signals(self):
+    def test_committed_profile_signal_policy(self):
         from pathlib import Path
 
         profile = (
@@ -184,9 +230,19 @@ class JudgeContainerSecurityTests(TestCase):
             / 'docker' / 'judge' / 'apparmor-profile'
         ).read_text()
 
+        # runc/dockerd (unconfined) must still be able to terminate tasks...
         self.assertIn('signal (receive) peer=unconfined,', profile)
-        self.assertIn('deny signal peer=oj-judge,', profile)
+        # ...while in-container process control (timeout(1), ojrun, the
+        # pool sanitiser) must be allowed. A blanket same-profile deny
+        # silently disabled every kill() inside a container (compilers
+        # could never be interrupted); separate PID namespaces already
+        # make cross-container signalling impossible.
+        self.assertIn('signal peer=oj-judge,', profile)
+        self.assertNotIn('deny signal peer=oj-judge,', profile)
         self.assertNotIn('deny signal,', profile)
+        # The pool sanitiser enumerates tasks with a /proc/[0-9]* glob, so
+        # readdir on /proc itself must be permitted.
+        self.assertIn('/proc/ r,', profile)
         # ojrun timer binary is bind-mounted at /opt/oj and must be exec-able.
         self.assertIn('/opt/oj/** rix,', profile)
 

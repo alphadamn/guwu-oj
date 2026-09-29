@@ -63,8 +63,32 @@ logger = logging.getLogger(__name__)
 
 JUDGED_LANGUAGES = {"C++", "Python", "Java", "C", "Assembly", "Rust",
                     "Golang", "JavaScript", "Ruby", "Kotlin"}
+# Generic budget for the heavier/rarer toolchains (Rust / Go / JVM / tsc).
 COMPILE_TIMEOUT_SEC = 30
+# C/C++ compiles are tighter: a malicious translation unit can stall the
+# preprocessor almost indefinitely (e.g. ``#include`` of an endless special
+# file such as /dev/zero or a slow /dev/random), which would pin a worker
+# thread. Legit algorithmic sources compile well within 25 s even on the
+# slowest judge; native links finish within 10 s.
+NATIVE_COMPILE_TIMEOUT_SEC = 25
+NATIVE_LINK_TIMEOUT_SEC = 10
+ASSEMBLE_TIMEOUT_SEC = 10
+# Every compile deadline is enforced INSIDE the container (GNU timeout):
+# it makes itself process-group leader and signals the whole compiler group
+# (cc1/as/ld included). The outer host timeout only adds transport margin;
+# it must not be the primary killer, because under memory pressure the
+# docker client can spend tens of seconds in unkillable reclaim before it
+# can deliver a signal.
+#
+# The primary signal is SIGTERM: GNU timeout ignores the group-directed
+# copy of it and therefore survives to return 124, while stock compilers
+# (which never block SIGTERM during a compile) die immediately at the
+# deadline. A process still alive after the grace period is SIGKILLed;
+# that rare escalation ends with rc 137 (same as a kernel OOM kill).
+COMPILE_KILL_GRACE_SEC = 5
 HOST_TIMEOUT_SAFETY_MARGIN_SEC = 1.0
+# GNU timeout exits 124 whenever it had to enforce the deadline.
+_IN_CONTAINER_TIMEOUT_RC = 124
 MAX_STORED_OUTPUT_LEN = 4000
 JUDGE_CONFIG_CACHE_TTL = 300
 
@@ -330,19 +354,41 @@ class SandboxRunner:
 
         The real timeout is *timeout_sec* (no inflation) plus a small
         safety margin so ``/usr/bin/time`` always writes its report.
+
+        Compile steps are additionally wrapped in an in-container
+        ``timeout -s TERM -k <grace>``: the deadline is enforced inside
+        the sandbox against the *whole compiler process group*
+        (cc1/as/ld included), instead of relying on the host killing the
+        ``docker exec`` client — which leaves the compiler running and,
+        under heavy memory pressure, can itself be delayed by tens of
+        seconds.
         """
         if self._container is None:
             raise DockerNotAvailableError("Judge container is not running")
 
-        # Compilation is generally heavier than the problem memory limit,
-        # so we already bumped memory at container creation time. This
-        # flag is kept for API compatibility.
-        del is_compile
+        if is_compile:
+            deadline = max(1, int(float(timeout_sec)))
+            command = ["/usr/bin/timeout", "-s", "TERM",
+                       "-k", str(COMPILE_KILL_GRACE_SEC),
+                       str(deadline), *command]
+            padded = (float(timeout_sec) + COMPILE_KILL_GRACE_SEC
+                      + HOST_TIMEOUT_SAFETY_MARGIN_SEC)
+        else:
+            padded = float(timeout_sec) + HOST_TIMEOUT_SAFETY_MARGIN_SEC
 
-        padded = float(timeout_sec) + HOST_TIMEOUT_SAFETY_MARGIN_SEC
-        return self._container.exec(
+        result = self._container.exec(
             command, padded, stdin=stdin, workdir=self.exec_workdir
         )
+        if is_compile and result.returncode == _IN_CONTAINER_TIMEOUT_RC:
+            # GNU timeout reports 124 when it enforced the deadline, so the
+            # existing call sites handle this as a compile timeout just like
+            # a host-side subprocess.TimeoutExpired.
+            raise subprocess.TimeoutExpired(
+                cmd=command, timeout=timeout_sec,
+                output=getattr(result, "stdout", None),
+                stderr=getattr(result, "stderr", None),
+            )
+        return result
 
     # ── compile steps (run once per submission) ────────────────────────
 
@@ -360,7 +406,7 @@ class SandboxRunner:
                     ["g++", "-std=c++17", "-O1", *_pch_include_flags(self, self.image), "-c", "main.cpp", "-o", "main.o"],
                     self.image,
                 ),
-                COMPILE_TIMEOUT_SEC,
+                NATIVE_COMPILE_TIMEOUT_SEC,
                 is_compile=True,
             )
         except subprocess.TimeoutExpired:
@@ -370,7 +416,7 @@ class SandboxRunner:
         try:
             res = self._run(
                 ["g++", "main.o", "-o", "main"],
-                COMPILE_TIMEOUT_SEC,
+                NATIVE_LINK_TIMEOUT_SEC,
                 is_compile=True,
             )
         except subprocess.TimeoutExpired:
@@ -481,7 +527,7 @@ class SandboxRunner:
                 self.image,
             )
             try:
-                res = self._run(cmd, COMPILE_TIMEOUT_SEC, is_compile=True)
+                res = self._run(cmd, NATIVE_COMPILE_TIMEOUT_SEC, is_compile=True)
             except subprocess.TimeoutExpired:
                 return None, "Compile timeout"
             if res.returncode != 0:
@@ -491,7 +537,7 @@ class SandboxRunner:
         try:
             res = self._run(
                 ["g++", *obj_files, "-o", "main"],
-                COMPILE_TIMEOUT_SEC, is_compile=True,
+                NATIVE_LINK_TIMEOUT_SEC, is_compile=True,
             )
         except subprocess.TimeoutExpired:
             return None, "Link timeout"
@@ -589,7 +635,7 @@ class SandboxRunner:
                     self.image,
                 )
                 try:
-                    res = self._run(cmd, COMPILE_TIMEOUT_SEC, is_compile=True)
+                    res = self._run(cmd, NATIVE_COMPILE_TIMEOUT_SEC, is_compile=True)
                 except subprocess.TimeoutExpired:
                     return "Compile timeout"
                 if res.returncode != 0:
@@ -598,7 +644,7 @@ class SandboxRunner:
             try:
                 res = self._run(
                     ["g++", *obj_names, "-o", out_name],
-                    COMPILE_TIMEOUT_SEC, is_compile=True,
+                    NATIVE_LINK_TIMEOUT_SEC, is_compile=True,
                 )
             except subprocess.TimeoutExpired:
                 return "Link timeout"
@@ -628,7 +674,7 @@ class SandboxRunner:
                     ["gcc", "-O1", *_c_pch_include_flags(self, self.image), "-c", "main.c", "-o", "main.o"],
                     self.image,
                 ),
-                COMPILE_TIMEOUT_SEC,
+                NATIVE_COMPILE_TIMEOUT_SEC,
                 is_compile=True,
             )
         except subprocess.TimeoutExpired:
@@ -638,7 +684,7 @@ class SandboxRunner:
         try:
             res = self._run(
                 ["gcc", "main.o", "-o", "main"],
-                COMPILE_TIMEOUT_SEC,
+                NATIVE_LINK_TIMEOUT_SEC,
                 is_compile=True,
             )
         except subprocess.TimeoutExpired:
@@ -695,14 +741,14 @@ class SandboxRunner:
         try:
             as_res = self._run(
                 ["as", "-o", "main.o", "main.s"],
-                COMPILE_TIMEOUT_SEC,
+                ASSEMBLE_TIMEOUT_SEC,
                 is_compile=True,
             )
             if as_res.returncode != 0:
                 return None, (as_res.stderr or as_res.stdout or "Assemble failed").strip()
             link_res = self._run(
                 ["ld", "-o", "main", "main.o"],
-                COMPILE_TIMEOUT_SEC,
+                ASSEMBLE_TIMEOUT_SEC,
                 is_compile=True,
             )
             if link_res.returncode != 0:
