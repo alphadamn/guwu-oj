@@ -286,13 +286,23 @@ class JudgeContainerSecurityTests(TestCase):
 class CgroupLimitsTests(TestCase):
     """The docker run argv must carry I/O, CPU, tmpfs, and dual-memory caps."""
 
+    _UNSET = object()
+
     @patch('submissions.sandbox.ensure_judge_image_available')
     @patch('submissions.sandbox.ensure_docker_ready')
     @patch('submissions.sandbox.subprocess.run')
-    def _run_container(self, run, _docker_ready, _image_available, **overrides):
+    def _run_container(self, run, _docker_ready, _image_available,
+                       device=_UNSET, **overrides):
         from submissions.sandbox import JudgeContainer, _root_device_cache
 
-        _root_device_cache["device"] = None  # force re-detect
+        if device is self._UNSET:
+            # Force re-detect; the mocked `df` yields no usable device, so
+            # BPS caps are (correctly) omitted.
+            _root_device_cache["device"] = None
+        else:
+            import time as _time
+            _root_device_cache["device"] = device or ""
+            _root_device_cache["ts"] = _time.monotonic()
         run.return_value = SimpleNamespace(
             returncode=0, stdout='judge-id\n', stderr='',
         )
@@ -307,6 +317,7 @@ class CgroupLimitsTests(TestCase):
 
     def test_io_flags_include_blkio_weight_and_device_bps(self):
         cmd = self._run_container(
+            device='/dev/sda',
             OJ_DOCKER_BLKIO_WEIGHT=100,
             OJ_DOCKER_IO_READ_BPS='50mb',
             OJ_DOCKER_IO_WRITE_BPS='50mb',
@@ -316,6 +327,61 @@ class CgroupLimitsTests(TestCase):
         self.assertIn('--blkio-weight', cmd)
         weight_idx = cmd.index('--blkio-weight')
         self.assertEqual(cmd[weight_idx + 1], '100')
+        # BPS caps must be attached to the whole device, not a partition.
+        self.assertIn('--device-read-bps', cmd)
+        r_idx = cmd.index('--device-read-bps')
+        self.assertEqual(cmd[r_idx + 1], '/dev/sda:50mb')
+        self.assertIn('--device-write-bps', cmd)
+        w_idx = cmd.index('--device-write-bps')
+        self.assertEqual(cmd[w_idx + 1], '/dev/sda:50mb')
+
+    def test_io_flags_skip_bps_when_device_unknown(self):
+        cmd = self._run_container(
+            device=None,
+            OJ_DOCKER_BLKIO_WEIGHT=100,
+            OJ_DOCKER_IO_READ_BPS='50mb',
+            OJ_DOCKER_IO_WRITE_BPS='50mb',
+        )
+        # Weight needs no device and is always safe; the per-device BPS
+        # caps must be dropped rather than risk `docker run` failing.
+        self.assertIn('--blkio-weight', cmd)
+        self.assertNotIn('--device-read-bps', cmd)
+        self.assertNotIn('--device-write-bps', cmd)
+
+    def test_whole_block_device_climbs_partition_to_disk(self):
+        import os
+        import stat as stat_mod
+        from submissions import sandbox
+
+        fake_st = SimpleNamespace(
+            st_mode=stat_mod.S_IFBLK, st_rdev=os.makedev(8, 1),
+        )
+        part_dir = '/sys/devices/pci0000:00/block/sda/sda1'
+
+        def fake_exists(path):
+            return path in (part_dir + '/partition', '/dev/sda')
+
+        with patch.object(sandbox.os, 'stat', return_value=fake_st), \
+                patch.object(sandbox.os.path, 'realpath',
+                             return_value=part_dir), \
+                patch.object(sandbox.os.path, 'exists',
+                             side_effect=fake_exists):
+            self.assertEqual(sandbox._whole_block_device('/dev/sda1'),
+                             '/dev/sda')
+
+    def test_whole_block_device_skips_pseudo_devices(self):
+        import os
+        import stat as stat_mod
+        from submissions import sandbox
+
+        fake_st = SimpleNamespace(
+            st_mode=stat_mod.S_IFBLK, st_rdev=os.makedev(253, 0),
+        )
+        with patch.object(sandbox.os, 'stat', return_value=fake_st), \
+                patch.object(sandbox.os.path, 'realpath',
+                             return_value='/sys/devices/virtual/block/dm-0'), \
+                patch.object(sandbox.os.path, 'exists', return_value=False):
+            self.assertIsNone(sandbox._whole_block_device('/dev/dm-0'))
 
     def test_cpu_flags_present(self):
         cmd = self._run_container(

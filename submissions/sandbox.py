@@ -25,6 +25,7 @@ import grp
 import logging
 import pwd
 import shutil
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -128,8 +129,47 @@ _root_device_cache = {"device": None, "ts": 0.0}
 _ROOT_DEVICE_TTL_SEC = 300
 
 
+# The kernel's cgroup-v2 io controller only accepts *whole* block devices
+# (io.max keys on the disk's major:minor).  Handing runc a partition such as
+# /dev/sda1 makes it write `rbps`/`wbps` to io.max and fail with ENODEV
+# ("No such device"), which aborts `docker run`.  Pseudo/stacked devices
+# (dm-*, md*, loop*, ...) are likewise not accepted, so we skip the BPS caps
+# for those rather than risk breaking container creation.
+_PSEUDO_BLOCK_PREFIXES = ("dm-", "md", "loop", "ram", "sr", "zram", "fd", "nbd")
+
+
+def _whole_block_device(src):
+    """Resolve ``src`` (e.g. ``/dev/sda1``) to its whole-disk node.
+
+    Returns the ``/dev/<disk>`` path accepted by ``--device-*-bps``, or
+    ``None`` when the backing device is pseudo/stacked or cannot be
+    resolved.
+    """
+    try:
+        st = os.stat(src)
+    except OSError:
+        return None
+    if not stat.S_ISBLK(st.st_mode):
+        return None
+    sysdir = f"/sys/dev/block/{os.major(st.st_rdev)}:{os.minor(st.st_rdev)}"
+    try:
+        real = os.path.realpath(sysdir)
+    except OSError:
+        return None
+    # A partition exposes a "partition" attribute; climb to the whole disk.
+    if os.path.exists(os.path.join(real, "partition")):
+        real = os.path.dirname(real)
+    name = os.path.basename(real)
+    if not name or name.startswith(_PSEUDO_BLOCK_PREFIXES):
+        return None
+    candidate = os.path.join("/dev", name)
+    if os.path.exists(candidate):
+        return candidate
+    return None
+
+
 def _detect_root_block_device():
-    """Return the block device backing ``/``, or ``None`` if unknown.
+    """Return the whole block device backing ``/``, or ``None`` if unknown.
 
     Used to attach ``--device-*-bps`` I/O caps.  Cached for 5 minutes so
     the per-container ``docker run`` never pays a ``df`` call.
@@ -150,7 +190,7 @@ def _detect_root_block_device():
             if len(lines) > 1:
                 src = lines[-1].strip()
                 if src.startswith("/dev/"):
-                    device = src
+                    device = _whole_block_device(src)
     except (subprocess.TimeoutExpired, OSError):
         pass
     # Cache even the "not found" sentinel so we don't retry every call.
@@ -170,7 +210,12 @@ def _io_flags():
     read_iops = getattr(settings, "OJ_DOCKER_IO_READ_IOPS", 0)
     write_iops = getattr(settings, "OJ_DOCKER_IO_WRITE_IOPS", 0)
     if read_bps or write_bps or read_iops or write_iops:
-        dev = _detect_root_block_device()
+        try:
+            dev = _detect_root_block_device()
+        except Exception:  # never let an optional cap break judging
+            logger.warning("Block-device detection failed; skipping BPS caps",
+                           exc_info=True)
+            dev = None
         if dev:
             if read_bps:
                 flags += ["--device-read-bps", f"{dev}:{read_bps}"]
