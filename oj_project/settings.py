@@ -508,6 +508,24 @@ if not DEMO_MODE:
         if ip.strip()
     ]
 
+    # Broker chain: gates Redis (6379) + direct API (8446).  Sits in
+    # VLESS_MIN_INPUT ahead of the catch-all DROP, so it is the chain that
+    # actually matters in production.  Static IPs may include private LAN
+    # addresses (local judge workers reach Redis over the LAN).
+    OJ_JUDGE_BROKER_CHAIN = os.environ.get(
+        'OJ_JUDGE_BROKER_CHAIN', 'OJ_JUDGE_BROKER',
+    )
+    OJ_JUDGE_BROKER_PORTS = os.environ.get(
+        'OJ_JUDGE_BROKER_PORTS', '6379,8446',
+    )
+    OJ_JUDGE_BROKER_STATIC_IPS = [
+        ip.strip()
+        for ip in os.environ.get(
+            'OJ_JUDGE_BROKER_STATIC_IPS', '',
+        ).split(',')
+        if ip.strip()
+    ]
+
     # Judge-priority tiers consumed from the ``judge`` queue via Redis
     # priority buckets (ascending bucket = consumed first):
     # pro=0 > plus=3 > free=6 > ai=9.
@@ -546,6 +564,9 @@ else:
         tempfile.gettempdir(), 'judge-direct-ips.json',
     )
     OJ_JUDGE_DIRECT_STATIC_IPS = []
+    OJ_JUDGE_BROKER_CHAIN = 'OJ_JUDGE_BROKER'
+    OJ_JUDGE_BROKER_PORTS = '6379,8446'
+    OJ_JUDGE_BROKER_STATIC_IPS = []
 
 if DEMO_MODE:
     DATABASES = {

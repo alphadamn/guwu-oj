@@ -34,6 +34,9 @@ class _StateDirMixin:
             OJ_JUDGE_DIRECT_STATE=self.state_path,
             OJ_JUDGE_DIRECT_STATIC_IPS=[STATIC_IP],
             OJ_JUDGE_DIRECT_CHAIN='TESTDIRECT',
+            OJ_JUDGE_BROKER_CHAIN='TESTBROKER',
+            OJ_JUDGE_BROKER_PORTS='6379,8446',
+            OJ_JUDGE_BROKER_STATIC_IPS=['192.168.196.147'],
         )
         override.enable()
         self.addCleanup(override.disable)
@@ -131,18 +134,24 @@ class ApplyFirewallTests(_StateDirMixin, TestCase):
             ['/bin/true', '-A', 'TESTDIRECT', '-s', PUBLIC_IP, '-j', 'ACCEPT'],
             calls,
         )
-        self.assertEqual(
-            calls[-1], ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'],
+        self.assertIn(
+            ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'], calls,
         )
 
     def test_empty_state_still_drops_everything(self):
         with override_settings(OJ_JUDGE_DIRECT_STATIC_IPS=[]):
             sources, calls = self._apply()
         self.assertEqual(sources, [])
-        self.assertEqual(
-            calls[-1], ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'],
+        self.assertIn(
+            ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'], calls,
         )
-        self.assertFalse([call for call in calls if 'ACCEPT' in call])
+        # No source is accepted on the direct chain at all.
+        direct_accepts = [
+            call for call in calls
+            if len(call) > 3 and call[1] == '-A' and call[2] == 'TESTDIRECT'
+            and 'ACCEPT' in call
+        ]
+        self.assertFalse(direct_accepts)
 
     def test_existing_jump_rule_is_not_duplicated(self):
         with patch('submissions.judge_firewall.IPTABLES', '/bin/true'), \
@@ -188,8 +197,8 @@ class ApplyFirewallTests(_StateDirMixin, TestCase):
         self.assertEqual(sources, [STATIC_IP])
         calls = [call.args[0] for call in run.call_args_list]
         self.assertIn(['/bin/true', '-S', 'TESTDIRECT'], calls)
-        self.assertEqual(
-            calls[-1], ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'],
+        self.assertIn(
+            ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'], calls,
         )
 
     def test_unusable_chain_is_an_error(self):
@@ -205,6 +214,57 @@ class ApplyFirewallTests(_StateDirMixin, TestCase):
 
         self.assertIsNone(sources)
         self.assertTrue(any('could not be created' in m for m in logs.output))
+
+    def test_broker_chain_rebuilt_with_reported_and_static_ips(self):
+        # The broker chain (OJ_JUDGE_BROKER) sits in VLESS_MIN_INPUT ahead
+        # of the catch-all DROP, so it is the chain that actually gates
+        # port 8446 in production.  Reported IPs must land there too, with
+        # multiport match for 6379+8446, plus private LAN static IPs.
+        judge_firewall.record_worker_ip('nat-worker', PUBLIC_IP)
+        sources, calls = self._apply()
+
+        # broker_allowed_ips includes private LAN + public reported
+        self.assertEqual(sources, [STATIC_IP, PUBLIC_IP])
+
+        # broker chain must be created, flushed, and repopulated
+        self.assertIn(['/bin/true', '-N', 'TESTBROKER'], calls)
+        self.assertIn(['/bin/true', '-F', 'TESTBROKER'], calls)
+
+        # private LAN IP in broker chain (not in JUDGE_DIRECT)
+        broker_accept_calls = [
+            c for c in calls
+            if len(c) > 4 and c[1] == '-A' and c[2] == 'TESTBROKER'
+            and '-j' in c and 'ACCEPT' in c
+        ]
+        broker_ips = [c[4] for c in broker_accept_calls]
+        self.assertIn('192.168.196.147', broker_ips)
+        self.assertIn(STATIC_IP, broker_ips)
+        self.assertIn(PUBLIC_IP, broker_ips)
+
+        # multiport args present in broker ACCEPT rules
+        for call in broker_accept_calls:
+            self.assertIn('-m', call)
+            self.assertIn('multiport', call)
+            self.assertIn('--dports', call)
+            self.assertIn('6379,8446', call)
+
+        # trailing DROP on broker chain
+        self.assertIn(
+            ['/bin/true', '-A', 'TESTBROKER', '-j', 'DROP'], calls,
+        )
+
+    def test_broker_includes_private_lan_not_in_direct(self):
+        # Private LAN IP must be in broker chain but NOT in JUDGE_DIRECT.
+        sources, calls = self._apply()
+
+        direct_accepts = [
+            c for c in calls
+            if len(c) > 4 and c[1] == '-A' and c[2] == 'TESTDIRECT'
+            and 'ACCEPT' in c
+        ]
+        direct_ips = [c[4] for c in direct_accepts]
+        self.assertIn(STATIC_IP, direct_ips)
+        self.assertNotIn('192.168.196.147', direct_ips)
 
 
 @override_settings(JUDGE_INTERNAL_TOKEN=TEST_TOKEN)

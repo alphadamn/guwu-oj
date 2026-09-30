@@ -2,16 +2,20 @@
 
 Workers behind NAT get a new public IP regularly, so a static source
 whitelist cannot survive. Instead each worker reports the IP it appears as
-(via ``POST /internal/judge/report_ip/``) and this module rebuilds a small
-dedicated iptables chain from the reported state:
+(via ``POST /internal/judge/report_ip/``) and this module rebuilds the
+iptables chains from the reported state:
 
-    INPUT      -p tcp --dport <port> -j JUDGE_DIRECT
-    JUDGE_DIRECT -s <reported ip> -j ACCEPT
-    JUDGE_DIRECT -j DROP                # unmatched sources are refused
+    INPUT/VLESS_MIN  -p tcp --dport <port> -j JUDGE_DIRECT / OJ_JUDGE_BROKER
+    JUDGE_DIRECT       -s <reported ip> -j ACCEPT          # direct API (8446)
+    JUDGE_DIRECT       -j DROP
+    OJ_JUDGE_BROKER    -s <ip> -p tcp -m multiport --dports 6379,8446 -j ACCEPT
+    OJ_JUDGE_BROKER    -j DROP
 
-The chain owns the port completely, so a flushed/absent state can never
-leave the direct API open to the internet. Only IPv4 unicast sources are
-accepted (the direct base URL is an IPv4 literal).
+``OJ_JUDGE_BROKER`` gates both Redis (6379) and the direct API (8446) and
+sits in ``VLESS_MIN_INPUT`` ahead of the catch-all DROP, so it is the
+chain that actually matters for port 8446 in production. Reported IPs are
+synced to **both** chains; the broker chain additionally includes any
+private LAN IPs from ``OJ_JUDGE_BROKER_STATIC_IPS``.
 """
 
 from __future__ import annotations
@@ -53,6 +57,23 @@ def _static_ips():
     return list(getattr(settings, 'OJ_JUDGE_DIRECT_STATIC_IPS', []) or [])
 
 
+# --- broker chain (Redis 6379 + direct API 8446) ---------------------------
+
+def _broker_chain():
+    return getattr(settings, 'OJ_JUDGE_BROKER_CHAIN', 'OJ_JUDGE_BROKER')
+
+
+def _broker_ports():
+    """Comma-separated port list for the broker chain's multiport rules."""
+    raw = getattr(settings, 'OJ_JUDGE_BROKER_PORTS', '6379,8446')
+    return [p.strip() for p in str(raw).split(',') if p.strip()]
+
+
+def _broker_static_ips():
+    """Static IPs for the broker chain (may include private LAN addresses)."""
+    return list(getattr(settings, 'OJ_JUDGE_BROKER_STATIC_IPS', []) or [])
+
+
 def is_usable_source(ip):
     """True when ``ip`` is a public IPv4 literal worth whitelisting."""
     try:
@@ -65,6 +86,14 @@ def is_usable_source(ip):
         addr.is_private or addr.is_loopback or addr.is_link_local
         or addr.is_multicast or addr.is_reserved or addr.is_unspecified
     )
+
+
+def _is_ipv4(ip):
+    """True when ``ip`` is any valid IPv4 literal (including private)."""
+    try:
+        return ipaddress.ip_address(ip).version == 4
+    except ValueError:
+        return False
 
 
 def load_state():
@@ -132,7 +161,11 @@ def record_worker_ip(worker_id, ip):
 
 
 def allowed_ips(state=None):
-    """Ordered, de-duplicated set of sources the chain should accept."""
+    """Ordered, de-duplicated set of sources the direct-API chain accepts.
+
+    Only public IPv4 unicast addresses — the direct base URL is an IPv4
+    literal and private LAN workers don't use it.
+    """
     if state is None:
         state = load_state()
     ordered = []
@@ -142,6 +175,27 @@ def allowed_ips(state=None):
     for entry in state.values():
         ip = entry.get('ip')
         if is_usable_source(ip) and ip not in ordered:
+            ordered.append(ip)
+    return ordered
+
+
+def broker_allowed_ips(state=None):
+    """Ordered, de-duplicated IPs for the broker chain (Redis + direct API).
+
+    Unlike :func:`allowed_ips` this includes private LAN addresses (from
+    ``OJ_JUDGE_BROKER_STATIC_IPS``) because local judge workers reach Redis
+    over the LAN.  Reported (public) IPs are included so NAT workers get
+    Redis access too.
+    """
+    if state is None:
+        state = load_state()
+    ordered = []
+    for ip in list(_static_ips()) + list(_broker_static_ips()):
+        if _is_ipv4(ip) and ip not in ordered:
+            ordered.append(ip)
+    for entry in state.values():
+        ip = entry.get('ip')
+        if _is_ipv4(ip) and ip not in ordered:
             ordered.append(ip)
     return ordered
 
@@ -177,11 +231,12 @@ def _ensure_chain(chain):
 
 
 def apply_firewall(state=None):
-    """Rebuild the direct-API chain from state. Safe to run repeatedly.
+    """Rebuild the direct-API and broker chains from state.
 
-    Returns the list of accepted sources, or ``None`` when the chain could
-    not be rebuilt (iptables missing, or the writes failed) — the caller
-    uses that to tell the reporter whether its IP was actually applied.
+    Safe to run repeatedly.  Returns the list of accepted direct-API
+    sources, or ``None`` when the chains could not be rebuilt (iptables
+    missing, or the writes failed) — the caller uses that to tell the
+    reporter whether its IP was actually applied.
     """
     if not os.path.exists(IPTABLES):
         logger.debug('iptables not present; skipping firewall sync')
@@ -189,17 +244,22 @@ def apply_firewall(state=None):
 
     chain = _chain()
     port = str(_port())
+    broker_chain = _broker_chain()
+    broker_ports = _broker_ports()
+    # multiport match args shared by every broker rule
+    bports_args = ['-p', 'tcp', '-m', 'multiport', '--dports', ','.join(broker_ports)]
 
     with _firewall_lock():
         # Snapshot the state *inside* the lock: taken any earlier, a
         # concurrent report could be re-added over by this worker's flush
         # and silently dropped from the chain.
         sources = allowed_ips(state)
-
-        # Chain must exist before it can be referenced by the jump rule.
-        _ensure_chain(chain)
+        broker_sources = broker_allowed_ips(state)
 
         ok = True
+
+        # --- JUDGE_DIRECT (port 8446, public IPs only) -------------------
+        _ensure_chain(chain)
         if not _run([
             IPTABLES, '-C', 'INPUT', '-p', 'tcp', '--dport', port,
             '-j', chain,
@@ -212,8 +272,18 @@ def apply_firewall(state=None):
         ok = _run([IPTABLES, '-F', chain]) and ok
         for ip in sources:
             ok = _run([IPTABLES, '-A', chain, '-s', ip, '-j', 'ACCEPT']) and ok
-        # Default-deny: an empty chain must not expose the direct API.
         ok = _run([IPTABLES, '-A', chain, '-j', 'DROP']) and ok
+
+        # --- OJ_JUDGE_BROKER (ports 6379+8446, includes private LAN) -----
+        # This chain sits in VLESS_MIN_INPUT ahead of the catch-all DROP,
+        # so it is the chain that actually gates port 8446 in production.
+        _ensure_chain(broker_chain)
+        ok = _run([IPTABLES, '-F', broker_chain]) and ok
+        for ip in broker_sources:
+            ok = _run(
+                [IPTABLES, '-A', broker_chain, '-s', ip] + bports_args + ['-j', 'ACCEPT'],
+            ) and ok
+        ok = _run([IPTABLES, '-A', broker_chain, '-j', 'DROP']) and ok
 
     if not ok:
         logger.warning(
@@ -223,6 +293,7 @@ def apply_firewall(state=None):
         return None
 
     logger.info(
-        'Direct judge API :%s allows %s', port, sources or '(none)',
+        'Direct judge API :%s allows %s; broker allows %s',
+        port, sources or '(none)', broker_sources or '(none)',
     )
     return sources

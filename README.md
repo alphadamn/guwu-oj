@@ -349,6 +349,12 @@ JUDGE_DIRECT -s <allow>          -j ACCEPT
 JUDGE_DIRECT                     -j DROP      # 兜底拒绝：链被清空也不会暴露端口
 ```
 
+> 生产上端口 8446 还受 `vless-firewall-guard`（`/usr/local/sbin/vless-firewall-guard`，非本仓库文件）管理的
+> `OJ_JUDGE_BROKER` 链约束：该链挂在 `VLESS_MIN_INPUT` 顶部、**先于** INPUT 里的 `JUDGE_DIRECT` 命中，并以
+> 兜底 DROP 结尾，因此实际卡住 8446 的是 `OJ_JUDGE_BROKER`。`sync_judge_firewall` 会把「静态 IP + 已上报 IP」
+> 同时写入两条链（broker 链额外放行 `OJ_JUDGE_BROKER_STATIC_IPS` 里的内网 IP）。guard 脚本自身的硬编码列表
+> 仅用于开机建链；worker 每次上报都会同步触发一次重建，NAT IP 变更后在下一次上报即恢复放行。
+
 > 直连端口（`OJ_JUDGE_DIRECT_PORT`，默认 8446）的源过滤由该 iptables 链全权接管，nginx vhost **不再配置 IP 白名单**（对动态 IP 必然失效）。**启用 nginx vhost 前必须先在 Web 主机跑一次 `sync_judge_firewall` 建链**，否则 8446 处于无人看守状态。
 
 Web 侧 `.env` 相关配置：
@@ -356,8 +362,11 @@ Web 侧 `.env` 相关配置：
 ```dotenv
 OJ_JUDGE_DIRECT_PORT=8446
 OJ_JUDGE_DIRECT_STATIC_IPS=64.90.3.112           # 静态测评机，逗号分隔，始终放行
+OJ_JUDGE_BROKER_STATIC_IPS=192.168.196.147       # broker 链内网静态 IP（可含私网），逗号分隔
 # OJ_JUDGE_DIRECT_CHAIN=JUDGE_DIRECT
 # OJ_JUDGE_DIRECT_STATE=/etc/guwu/judge-direct-ips.json
+# OJ_JUDGE_BROKER_CHAIN=OJ_JUDGE_BROKER
+# OJ_JUDGE_BROKER_PORTS=6379,8446
 # OJ_JUDGE_IP_REPORT_INTERVAL=600
 ```
 
