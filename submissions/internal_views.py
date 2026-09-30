@@ -277,9 +277,11 @@ def report_ip_view(request):
 
     Workers behind dynamic NAT call this over the always-reachable CDN
     origin; the reported IP is taken from the connection rather than the
-    body, so a worker cannot whitelist an arbitrary address. Failures to
-    touch iptables are reported but not retried by the worker (the periodic
-    timer re-runs the sync anyway).
+    body, so a worker cannot whitelist an arbitrary address. The chain is
+    rebuilt synchronously and ``applied`` reflects whether the IP actually
+    made it into iptables; ``manage.py sync_judge_firewall`` (the
+    ``guwu-oj-judge-firewall`` service) is the periodic backstop that also
+    restores the chain after a reboot.
     """
     if not _authenticated(request):
         return _unauthorized()

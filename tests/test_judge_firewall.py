@@ -65,6 +65,32 @@ class FirewallStateTests(_StateDirMixin, TestCase):
             fh.write('{not json')
         self.assertEqual(judge_firewall.load_state(), {})
 
+    def test_concurrent_reports_do_not_lose_entries(self):
+        # Workers report in bursts (a shared edge second), so the unlocked
+        # read-modify-write used to clobber entries and the shared ``.tmp``
+        # name made ``os.replace`` fail — the reported IP then never reached
+        # the chain.
+        import threading
+
+        barrier = threading.Barrier(8)
+
+        def report(index):
+            barrier.wait()
+            judge_firewall.record_worker_ip(
+                f'judge-{index}', f'9.9.9.{index}',
+            )
+
+        threads = [
+            threading.Thread(target=report, args=(i,)) for i in range(1, 9)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        state = judge_firewall.load_state()
+        self.assertEqual(sorted(state), [f'judge-{i}' for i in range(1, 9)])
+
     def test_allowed_ips_puts_static_first_and_dedupes(self):
         judge_firewall.record_worker_ip('judge-2', PUBLIC_IP)
         judge_firewall.record_worker_ip('judge-1', STATIC_IP)
@@ -133,6 +159,52 @@ class ApplyFirewallTests(_StateDirMixin, TestCase):
             'submissions.judge_firewall.IPTABLES', '/nonexistent/iptables',
         ):
             self.assertIsNone(judge_firewall.apply_firewall())
+
+    def test_existing_chain_is_reused_without_warning(self):
+        # ``-N`` reports "Chain already exists" but ``-S`` proves the chain
+        # is present, so this must be treated as a normal re-run, not a
+        # failure worth warning about.
+        def fake_run(args, **kwargs):
+            if '-N' in args:
+                return SimpleNamespace(
+                    returncode=1, stderr='iptables: Chain already exists.',
+                    stdout='',
+                )
+            if '-S' in args:
+                return SimpleNamespace(
+                    returncode=0, stderr='', stdout='-N TESTDIRECT\n',
+                )
+            return SimpleNamespace(
+                returncode=1 if '-C' in args else 0, stderr='', stdout='',
+            )
+
+        with patch('submissions.judge_firewall.IPTABLES', '/bin/true'), \
+             patch('submissions.judge_firewall.subprocess.run') as run, \
+             self.assertNoLogs(
+                 'submissions.judge_firewall', level='WARNING'):
+            run.side_effect = fake_run
+            sources = judge_firewall.apply_firewall()
+
+        self.assertEqual(sources, [STATIC_IP])
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertIn(['/bin/true', '-S', 'TESTDIRECT'], calls)
+        self.assertEqual(
+            calls[-1], ['/bin/true', '-A', 'TESTDIRECT', '-j', 'DROP'],
+        )
+
+    def test_unusable_chain_is_an_error(self):
+        # ``-N`` fails and ``-S`` shows the chain is not there: warn.
+        with patch('submissions.judge_firewall.IPTABLES', '/bin/true'), \
+             patch('submissions.judge_firewall.subprocess.run') as run, \
+             self.assertLogs(
+                 'submissions.judge_firewall', level='WARNING') as logs:
+            run.return_value = SimpleNamespace(
+                returncode=1, stderr='iptables: Permission denied.', stdout='',
+            )
+            sources = judge_firewall.apply_firewall()
+
+        self.assertIsNone(sources)
+        self.assertTrue(any('could not be created' in m for m in logs.output))
 
 
 @override_settings(JUDGE_INTERNAL_TOKEN=TEST_TOKEN)

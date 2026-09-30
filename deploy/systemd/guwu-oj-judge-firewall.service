@@ -1,6 +1,6 @@
 [Unit]
 Description=Guwu OJ direct judge-API firewall sync (reported worker IPs)
-After=network.target guwu-oj-web.service
+After=network.target guwu-oj.service
 
 [Service]
 Type=simple

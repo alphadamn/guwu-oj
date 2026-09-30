@@ -16,6 +16,7 @@ accepted (the direct base URL is an IPv4 literal).
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import ipaddress
 import json
@@ -82,23 +83,51 @@ def load_state():
     }
 
 
+@contextlib.contextmanager
+def _firewall_lock():
+    """Serialise state writes and chain rebuilds across worker processes.
+
+    Reports arrive concurrently (several workers share one edge second), so
+    both the read-modify-write of the state file and the flush/re-add of the
+    chain must happen under one lock; otherwise a report can clobber another
+    worker's entry or rebuild the chain from a stale snapshot.
+    """
+    os.makedirs(os.path.dirname(LOCK_PATH) or '.', exist_ok=True)
+    with open(LOCK_PATH, 'w') as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def _write_state(state):
     path = _state_path()
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    tmp = f'{path}.tmp'
-    with open(tmp, 'w', encoding='utf-8') as fh:
-        json.dump(state, fh, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    # A unique temp file per writer: a fixed ``.tmp`` name let two concurrent
+    # reports race on ``os.replace`` (one renames it away, the loser raises).
+    fd, tmp = tempfile.mkstemp(
+        dir=parent or '.', prefix='.judge-direct-', suffix='.tmp',
+    )
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            json.dump(state, fh, indent=2, sort_keys=True)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def record_worker_ip(worker_id, ip):
     """Remember ``ip`` as ``worker_id``'s current source. Returns previous."""
-    state = load_state()
-    previous = (state.get(str(worker_id)) or {}).get('ip')
-    state[str(worker_id)] = {'ip': ip, 'updated_at': time.time()}
-    _write_state(state)
+    with _firewall_lock():
+        state = load_state()
+        previous = (state.get(str(worker_id)) or {}).get('ip')
+        state[str(worker_id)] = {'ip': ip, 'updated_at': time.time()}
+        _write_state(state)
     return previous
 
 
@@ -117,11 +146,16 @@ def allowed_ips(state=None):
     return ordered
 
 
-def _run(args):
+def _run(args, quiet=False):
+    """Run an iptables command and report whether it succeeded.
+
+    ``quiet`` suppresses the warning for probes whose failure is an
+    expected outcome (chain/rule already exists, chain already absent).
+    """
     result = subprocess.run(
         args, capture_output=True, text=True, timeout=15, check=False,
     )
-    if result.returncode != 0:
+    if result.returncode != 0 and not quiet:
         logger.warning(
             'iptables command failed (%s): %s',
             ' '.join(args), (result.stderr or '').strip(),
@@ -129,11 +163,25 @@ def _run(args):
     return result.returncode == 0
 
 
+def _ensure_chain(chain):
+    """Create ``chain`` unless it already exists (the normal re-run case)."""
+    if _run([IPTABLES, '-N', chain], quiet=True):
+        return
+    # ``-N`` failed. The chain merely existing already is expected and
+    # harmless; any other failure (e.g. missing privileges) is worth
+    # surfacing.
+    if _run([IPTABLES, '-S', chain], quiet=True):
+        logger.debug('iptables chain %s already exists', chain)
+        return
+    logger.warning('iptables chain %s could not be created or inspected', chain)
+
+
 def apply_firewall(state=None):
     """Rebuild the direct-API chain from state. Safe to run repeatedly.
 
-    Returns the list of accepted sources, or ``None`` when iptables was not
-    usable (e.g. run outside the web host).
+    Returns the list of accepted sources, or ``None`` when the chain could
+    not be rebuilt (iptables missing, or the writes failed) — the caller
+    uses that to tell the reporter whether its IP was actually applied.
     """
     if not os.path.exists(IPTABLES):
         logger.debug('iptables not present; skipping firewall sync')
@@ -141,29 +189,38 @@ def apply_firewall(state=None):
 
     chain = _chain()
     port = str(_port())
-    sources = allowed_ips(state)
 
-    os.makedirs(os.path.dirname(LOCK_PATH) or '.', exist_ok=True)
-    with open(LOCK_PATH, 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _firewall_lock():
+        # Snapshot the state *inside* the lock: taken any earlier, a
+        # concurrent report could be re-added over by this worker's flush
+        # and silently dropped from the chain.
+        sources = allowed_ips(state)
 
         # Chain must exist before it can be referenced by the jump rule.
-        _run([IPTABLES, '-N', chain])
+        _ensure_chain(chain)
 
+        ok = True
         if not _run([
             IPTABLES, '-C', 'INPUT', '-p', 'tcp', '--dport', port,
             '-j', chain,
-        ]):
-            _run([
+        ], quiet=True):
+            ok = _run([
                 IPTABLES, '-I', 'INPUT', '1', '-p', 'tcp',
                 '--dport', port, '-j', chain,
-            ])
+            ]) and ok
 
-        _run([IPTABLES, '-F', chain])
+        ok = _run([IPTABLES, '-F', chain]) and ok
         for ip in sources:
-            _run([IPTABLES, '-A', chain, '-s', ip, '-j', 'ACCEPT'])
+            ok = _run([IPTABLES, '-A', chain, '-s', ip, '-j', 'ACCEPT']) and ok
         # Default-deny: an empty chain must not expose the direct API.
-        _run([IPTABLES, '-A', chain, '-j', 'DROP'])
+        ok = _run([IPTABLES, '-A', chain, '-j', 'DROP']) and ok
+
+    if not ok:
+        logger.warning(
+            'Direct judge API :%s firewall rebuild failed; chain may be stale',
+            port,
+        )
+        return None
 
     logger.info(
         'Direct judge API :%s allows %s', port, sources or '(none)',
