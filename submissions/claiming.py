@@ -8,16 +8,21 @@ arrived on. The state machine lives on ``Submission``:
                             └──── reaper requeue ───┘ (heartbeat stale)
                                                     └─ retries exhausted → FAILED
 
-Concurrency safety relies on three single-statement, row-locked PostgreSQL
+Concurrency safety relies on single-statement, row-locked PostgreSQL
 UPDATEs (``UPDATE ... WHERE ... RETURNING``):
 
-* ``claim_submission``   — at most one competing worker wins.
-* ``heartbeat_claim``    — lease renewal only while the token still owns
-                           the JUDGING row.
-* ``finalize_claim``     — verdict writeback is fenced by (token, state);
-                           a reaped/stale worker affects zero rows and its
-                           side effects (points, solved M2M, notifications)
-                           never fire.
+* ``claim_submission``      — at most one competing worker wins.
+* ``heartbeat_claim``       — lease renewal only while the token still owns
+                              the JUDGING row.
+* ``finalize_claim``        — verdict writeback is fenced by (token, state);
+                              a reaped/stale worker affects zero rows and its
+                              side effects (points, solved M2M, notifications)
+                              never fire.
+* ``requeue_owned_claim``   — worker-side infra retry, fenced by the token.
+* ``requeue_stale_claim``   — reaper-only, fenced by the heartbeat cutoff
+                              *inside* the UPDATE so a worker that recovers
+                              between the reaper's scan and its write keeps
+                              the claim.
 
 Raw SQL is used deliberately: the UPDATE-then-RETURNING pattern is the
 claim itself and cannot be expressed with the ORM without a separate
@@ -60,6 +65,13 @@ def default_worker_id() -> str:
 
 def _now():
     return timezone.now()
+
+
+def _valid_verdicts() -> frozenset:
+    """Allowed ``Submission.status`` verdict values (apps must be ready)."""
+    from .models import Submission
+
+    return frozenset(dict(Submission.STATUS_CHOICES))
 
 
 def claim_submission(submission_id, worker_id):
@@ -119,7 +131,14 @@ def finalize_claim(submission_id, token, verdict, runtime=None, memory=None,
     (points, notifications, cache invalidation); on ``False`` it must
     discard the result. Raw UPDATE bypasses ``post_save``, so callers are
     responsible for publishing the realtime change notification.
+
+    ``verdict`` is validated against the model's status choices: the value
+    arrives from worker envelopes (a trust boundary), and an unknown verdict
+    must fail loudly here rather than being persisted and later rendered.
     """
+    if verdict not in _valid_verdicts():
+        raise ValueError(f'unknown verdict {verdict!r}')
+
     now = _now()
     new_state = 'FAILED' if failed else 'DONE'
     sql = """
@@ -142,27 +161,54 @@ def finalize_claim(submission_id, token, verdict, runtime=None, memory=None,
         return cur.rowcount == 1
 
 
-def requeue_claim(submission_id):
-    """Release a claim back to QUEUED (used by the reaper and infra retry).
+_CLEAR_CLAIM_SET = """
+       judge_state = 'QUEUED',
+       worker_id = '',
+       claim_token = NULL,
+       claimed_at = NULL,
+       heartbeat_at = NULL
+"""
 
-    Caller is responsible for actually re-enqueuing the broker job only
-    when this returns ``True``. Returns ``False`` when the row is no longer
-    in a reclaimable JUDGING state (e.g. the original worker recovered and
-    already finished).
+
+def requeue_owned_claim(submission_id, token) -> bool:
+    """Release the claim **this token owns** back to QUEUED (infra retry).
+
+    Fenced by ``(id, claim_token, state)``: a worker that has already lost
+    the lease (reaper requeued it, another worker now owns the row) affects
+    zero rows and cannot revoke the new owner. Caller re-enqueues the broker
+    job only when this returns ``True``.
     """
-    sql = """
+    sql = f"""
         UPDATE submissions_submission
-           SET judge_state = 'QUEUED',
-               worker_id = '',
-               claim_token = NULL,
-               claimed_at = NULL,
-               heartbeat_at = NULL
+           SET {_CLEAR_CLAIM_SET}
          WHERE id = %s
+           AND claim_token = %s
            AND judge_state = 'JUDGING'
     """
     with connection.cursor() as cur:
-        cur.execute(sql, [submission_id])
+        cur.execute(sql, [submission_id, token])
         return cur.rowcount == 1
+
+
+def requeue_stale_claim(submission_id, heartbeat_cutoff) -> bool:
+    """Reaper-only: clear a dead claim iff the lease is **still** stale.
+
+    The heartbeat predicate is part of the atomic UPDATE rather than a
+    separate SELECT, so a worker that heartbeats (or finalises) between the
+    reaper's scan and this write keeps its claim. Returns ``True`` only when
+    this call actually requeued the row.
+    """
+    sql = f"""
+        UPDATE submissions_submission
+           SET {_CLEAR_CLAIM_SET}
+         WHERE id = %s
+           AND judge_state = 'JUDGING'
+           AND heartbeat_at < %s
+        RETURNING id
+    """
+    with connection.cursor() as cur:
+        cur.execute(sql, [submission_id, heartbeat_cutoff])
+        return cur.fetchone() is not None
 
 
 def mark_queued(submission_id) -> bool:
@@ -205,8 +251,9 @@ def stamp_progress(submission_id, token, **fields) -> bool:
     stamps therefore cannot overwrite the owner's timings.
 
     ``token is None`` is the legacy no-claim path (direct
-    ``judge_submission`` calls from tests) and uses an unfenced ORM write.
-    Omitted or ``None`` values default to "now".
+    ``judge_submission`` calls from tests/manual rejudge, never the worker
+    pipeline) and uses an unfenced ORM write; it logs a warning so accidental
+    production use stays visible. Omitted or ``None`` values default to "now".
     """
     unknown = set(fields) - _PROGRESS_COLUMNS
     if unknown:
@@ -215,9 +262,16 @@ def stamp_progress(submission_id, token, **fields) -> bool:
         name: value if value is not None else _now()
         for name, value in fields.items()
     }
+    if not stamped:
+        raise ValueError('stamp_progress requires at least one timing field')
     if token is None:
         from .models import Submission
 
+        logger.warning(
+            'Unfenced progress stamp on submission %s (no claim token); '
+            'legacy/test path only',
+            submission_id,
+        )
         return Submission.objects.filter(pk=submission_id).update(**stamped) == 1
 
     assignments = ', '.join(f'{name} = %s' for name in stamped)
@@ -313,8 +367,15 @@ def reap_stale_claims(judging_timeout_secs=300, queued_timeout_secs=600,
 
     * JUDGING rows whose last heartbeat is older than
       ``judging_timeout_secs`` — worker crash / kill -9 / network partition.
-    * QUEUED rows older than ``queued_timeout_secs`` (measured from
-      created_at) — broker dropped the message before any worker claimed.
+      The claim is cleared with an atomic, heartbeat-fenced UPDATE
+      (:func:`requeue_stale_claim`): a worker that heartbeats between this
+      scan and that write keeps its claim and is not re-enqueued.
+    * QUEUED rows whose last dispatch (``enqueued_at``, stamped on every
+      dispatch by :func:`mark_queued`) is older than
+      ``queued_timeout_secs`` — broker dropped the message before any worker
+      claimed. These rows never carry a claim; they are only re-enqueued,
+      and the ``mark_queued`` gate inside ``enqueue_judge`` absorbs rows that
+      a worker claimed in the meantime.
     """
     from .models import Submission
 
@@ -322,24 +383,26 @@ def reap_stale_claims(judging_timeout_secs=300, queued_timeout_secs=600,
     judging_cutoff = now - timezone.timedelta(seconds=judging_timeout_secs)
     queued_cutoff = now - timezone.timedelta(seconds=queued_timeout_secs)
 
-    ids = list(
+    requeued = []
+    judging_ids = list(
         Submission.objects
         .filter(judge_state='JUDGING', heartbeat_at__lt=judging_cutoff)
         .values_list('id', flat=True)[:limit]
     )
-    ids += list(
+    for sid in judging_ids:
+        if requeue_stale_claim(sid, judging_cutoff):
+            requeued.append(sid)
+
+    queued_ids = list(
         Submission.objects
-        .filter(judge_state='QUEUED', created_at__lt=queued_cutoff)
-        .exclude(id__in=ids)
+        .filter(judge_state='QUEUED', enqueued_at__lt=queued_cutoff)
+        .exclude(id__in=requeued)
         .values_list('id', flat=True)[:limit]
     )
+    # QUEUED rows need no claim clearing; just re-dispatch. The enqueued
+    # ids are returned in (requeued-then-redispatched) order.
+    requeued.extend(queued_ids)
 
-    requeued = []
-    for sid in ids:
-        # JUDGING rows must clear the dead claim; QUEUED rows only need the
-        # dispatch itself. requeue_claim is a no-op for the QUEUED rows.
-        requeue_claim(sid)
-        requeued.append(sid)
     if requeued:
         logger.warning(
             'Reaper requeued %d stale submissions: %s',
@@ -366,6 +429,12 @@ def clear_attempts(submission_id, redis_client):
     redis_client.delete(attempts_key(submission_id))
 
 
+# Exponent is capped before the power is computed: ``attempt`` comes from a
+# Redis counter and a pathological value must not become a giant bignum.
+BACKOFF_MAX_EXPONENT = 5  # 0.5 * 2**5 = 32s, itself clipped to 10s below
+
+
 def sleep_backoff(attempt: int):
     """Small capped backoff before an immediate infra retry."""
-    time.sleep(min(0.5 * (2 ** max(attempt - 1, 0)), 10))
+    exponent = min(max(int(attempt) - 1, 0), BACKOFF_MAX_EXPONENT)
+    time.sleep(min(0.5 * (2 ** exponent), 10))

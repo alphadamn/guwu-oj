@@ -46,6 +46,18 @@ def _json_body(request):
         return None
 
 
+def _clean_worker_id(raw):
+    """Normalise a worker-supplied id for storage/logging.
+
+    The value comes over an authenticated internal endpoint but is still
+    attacker-influenceable: keep only printable characters (this strips
+    CR/LF/ESC/NEL and line/paragraph separators that could forge log
+    records), then cap to the column width.
+    """
+    text = str(raw or '')
+    return ''.join(c for c in text if c.isprintable())[:128]
+
+
 def _authenticated(request):
     expected = getattr(settings, 'JUDGE_INTERNAL_TOKEN', '') or ''
     provided = request.headers.get('X-Judge-Token', '')
@@ -85,7 +97,7 @@ def claim_view(request):
         return JsonResponse({'error': 'invalid json'}, status=400)
 
     submission_id = body.get('submission_id')
-    worker_id = (body.get('worker_id') or '')[:128]
+    worker_id = _clean_worker_id(body.get('worker_id'))
     if not submission_id or not worker_id:
         return JsonResponse(
             {'error': 'submission_id and worker_id required'}, status=400,
@@ -289,7 +301,7 @@ def report_ip_view(request):
     if body is None:
         return JsonResponse({'error': 'invalid json'}, status=400)
 
-    worker_id = (body.get('worker_id') or '')[:128].strip()
+    worker_id = _clean_worker_id(body.get('worker_id')).strip()
     if not worker_id:
         return JsonResponse({'error': 'worker_id required'}, status=400)
 

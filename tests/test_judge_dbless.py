@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase, Client, override_settings
+from django.utils import timezone
 
 from problems.models import Problem, TestCase as ProblemTestCase
 from submissions.models import Submission
@@ -240,6 +241,18 @@ class InternalApiTests(TestCase):
         self.assertEqual(resp2.status_code, 409)
         self.assertFalse(resp2.json()['claimable'])
 
+    def test_claim_strips_log_forging_control_chars_from_worker_id(self):
+        resp = self._post('/internal/judge/claim/', {
+            'submission_id': self.submission.id,
+            'worker_id': 'w\nFAKE 2026-01-01 evil\tx',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.submission.refresh_from_db()
+        # CR/LF/tab removed; ordinary printable characters retained.
+        self.assertEqual(
+            self.submission.worker_id, 'wFAKE 2026-01-01 evilx',
+        )
+
     def test_heartbeat_alive_then_dead_after_requeue(self):
         data = self._post('/internal/judge/claim/', {
             'submission_id': self.submission.id, 'worker_id': 'w1',
@@ -250,8 +263,8 @@ class InternalApiTests(TestCase):
         })
         self.assertEqual(resp.json(), {'alive': True})
 
-        from submissions.claiming import requeue_claim
-        requeue_claim(self.submission.id)
+        from submissions.claiming import requeue_stale_claim
+        requeue_stale_claim(self.submission.id, timezone.now())
 
         resp = self._post('/internal/judge/heartbeat/', {
             'submission_id': self.submission.id,
@@ -292,8 +305,8 @@ class InternalApiTests(TestCase):
             'batched_cases': True,
         }).json()
 
-        from submissions.claiming import requeue_claim
-        requeue_claim(self.submission.id)
+        from submissions.claiming import requeue_stale_claim
+        requeue_stale_claim(self.submission.id, timezone.now())
 
         resp = self._post('/internal/judge/cases/', {
             'submission_id': self.submission.id,
@@ -444,8 +457,8 @@ class ConsumerWritebackTests(TestCase):
         from submissions.results import process_envelope
 
         token_a = self._claim()
-        from submissions.claiming import claim_submission, requeue_claim
-        requeue_claim(self.submission.id)
+        from submissions.claiming import claim_submission, requeue_stale_claim
+        requeue_stale_claim(self.submission.id, timezone.now())
         claim_submission(self.submission.id, 'w2')
         conn = MagicMock()
         with patch('submissions.realtime.publish_submission_changed') as notify:
@@ -461,8 +474,8 @@ class ConsumerWritebackTests(TestCase):
         from submissions.results import process_envelope
 
         token_a = self._claim()
-        from submissions.claiming import requeue_claim, claim_submission
-        requeue_claim(self.submission.id)
+        from submissions.claiming import requeue_stale_claim, claim_submission
+        requeue_stale_claim(self.submission.id, timezone.now())
         token_b = claim_submission(self.submission.id, 'w2')
         conn = MagicMock()
         process_envelope(
@@ -502,6 +515,29 @@ class ConsumerWritebackTests(TestCase):
         self.submission.refresh_from_db()
         self.assertEqual(self.submission.judge_state, 'FAILED')
         self.assertEqual(self.submission.status, 'System Error')
+
+    @patch('submissions.results.sleep_backoff')
+    def test_infra_envelope_with_lost_token_is_discarded(self, _sleep):
+        # Worker A's lease was reaped and worker B now owns the row: A's
+        # infra retry must not revoke B's claim or re-enqueue the job.
+        from submissions.results import process_envelope
+        from submissions.claiming import claim_submission, requeue_stale_claim
+
+        token_a = self._claim()
+        requeue_stale_claim(self.submission.id, timezone.now())
+        token_b = claim_submission(self.submission.id, 'w2')
+
+        conn = MagicMock()
+        conn.incr.return_value = 1
+        with patch('submissions.judge_queue.enqueue_judge') as enqueue:
+            self.assertEqual(process_envelope(json.dumps({
+                'kind': 'infra', 'submission_id': self.submission.id,
+                'claim_token': str(token_a), 'error': 'docker down',
+            }).encode(), conn), 'ok')
+            enqueue.assert_not_called()
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'JUDGING')
+        self.assertEqual(self.submission.claim_token, token_b)
 
 
 class ResultQueueHelperTests(TestCase):

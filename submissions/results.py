@@ -29,7 +29,7 @@ from .claiming import (
     clear_attempts,
     finalize_claim,
     next_attempt,
-    requeue_claim,
+    requeue_owned_claim,
     sleep_backoff,
     stamp_progress,
 )
@@ -280,7 +280,8 @@ def schedule_retry_or_fail(submission_id, redis_client, token, error,
 
     ``token`` is the live claim token for judging-phase failures (the row
     is JUDGING), or ``None`` when the worker could not even claim (row
-    still QUEUED). Returns ``'requeued'`` or ``'failed'``.
+    still QUEUED). Returns ``'requeued'``, ``'failed'`` or ``'discarded'``
+    (the token no longer owns the row — another worker has taken over).
     """
     from .judge_queue import enqueue_judge
     enqueue = enqueue or enqueue_judge
@@ -310,7 +311,10 @@ def schedule_retry_or_fail(submission_id, redis_client, token, error,
         submission_id, attempt, DEFAULT_MAX_ATTEMPTS, error,
     )
     if token is not None:
-        moved = requeue_claim(submission_id)
+        # Token-fenced: if the lease was reaped and another worker now owns
+        # the row, this affects zero rows ('discarded') instead of revoking
+        # the new owner's claim.
+        moved = requeue_owned_claim(submission_id, token)
     else:
         # Claim-phase failure: re-enqueue only if nobody claimed meanwhile.
         from .models import Submission

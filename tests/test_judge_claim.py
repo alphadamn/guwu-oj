@@ -31,7 +31,9 @@ from submissions.claiming import (
     heartbeat_claim,
     mark_queued,
     reap_stale_claims,
-    requeue_claim,
+    requeue_owned_claim,
+    requeue_stale_claim,
+    stamp_progress,
 )
 from submissions.models import Submission, SubmissionTestResult
 
@@ -98,7 +100,9 @@ class ClaimTests(TestCase):
 
     def test_heartbeat_fails_after_requeue(self):
         token = claim_submission(self.submission.id, 'worker-a')
-        self.assertTrue(requeue_claim(self.submission.id))
+        self.assertTrue(
+            requeue_stale_claim(self.submission.id, timezone.now()),
+        )
         self.assertFalse(heartbeat_claim(self.submission.id, token))
 
         self.submission.refresh_from_db()
@@ -118,7 +122,9 @@ class FenceTests(TestCase):
     def test_stale_token_cannot_overwrite_new_owner(self):
         # Owner A wins, then dies; reaper requeues and owner B wins.
         token_a = claim_submission(self.submission.id, 'worker-a')
-        self.assertTrue(requeue_claim(self.submission.id))
+        self.assertTrue(
+            requeue_stale_claim(self.submission.id, timezone.now()),
+        )
         token_b = claim_submission(self.submission.id, 'worker-b')
         self.assertNotEqual(token_a, token_b)
 
@@ -149,6 +155,64 @@ class FenceTests(TestCase):
         self.submission.refresh_from_db()
         self.assertEqual(self.submission.judge_state, 'FAILED')
         self.assertEqual(self.submission.status, 'System Error')
+
+    def test_finalize_rejects_unknown_verdict_without_writing(self):
+        token = claim_submission(self.submission.id, 'worker-a')
+        with self.assertRaises(ValueError):
+            finalize_claim(self.submission.id, token, 'DROP TABLE status')
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'JUDGING')
+        self.assertEqual(self.submission.status, 'Pending')
+
+    def test_requeue_owned_claim_is_fenced_by_token(self):
+        import uuid
+
+        token = claim_submission(self.submission.id, 'worker-a')
+        # A foreign/stale token cannot revoke the live owner.
+        self.assertFalse(
+            requeue_owned_claim(self.submission.id, uuid.uuid4()),
+        )
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'JUDGING')
+        self.assertEqual(self.submission.claim_token, token)
+
+        # The real owner can release its own claim.
+        self.assertTrue(requeue_owned_claim(self.submission.id, token))
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.judge_state, 'QUEUED')
+        self.assertIsNone(self.submission.claim_token)
+        self.assertEqual(self.submission.worker_id, '')
+
+    def test_stamp_progress_validates_fields(self):
+        token = claim_submission(self.submission.id, 'worker-a')
+        with self.assertRaises(ValueError):
+            stamp_progress(self.submission.id, token, not_a_column=None)
+        with self.assertRaises(ValueError):
+            stamp_progress(self.submission.id, token)
+
+    def test_stamp_progress_fenced_write(self):
+        import uuid
+
+        token = claim_submission(self.submission.id, 'worker-a')
+        self.assertTrue(
+            stamp_progress(self.submission.id, token, judge_started_at=None),
+        )
+        self.submission.refresh_from_db()
+        self.assertIsNotNone(self.submission.judge_started_at)
+        # A stale token cannot stamp the row after the lease is gone.
+        self.assertTrue(
+            requeue_owned_claim(self.submission.id, token),
+        )
+        self.assertFalse(
+            stamp_progress(self.submission.id, uuid.uuid4(),
+                           tests_done_at=None),
+        )
+
+    def test_sleep_backoff_caps_huge_attempt(self):
+        # Without the exponent cap this would compute 2**9_999_999 and hang.
+        with patch('submissions.claiming.time.sleep') as slept:
+            claiming.sleep_backoff(10_000_000)
+        slept.assert_called_once_with(10)
 
 
 class ConcurrentClaimRaceTests(TransactionTestCase):
@@ -234,9 +298,11 @@ class ReaperTests(TestCase):
                 heartbeat_at=timezone.now() - timedelta(seconds=heartbeat_age),
             )
         if age is not None:
-            Submission.objects.filter(pk=s.id).update(
-                created_at=timezone.now() - timedelta(seconds=age),
-            )
+            stamp = timezone.now() - timedelta(seconds=age)
+            # QUEUED staleness is measured from the last dispatch
+            # (enqueued_at, stamped by mark_queued), not created_at.
+            field = 'enqueued_at' if state == 'QUEUED' else 'created_at'
+            Submission.objects.filter(pk=s.id).update(**{field: stamp})
         return s
 
     def test_reaps_stale_judging_and_lost_queued_only(self):
@@ -268,6 +334,52 @@ class ReaperTests(TestCase):
         self.assertEqual(
             reap_stale_claims(judging_timeout_secs=300), [],
         )
+
+    def test_queued_timeout_uses_enqueued_at_not_created_at(self):
+        # Created long ago, but the last dispatch happened seconds ago:
+        # must NOT look stale (regression for created_at-based filter).
+        fresh_dispatch = self._submission('QUEUED', age=10)
+        Submission.objects.filter(pk=fresh_dispatch.id).update(
+            created_at=timezone.now() - timedelta(seconds=3600),
+        )
+        self.assertEqual(
+            reap_stale_claims(judging_timeout_secs=300, queued_timeout_secs=600),
+            [],
+        )
+        fresh_dispatch.refresh_from_db()
+        self.assertEqual(fresh_dispatch.judge_state, 'QUEUED')
+
+    def test_queued_with_null_enqueued_at_is_not_reaped(self):
+        # A QUEUED row without a dispatch timestamp cannot exist via normal
+        # flows; fail closed (leave it alone) rather than guessing.
+        s = self._submission('QUEUED')
+        Submission.objects.filter(pk=s.id).update(
+            created_at=timezone.now() - timedelta(seconds=3600),
+        )
+        self.assertEqual(reap_stale_claims(queued_timeout_secs=600), [])
+
+    def test_recovered_heartbeat_between_scan_and_write_keeps_claim(self):
+        # The row looked stale when the reaper scanned it, but the worker
+        # heartbeated before the reaper's UPDATE landed.
+        stale = self._submission('JUDGING', heartbeat_age=600)
+        Submission.objects.filter(pk=stale.id).update(
+            heartbeat_at=timezone.now(),
+        )
+        cutoff = timezone.now() - timedelta(seconds=300)
+        self.assertFalse(requeue_stale_claim(stale.id, cutoff))
+        stale.refresh_from_db()
+        self.assertEqual(stale.judge_state, 'JUDGING')
+
+    def test_queued_row_claimed_between_scan_and_enqueue_is_not_pushed(self):
+        # QUEUED-selected rows never get their claim cleared by the reaper;
+        # if a worker wins the row, mark_queued absorbs the redispatch.
+        lost = self._submission('QUEUED', age=900)
+        token = claim_submission(lost.id, 'worker-a')
+        self.assertIsNotNone(token)
+        self.assertFalse(mark_queued(lost.id))
+        lost.refresh_from_db()
+        self.assertEqual(lost.judge_state, 'JUDGING')
+        self.assertEqual(lost.claim_token, token)
 
     @patch('submissions.realtime.publish_submission_changed')
     @patch('submissions.judge_queue.enqueue_judge')
@@ -339,7 +451,9 @@ class DuplicateDeliveryTaskTests(TestCase):
         token_a = claim_submission(self.submission.id, 'worker-a')
         token_b = claim_submission(self.submission.id, 'worker-b')
         self.assertIsNone(token_b)  # A still owns it
-        self.assertTrue(requeue_claim(self.submission.id))
+        self.assertTrue(
+            requeue_stale_claim(self.submission.id, timezone.now()),
+        )
         token_b = claim_submission(self.submission.id, 'worker-b')
         self.assertIsNotNone(token_b)
 
