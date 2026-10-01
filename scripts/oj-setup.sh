@@ -347,12 +347,11 @@ ask_redis() {
 }
 
 ask_judge_env() {
+  # All workers compete on the single central Celery queue ``judge``;
+  # there is no per-machine queue name to configure anymore.
   CFG[OJ_MULTI_JUDGE_ENABLED]=true
   CFG[OJ_DOCKER_ENABLED]=true
   CFG[OJ_DOCKER_PIDS_LIMIT]=64
-  if [[ "$ROLE" == judge ]]; then
-    CFG[OJ_JUDGE_QUEUE]=$(ui_input "Queue name this worker consumes (must match its JudgeMachine row on the web host)" "judge-1") || die "Cancelled."
-  fi
 }
 
 ask_web_service() {

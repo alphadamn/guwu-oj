@@ -193,9 +193,7 @@ class JudgeMachine(models.Model):
     host = models.CharField(max_length=255, default='localhost')
     port = models.IntegerField(default=6379)
     db = models.IntegerField(default=0)
-    queue = models.CharField(max_length=64)
     enabled = models.BooleanField(default=True)
-    weight = models.IntegerField(default=1, help_text='Higher weight = more tasks')
     transport_configured = models.BooleanField(
         default=False,
         help_text='Use the TLS/password settings below instead of JUDGE_MACHINES_JSON defaults.',

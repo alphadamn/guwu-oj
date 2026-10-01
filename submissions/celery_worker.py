@@ -1,10 +1,10 @@
 """Celery worker lifecycle hooks for judge machines.
 
-Replaces the old RQ ``AutoReconnectWorker`` bootstrap: when a Celery worker
-process becomes ready it warms the per-language judge container pool and
-starts writing ``judge:worker:*`` heartbeat keys onto the central broker, so
-the web-side fleet health check (``judge_health.check_central_worker_heartbeat``)
-keeps working unchanged. Shutdown stops the heartbeat and drains the pool.
+When a Celery worker process becomes ready it warms the per-language judge
+container pool and starts writing ``judge:worker:*`` heartbeat keys onto the
+central broker for the web-side fleet health check
+(``judge_health.check_central_worker_heartbeat``). Shutdown stops the
+heartbeat and drains the pool.
 """
 
 import logging

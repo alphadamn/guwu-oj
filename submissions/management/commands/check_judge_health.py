@@ -38,7 +38,6 @@ class Command(BaseCommand):
                 unhealthy_count += 1
 
             self.stdout.write(f'  Host: {machine["host"]}:{machine["port"]}')
-            self.stdout.write(f'  Queue: {machine["queue"]}')
             for name, (ok, detail) in checks.items():
                 marker = 'ok' if ok else detail
                 style = self.style.SUCCESS if ok else self.style.WARNING

@@ -26,19 +26,6 @@ def check_redis_ping(redis_client):
         return False
 
 
-def check_worker_heartbeat(redis_client, queue_name):
-    """Return True if a worker refreshed its heartbeat recently."""
-    try:
-        raw = redis_client.get(f'judge:worker:{queue_name}')
-        if raw is None:
-            return False
-        last = int(raw)
-        return (time.time() - last) <= WORKER_HEARTBEAT_TTL_SEC
-    except Exception as exc:
-        logger.warning('Worker heartbeat check failed for %s: %s', queue_name, exc)
-        return False
-
-
 # The central broker connection is process-wide; reuse it across the
 # per-machine checks in one health endpoint call.
 _central_client_cache = None

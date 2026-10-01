@@ -43,6 +43,8 @@ class JudgeMachineSettingsTests(TestCase):
     def test_json_configuration_is_loaded_and_normalized(self):
         from oj_project.settings import _parse_judge_machines
 
+        # Legacy ``queue`` / ``weight`` keys from old per-machine RQ configs
+        # must be accepted and silently dropped.
         payload = json.dumps([{
             'name': 'judge-2',
             'host': 'judge.example.internal',
@@ -59,9 +61,7 @@ class JudgeMachineSettingsTests(TestCase):
             'host': 'judge.example.internal',
             'port': 6380,
             'db': 2,
-            'queue': 'judge-2',
             'enabled': True,
-            'weight': 3,
             'tls': False,
             'password': '',
             'ca_cert_path': '',
@@ -119,7 +119,7 @@ class JudgeMachineCredentialTests(TestCase):
     def test_admin_stored_password_is_encrypted_and_recoverable(self):
         from submissions.models import JudgeMachine
 
-        machine = JudgeMachine(name='judge-secure', queue='judge-secure')
+        machine = JudgeMachine(name='judge-secure')
         machine.set_redis_password('unique-machine-password')
 
         self.assertNotEqual(machine.redis_password_encrypted, 'unique-machine-password')

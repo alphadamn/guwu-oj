@@ -90,7 +90,7 @@ class Command(BaseCommand):
         ).count()
         queued_old = Submission.objects.filter(
             judge_state='QUEUED',
-            created_at__lt=now - timezone.timedelta(seconds=600),
+            enqueued_at__lt=now - timezone.timedelta(seconds=600),
         ).count()
         self.stdout.write(
             f'\n  stale JUDGING (lease > 5min): {stuck}\n'

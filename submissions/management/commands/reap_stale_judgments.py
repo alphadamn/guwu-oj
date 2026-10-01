@@ -4,7 +4,7 @@ Two kinds of stuck submissions are recovered:
 
 1. ``JUDGING`` rows whose heartbeat lease expired (worker crash / kill -9 /
    network partition) — the claim is atomically cleared and the job is
-   reposted to the (central or legacy, per the current flag) broker.
+   reposted to the central Celery broker.
 2. ``QUEUED`` rows that no worker ever claimed within the queued timeout
    (dropped broker message) — simply reposted.
 

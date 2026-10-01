@@ -163,9 +163,9 @@ def async_judge_clients():
             continue
         seen.add(key)
         try:
-            from oj_project.settings import _rq_machine_connection
+            from oj_project.settings import _judge_redis_connection_kwargs
 
-            kwargs = _rq_machine_connection(machine)
+            kwargs = _judge_redis_connection_kwargs(machine)
             kwargs.update({
                 'host': machine['host'],
                 'port': machine['port'],

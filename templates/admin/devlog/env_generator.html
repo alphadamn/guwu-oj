@@ -98,8 +98,6 @@
             <div><label>主机 / IP</label><input class="machine-host" value="127.0.0.1"></div>
             <div><label>Redis 端口</label><input class="machine-port" value="6379"></div>
             <div><label>Redis DB</label><input class="machine-db" value="0"></div>
-            <div><label>队列</label><input class="machine-queue" value="judge-1"></div>
-            <div><label>权重</label><input class="machine-weight" value="1"></div>
             <div><label>启用 TLS</label><select class="machine-tls"><option value="false">false</option><option value="true">true</option></select></div>
             <div><label>CA 证书路径</label><input class="machine-ca" placeholder="/etc/guwu-oj/tls/redis-ca.crt"></div>
             <div><label>客户端证书路径（mTLS）</label><input class="machine-client-cert" placeholder="/etc/guwu-oj/tls/judge-1.crt"></div>
@@ -112,5 +110,5 @@
 
 {% block extrahead %}
 {{ block.super }}
-<script src="{% static 'admin/js/env-generator.js' %}?v=20260913"></script>
+<script src="{% static 'admin/js/env-generator.js' %}?v=20261001"></script>
 {% endblock %}

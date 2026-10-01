@@ -67,15 +67,15 @@ class SubmissionAdmin(admin.ModelAdmin):
 class JudgeMachineAdmin(admin.ModelAdmin):
     form = JudgeMachineAdminForm
     list_display = [
-        'name', 'host', 'port', 'db', 'queue', 'enabled', 'weight',
+        'name', 'host', 'port', 'db', 'enabled',
         'transport_configured', 'tls_enabled',
     ]
-    list_editable = ['host', 'port', 'db', 'queue', 'enabled', 'weight']
+    list_editable = ['host', 'port', 'db', 'enabled']
     list_filter = ['enabled', 'transport_configured', 'tls_enabled']
     search_fields = ['name', 'host']
     readonly_fields = ['redis_password_encrypted']
     fieldsets = (
-        (None, {'fields': ('name', 'host', 'port', 'db', 'queue', 'enabled', 'weight')}),
+        (None, {'fields': ('name', 'host', 'port', 'db', 'enabled')}),
         ('Redis transport security', {
             'fields': (
                 'transport_configured', 'tls_enabled', 'ca_cert_path',
@@ -96,7 +96,7 @@ class JudgeMachineAdmin(admin.ModelAdmin):
         for m in queryset:
             machine_dict = load_balancer.effective_machine(m.name) or {
                 'name': m.name, 'host': m.host, 'port': m.port,
-                'db': m.db, 'queue': m.queue,
+                'db': m.db,
             }
             healthy = load_balancer.check_machine_health(machine_dict)
             status = '✓ healthy' if healthy else '✗ unreachable'

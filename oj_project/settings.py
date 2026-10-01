@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import quote, urlencode
 
 from dotenv import load_dotenv
 
@@ -152,38 +152,35 @@ def _parse_judge_machines(raw, fallback):
         raise ValueError('JUDGE_MACHINES_JSON must be a non-empty JSON array')
 
     validated = []
-    queues = set()
+    names = set()
     for index, machine in enumerate(machines, start=1):
         if not isinstance(machine, dict):
             raise ValueError(f'JUDGE_MACHINES_JSON item {index} must be an object')
 
         name = machine.get('name')
         host = machine.get('host')
-        queue = machine.get('queue')
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f'JUDGE_MACHINES_JSON item {index} requires a non-empty name')
         if not isinstance(host, str) or not host.strip():
             raise ValueError(f'JUDGE_MACHINES_JSON item {index} requires a non-empty host')
-        if not isinstance(queue, str) or not queue.strip():
-            raise ValueError(f'JUDGE_MACHINES_JSON item {index} requires a non-empty queue')
         name = name.strip()
         host = host.strip()
-        queue = queue.strip()
-        if queue in queues:
-            raise ValueError(f'JUDGE_MACHINES_JSON has duplicate queue: {queue}')
-        queues.add(queue)
+        if name in names:
+            raise ValueError(f'JUDGE_MACHINES_JSON has duplicate name: {name}')
+        names.add(name)
+        # Legacy ``queue`` / ``weight`` keys from old per-machine RQ configs
+        # are silently ignored; dispatch uses the single central Celery queue.
 
         try:
             port = int(machine.get('port', 6379))
             db = int(machine.get('db', 0))
-            weight = int(machine.get('weight', 1))
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f'JUDGE_MACHINES_JSON item {index} has invalid port, db, or weight'
+                f'JUDGE_MACHINES_JSON item {index} has invalid port or db'
             ) from exc
-        if not 1 <= port <= 65535 or db < 0 or weight < 1:
+        if not 1 <= port <= 65535 or db < 0:
             raise ValueError(
-                f'JUDGE_MACHINES_JSON item {index} has out-of-range port, db, or weight'
+                f'JUDGE_MACHINES_JSON item {index} has out-of-range port or db'
             )
 
         enabled = machine.get('enabled', True)
@@ -219,9 +216,7 @@ def _parse_judge_machines(raw, fallback):
             'host': host,
             'port': port,
             'db': db,
-            'queue': queue,
             'enabled': enabled,
-            'weight': weight,
             'tls': tls,
             'password': password,
             'ca_cert_path': ca_cert_path.strip(),
@@ -248,8 +243,8 @@ def _redis_tls_kwargs(enabled, ca_cert_path, client_cert_path='', client_key_pat
     return kwargs
 
 
-def _rq_machine_connection(machine):
-    """Return Redis client settings for one queue without exposing credentials in URLs."""
+def _judge_redis_connection_kwargs(machine):
+    """TLS/socket kwargs for a judge-broker Redis connection (no credentials in URLs)."""
     tls_enabled = machine.get('tls', _env_enabled('RQ_REDIS_TLS'))
     ca_cert_path = machine.get(
         'ca_cert_path', os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt')
@@ -260,7 +255,7 @@ def _rq_machine_connection(machine):
     client_key_path = machine.get(
         'client_key_path', os.environ.get('RQ_REDIS_CLIENT_KEY', '')
     )
-    password = machine.get('password') or _rq_redis_password()
+    password = machine.get('password') or _judge_redis_password()
     kwargs = {
         'socket_connect_timeout': 5,
         # The blocking pub/sub listener (WS status push) must not inherit a
@@ -278,7 +273,10 @@ def _rq_machine_connection(machine):
     return kwargs
 
 
-def _rq_redis_password():
+def _judge_redis_password():
+    # NOTE: ``RQ_REDIS_*`` are legacy env-var names kept for operational
+    # continuity (web/judge .env files); they configure the judge-broker
+    # Redis now consumed by Celery, not the removed RQ framework.
     password = os.environ.get('RQ_REDIS_PASSWORD', '')
     if DEMO_MODE or TEST_MODE:
         return password
@@ -304,44 +302,6 @@ def _redis_url(host, port, db, password='', tls=False, ca_cert_path=''):
     return url
 
 
-def _parse_redis_broker_url(url):
-    """Parse a ``redis://`` / ``rediss://`` broker URL into a machine dict.
-
-    The returned dict has the same shape as one ``JUDGE_MACHINES_JSON`` item
-    (host/port/db/password/tls/ca_cert_path/...), so it can be fed directly
-    into ``_rq_machine_connection``. TLS query params follow redis-py naming:
-    ``ssl_ca_certs``, ``ssl_certfile``, ``ssl_keyfile``.
-    Credentials stay in the environment file, never in logs.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ('redis', 'rediss'):
-        raise ValueError('JUDGE_BROKER_URL must use the redis:// or rediss:// scheme')
-    if not parsed.hostname:
-        raise ValueError('JUDGE_BROKER_URL requires a host')
-
-    machine = {
-        'host': parsed.hostname,
-        'port': parsed.port or 6379,
-        'db': int((parsed.path or '/0').lstrip('/') or 0),
-        'password': unquote(parsed.password) if parsed.password else '',
-        'tls': parsed.scheme == 'rediss',
-    }
-    query = parse_qs(parsed.query)
-    for url_key, machine_key in (
-        ('ssl_ca_certs', 'ca_cert_path'),
-        ('ssl_certfile', 'client_cert_path'),
-        ('ssl_keyfile', 'client_key_path'),
-    ):
-        value = query.get(url_key, [''])[0].strip()
-        if value:
-            machine[machine_key] = value
-    return machine
-
-
-def _rq_redis_kwargs():
-    return _rq_machine_connection({})
-
-
 if not DEMO_MODE:
     redis_host = os.environ.get('CACHE_REDIS_HOST', '127.0.0.1')
     redis_port = int(os.environ.get('CACHE_REDIS_PORT', '6379'))
@@ -355,8 +315,6 @@ if not DEMO_MODE:
     CACHE_REDIS_DIRECT_CONNECTION_KWARGS = _redis_tls_kwargs(
         cache_redis_tls, cache_redis_ca_cert, direct=True,
     )
-    RQ_REDIS_CONNECTION_KWARGS = _rq_redis_kwargs()
-
     cache_options = {
         'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         'SOCKET_KEEPALIVE': True,
@@ -376,21 +334,16 @@ if not DEMO_MODE:
         }
     }
 
-    # The web process connects to the judge Redis endpoint; the judge worker
-    # connects to the same endpoint through loopback. Keep these deployment
-    # addresses outside source control so both hosts can run one revision.
-    rq_host = os.environ.get('RQ_REDIS_HOST', '127.0.0.1')
-    rq_port = int(os.environ.get('RQ_REDIS_PORT', '6379'))
-    rq_db = int(os.environ.get('RQ_REDIS_DB', '0'))
-    judge_1_host = os.environ.get('JUDGE_1_HOST', rq_host)
-    judge_1_port = int(os.environ.get('JUDGE_1_PORT', str(rq_port)))
-    judge_1_db = int(os.environ.get('JUDGE_1_REDIS_DB', str(rq_db)))
-
-    default_rq_machine = {
-        'host': rq_host,
-        'port': rq_port,
-        'db': rq_db,
-    }
+    # Judge-broker Redis endpoint (``RQ_REDIS_*`` are legacy names kept for
+    # operational continuity): the web process talks to it directly; the
+    # judge worker connects through loopback. Addresses stay outside source
+    # control so both hosts run one revision.
+    broker_host = os.environ.get('RQ_REDIS_HOST', '127.0.0.1')
+    broker_port = int(os.environ.get('RQ_REDIS_PORT', '6379'))
+    broker_db = int(os.environ.get('RQ_REDIS_DB', '0'))
+    judge_1_host = os.environ.get('JUDGE_1_HOST', broker_host)
+    judge_1_port = int(os.environ.get('JUDGE_1_PORT', str(broker_port)))
+    judge_1_db = int(os.environ.get('JUDGE_1_REDIS_DB', str(broker_db)))
 
     default_judge_machines = [
         {
@@ -398,11 +351,9 @@ if not DEMO_MODE:
             'host': judge_1_host,
             'port': judge_1_port,
             'db': judge_1_db,
-            'queue': 'judge-1',
             'enabled': True,
-            'weight': 1,
             'tls': _env_enabled('RQ_REDIS_TLS'),
-            'password': _rq_redis_password(),
+            'password': _judge_redis_password(),
             'ca_cert_path': os.environ.get('RQ_REDIS_CA_CERT', '/www/wwwroot/tls-judge/ca.crt'),
             'client_cert_path': os.environ.get('RQ_REDIS_CLIENT_CERT', '/www/wwwroot/tls-judge/redis.crt'),
             'client_key_path': os.environ.get('RQ_REDIS_CLIENT_KEY', '/www/wwwroot/tls-judge/redis.key'),
@@ -412,12 +363,11 @@ if not DEMO_MODE:
         os.environ.get('JUDGE_MACHINES_JSON', ''),
         default_judge_machines,
     )
-    # Local worker settings own the transport for the queue it consumes. The
-    # web process alone reads JudgeMachine database overrides for remote queues.
+    # JUDGE_MACHINES only feeds web-side health probes and the WS pub/sub
+    # subscriptions; task dispatch goes exclusively through CELERY_BROKER_URL.
 
     OJ_MULTI_JUDGE_ENABLED = os.environ.get('OJ_MULTI_JUDGE_ENABLED', 'true').lower() in ('1', 'true', 'yes')
     OJ_ROLE = os.environ.get('OJ_ROLE', 'web')
-    OJ_JUDGE_QUEUE = os.environ.get('OJ_JUDGE_QUEUE', '')
     # How many submissions one judge worker process runs in parallel (threads).
     OJ_JUDGE_CONCURRENCY = int(os.environ.get('OJ_JUDGE_CONCURRENCY', '4'))
 
@@ -438,7 +388,7 @@ if not DEMO_MODE:
         CELERY_BROKER_URL = broker_url
     else:
         CELERY_BROKER_URL = _redis_url(
-            rq_host, rq_port, rq_db, _rq_redis_password(),
+            broker_host, broker_port, broker_db, _judge_redis_password(),
             _env_enabled('RQ_REDIS_TLS'),
             os.environ.get('RQ_REDIS_CA_CERT', '/etc/redis/tls/ca.crt'),
         )
@@ -525,15 +475,9 @@ if not DEMO_MODE:
         ).split(',')
         if ip.strip()
     ]
-
-    # Judge-priority tiers consumed from the ``judge`` queue via Redis
-    # priority buckets (ascending bucket = consumed first):
-    # pro=0 > plus=3 > free=6 > ai=9.
-    JUDGE_PRIORITY_SUFFIXES = ('-pro', '-plus', '', '-ai')
 else:
     CACHE_REDIS_CONNECTION_KWARGS = {}
     CACHE_REDIS_DIRECT_CONNECTION_KWARGS = {}
-    RQ_REDIS_CONNECTION_KWARGS = {}
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
@@ -548,7 +492,6 @@ else:
     CELERY_TASK_DEFAULT_QUEUE = 'judge'
     CELERY_TASK_DEFAULT_PRIORITY = 6
     CELERY_TASK_IGNORE_RESULT = True
-    OJ_JUDGE_QUEUE = ''
     OJ_WORKER_ID = ''
     OJ_JUDGE_HEARTBEAT_SECS = 15
     OJ_JUDGE_LEASE_TIMEOUT_SECS = 300

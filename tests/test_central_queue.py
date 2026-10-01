@@ -1,9 +1,9 @@
 """Tests for the central judge queue dispatch (Celery).
 
-Covers the broker URL parser, the self-describing task payload, the
-Celery message-priority mapping (pro > plus > free > ai, lowest number
-drains first on the Redis transport) and the ``enqueue_judge`` dispatch
-path (mark_queued gate, on_commit dispatch, no-broker degradation).
+Covers the self-describing task payload, the Celery message-priority
+mapping (pro > plus > free > ai, lowest number drains first on the Redis
+transport) and the ``enqueue_judge`` dispatch path (mark_queued gate,
+on_commit dispatch, no-broker degradation).
 """
 
 from types import SimpleNamespace
@@ -13,7 +13,6 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from oj_project.settings import _parse_redis_broker_url
 from submissions.judge_queue import (
     JUDGE_QUEUE,
     _build_task_payload,
@@ -21,38 +20,6 @@ from submissions.judge_queue import (
     enqueue_judge,
 )
 from submissions.models import Submission
-
-
-class ParseRedisBrokerUrlTests(TestCase):
-    def test_rediss_url_with_credentials_and_tls_params(self):
-        machine = _parse_redis_broker_url(
-            'rediss://:%21pass%40word@10.0.0.8:6380/2'
-            '?ssl_ca_certs=/etc/tls/ca.crt&ssl_certfile=/etc/tls/c.crt'
-            '&ssl_keyfile=/etc/tls/c.key'
-        )
-        self.assertEqual(machine['host'], '10.0.0.8')
-        self.assertEqual(machine['port'], 6380)
-        self.assertEqual(machine['db'], 2)
-        self.assertEqual(machine['password'], '!pass@word')
-        self.assertTrue(machine['tls'])
-        self.assertEqual(machine['ca_cert_path'], '/etc/tls/ca.crt')
-        self.assertEqual(machine['client_cert_path'], '/etc/tls/c.crt')
-        self.assertEqual(machine['client_key_path'], '/etc/tls/c.key')
-
-    def test_plain_url_defaults(self):
-        machine = _parse_redis_broker_url('redis://127.0.0.1')
-        self.assertEqual(machine['host'], '127.0.0.1')
-        self.assertEqual(machine['port'], 6379)
-        self.assertEqual(machine['db'], 0)
-        self.assertEqual(machine['password'], '')
-        self.assertFalse(machine['tls'])
-        self.assertNotIn('ca_cert_path', machine)
-
-    def test_invalid_scheme_rejected(self):
-        with self.assertRaises(ValueError):
-            _parse_redis_broker_url('amqp://localhost')
-        with self.assertRaises(ValueError):
-            _parse_redis_broker_url('redis://')
 
 
 class BuildTaskPayloadTests(TestCase):

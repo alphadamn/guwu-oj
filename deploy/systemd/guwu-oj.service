@@ -1,0 +1,60 @@
+[Unit]
+Description=Guwu Online Judge (Granian WSGI over Unix domain socket)
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/www/wwwroot/guwu-oj
+Environment="PATH=/www/wwwroot/guwu-oj/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DJANGO_SETTINGS_MODULE=oj_project.settings"
+Environment="SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https"
+# With multiple workers, django_prometheus needs multiprocess mode for
+# correct /metrics aggregation.
+Environment="PROMETHEUS_MULTIPROC_DIR=/run/guwu-oj/prom"
+
+RuntimeDirectory=guwu-oj
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/bin/mkdir -p /run/guwu-oj/prom
+ExecStartPre=/usr/bin/rm -f /run/guwu-oj/guwu-oj.sock
+
+# Granian binds the socket root:root 660; nginx workers run as www, so hand
+# the socket's group to www after startup. The wait loop tolerates the delay
+# between fork and granian actually creating the socket.
+ExecStartPost=/bin/bash -c 'for i in $(seq 1 60); do [ -S /run/guwu-oj/guwu-oj.sock ] && chgrp www /run/guwu-oj/guwu-oj.sock && exit 0; sleep 0.1; done; exit 1'
+ExecStart=/www/wwwroot/guwu-oj/venv/bin/granian \
+    --uds /run/guwu-oj/guwu-oj.sock \
+    --uds-permissions 660 \
+    --interface wsgi \
+    --http 1 \
+    --workers 12 \
+    --blocking-threads 2 \
+    --backpressure 30 \
+    --loop auto \
+    --access-log \
+    --log-level info \
+    --log-config /www/wwwroot/guwu-oj/deploy/granian_log_config.json \
+    --workers-lifetime 12h \
+    --workers-max-rss 500 \
+    --rss-samples 3 \
+    --respawn-failed-workers \
+    oj_project.wsgi:application
+
+# Clean shutdown: SIGTERM gives in-flight requests 30s.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=1
+RestartPreventExitStatus=0
+
+# Memory safety: per-worker --workers-max-rss recycles bloated workers first;
+# the cgroup ceiling turns any runaway allocation into a deterministic
+# service restart instead of a global OOM.
+MemoryHigh=2200M
+MemoryMax=3200M
+
+[Install]
+WantedBy=multi-user.target

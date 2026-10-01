@@ -17,8 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
         node.querySelector('.machine-host').value = machine.host || '127.0.0.1';
         node.querySelector('.machine-port').value = machine.port || '6379';
         node.querySelector('.machine-db').value = machine.db || '0';
-        node.querySelector('.machine-queue').value = machine.queue || `judge-${index}`;
-        node.querySelector('.machine-weight').value = machine.weight || '1';
         node.querySelector('.machine-tls').value = machine.tls ? 'true' : 'false';
         node.querySelector('.machine-ca').value = machine.ca_cert_path || '';
         node.querySelector('.machine-client-cert').value = machine.client_cert_path || '';
@@ -62,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `CACHE_REDIS_DB=${quote(value('cache-db'))}`,
             `CACHE_REDIS_PASSWORD=${quote(value('cache-password'))}`,
             `CACHE_REDIS_TLS=${value('cache-tls')}`,
-            '', '# RQ Redis',
+            '', '# Judge broker Redis (RQ_REDIS_* are legacy names for the Celery broker)',
             `RQ_REDIS_HOST=${quote(value('rq-host'))}`,
             `RQ_REDIS_PORT=${quote(value('rq-port'))}`,
             `RQ_REDIS_DB=${quote(value('rq-db'))}`,
@@ -77,9 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
             host: machine.querySelector('.machine-host').value.trim() || '127.0.0.1',
             port: Number(machine.querySelector('.machine-port').value.trim() || 6379),
             db: Number(machine.querySelector('.machine-db').value.trim() || 0),
-            queue: machine.querySelector('.machine-queue').value.trim() || `judge-${index + 1}`,
             enabled: true,
-            weight: Number(machine.querySelector('.machine-weight').value.trim() || 1),
             tls: machine.querySelector('.machine-tls').value === 'true',
             ca_cert_path: machine.querySelector('.machine-ca').value.trim(),
             client_cert_path: machine.querySelector('.machine-client-cert').value.trim(),

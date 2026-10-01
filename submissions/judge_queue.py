@@ -95,9 +95,9 @@ def enqueue_judge(submission_id):
     The single ``judge`` queue carries every tier; per-tier urgency rides on
     the Celery message priority (Redis priority buckets). Dispatch happens in
     ``transaction.on_commit`` so a worker can never claim a Submission row
-    that is not committed yet (mirrors the old django-rq on_db_commit mode;
-    outside a transaction it fires immediately). Terminal rows are never
-    re-dispatched: the ``mark_queued`` gate absorbs duplicate calls.
+    that is not committed yet (outside a transaction it fires immediately).
+    Terminal rows are never re-dispatched: the ``mark_queued`` gate absorbs
+    duplicate calls.
     """
     from submissions.models import Submission
 
