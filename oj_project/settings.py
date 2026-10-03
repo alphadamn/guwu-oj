@@ -773,6 +773,15 @@ OJ_DOCKER_IO_READ_IOPS = int(os.environ.get('OJ_DOCKER_IO_READ_IOPS', '0'))
 OJ_DOCKER_IO_WRITE_IOPS = int(os.environ.get('OJ_DOCKER_IO_WRITE_IOPS', '0'))
 # tmpfs /tmp size cap (Docker size suffix: 64m, 1g).  Empty = unlimited.
 OJ_DOCKER_TMPFS_SIZE = os.environ.get('OJ_DOCKER_TMPFS_SIZE', '64m').strip()
+# Hard size cap for each submission's bind-mounted work directory (compiler
+# artifacts + program file writes), enforced by an ext4/XFS project quota.
+# Requires the backing fs mounted with prjquota (ext4) / pquota (XFS) and
+# the chattr + setquota tools; otherwise it logs a warning and stays inert.
+# 0 disables. See submissions/work_quota.py.
+OJ_WORKDIR_SIZE_LIMIT_MB = int(os.environ.get('OJ_WORKDIR_SIZE_LIMIT_MB', '1024'))
+OJ_QUOTA_PROJECT_ID_FILE = os.environ.get(
+    'OJ_QUOTA_PROJECT_ID_FILE', '/var/lib/guwu-oj/workdir.prjnext'
+)
 # Soft memory reclaim point as a fraction of the hard --memory cap (0–1).
 # 0 disables; 0.75 means the kernel starts reclaiming at 75 % of the hard
 # limit, giving a softer degradation before the OOM kill.  This is the

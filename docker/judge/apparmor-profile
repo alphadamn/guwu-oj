@@ -81,6 +81,11 @@ profile oj-judge flags=(attach_disconnected) {
   # Java must read java.security before either javac or java can start.
   /etc/java-17-openjdk/** r,
 
+  # kotlinc lives under /usr/share/kotlin (launcher scripts + jars); the
+  # broad /usr/share read rule above does not grant execute, so the
+  # launcher path needs its own ix rule.
+  /usr/share/kotlin/** rix,
+
 
 
   # Allow read access to locale and timezone data

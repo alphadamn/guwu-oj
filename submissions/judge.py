@@ -45,7 +45,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.cache import cache
 
-from . import container_pool
+from . import container_pool, work_quota
 from .claiming import ClaimLostError, finalize_claim, stamp_progress
 from .models import Submission, SubmissionTestResult
 from .sandbox import (
@@ -1226,6 +1226,7 @@ def judge_submission(submission_id, claim=None):
     # the gap from judge_started_at is pool wait, not compile cost.
     stamp_phase(submission, claim, container_acquired_at=None)
     exec_workdir = None
+    quota_token = None
     try:
         if pool_handle is not None:
             logger.debug("Submission %s using warm pooled container %s",
@@ -1236,6 +1237,7 @@ def judge_submission(submission_id, claim=None):
             exec_workdir = f"/sandbox/{token}"
         else:
             work_dir = tempfile.mkdtemp(prefix="oj_judge_")
+        quota_token = work_quota.apply_workdir_quota(work_dir)
     except BaseException:
         # Never leak a checked-out pool slot if setup fails before the
         # runner context manager takes ownership.
@@ -1397,5 +1399,6 @@ def judge_submission(submission_id, claim=None):
 
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+        work_quota.remove_workdir_quota(quota_token)
 
     return submission

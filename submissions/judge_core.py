@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import container_pool
+from . import container_pool, work_quota
 from .judge import (
     JUDGED_LANGUAGES,
     LANG_IMAGE,
@@ -249,6 +249,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None,
     # so the gap from judge_started_at is time spent waiting on the pool.
     container_acquired_at = _utcnow_iso()
     exec_workdir = None
+    quota_token = None
     try:
         if pool_handle is not None:
             token = secrets.token_hex(8)
@@ -257,6 +258,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None,
             exec_workdir = f'/sandbox/{token}'
         else:
             work_dir = tempfile.mkdtemp(prefix='oj_judge_')
+        quota_token = work_quota.apply_workdir_quota(work_dir)
     except BaseException:
         container_pool.release(pool_handle, force_destroy=True)
         raise
@@ -353,6 +355,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None,
     finally:
         feed.close()
         shutil.rmtree(work_dir, ignore_errors=True)
+        work_quota.remove_workdir_quota(quota_token)
 
     verdict = 'Accepted'
     for co in case_outcomes:
