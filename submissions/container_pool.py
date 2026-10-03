@@ -443,6 +443,19 @@ class ContainerPool:
         host_root = self._work_root / f"w{self._worker_pid}-{uuid.uuid4().hex[:12]}"
         host_root.mkdir(parents=True, exist_ok=False)
         os.chmod(host_root, 0o711)
+        # The oj-other image bakes GOCACHE=/sandbox/.cache/go-build and
+        # GOPATH=/sandbox/go. /sandbox is this pool root (0711, root-owned),
+        # so without these the sandbox user cannot create either path and every
+        # Go submission fails at "go build" with EACCES. Pre-provision them
+        # owned by the sandbox user: the content-addressed build cache is
+        # safe to share across checkouts and keeps compiles warm, and it
+        # survives per-token teardown (only <token>/ is removed after run).
+        sandbox_uid = int(getattr(settings, "OJ_DOCKER_UID", 65534))
+        sandbox_gid = int(getattr(settings, "OJ_DOCKER_GID", 65534))
+        for name in (".cache", "go"):
+            cache_dir = host_root / name
+            cache_dir.mkdir()
+            os.chown(cache_dir, sandbox_uid, sandbox_gid)
         labels = {
             POOL_ROLE_LABEL: "pool",
             POOL_IMAGE_LABEL: image,
