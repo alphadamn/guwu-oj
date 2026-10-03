@@ -63,6 +63,9 @@ logger = logging.getLogger(__name__)
 
 JUDGED_LANGUAGES = {"C++", "Python", "Java", "C", "Assembly", "Rust",
                     "Golang", "JavaScript", "Ruby", "Kotlin"}
+# Marker prefix for per-step stdout/stderr overflow verdicts; shared with
+# judge_core so it can avoid reclassifying such RE as TLE on fallback.
+OUTPUT_LIMIT_MESSAGE_PREFIX = "Output limit exceeded"
 # Generic budget for the heavier/rarer toolchains (Rust / Go / JVM / tsc).
 COMPILE_TIMEOUT_SEC = 30
 # C/C++ compiles are tighter: a malicious translation unit can stall the
@@ -845,6 +848,22 @@ class SandboxRunner:
             # so callers see a non-None runtime.
             elapsed_ms = fallback_ms
 
+        # Output limit is enforced on the host while capturing the run:
+        # once stdout/stderr crosses OJ_OUTPUT_LIMIT_BYTES the exec client
+        # is killed and this flag is set. This takes precedence over the
+        # rc-based checks below (the killed client reports a meaningless
+        # exit code).
+        if getattr(result, "output_truncated", False):
+            limit_mb = max(
+                1, int(getattr(settings, "OJ_OUTPUT_LIMIT_BYTES", 0))
+                // (1024 * 1024)
+            )
+            return None, elapsed_ms, (
+                "Runtime Error",
+                OUTPUT_LIMIT_MESSAGE_PREFIX
+                + " (%d MiB)" % limit_mb,
+            )
+
         # Memory Limit Exceeded is decided by the measured RSS (the
         # authoritative figure) rather than the cgroup cap. The cgroup
         # cap is now only a safety ceiling set at container creation;
@@ -961,6 +980,16 @@ class SandboxRunner:
         self.last_memory_kb = memory_kb
         if elapsed_ms is None:
             elapsed_ms = fallback_ms
+
+        if getattr(result, "output_truncated", False):
+            limit_mb = max(
+                1, int(getattr(settings, "OJ_OUTPUT_LIMIT_BYTES", 0))
+                // (1024 * 1024)
+            )
+            return None, elapsed_ms, (
+                "Runtime Error",
+                OUTPUT_LIMIT_MESSAGE_PREFIX + " (%d MiB)" % limit_mb,
+            )
 
         exits = None
         for line in (result.stderr or "").splitlines():
@@ -1377,6 +1406,11 @@ def judge_submission(submission_id, claim=None):
                     and elapsed_ms >= problem.time_limit
                     and isinstance(error, tuple)
                     and error[0] == "Runtime Error"
+                    and not (
+                        len(error) > 1
+                        and isinstance(error[1], str)
+                        and error[1].startswith(OUTPUT_LIMIT_MESSAGE_PREFIX)
+                    )
                 ):
                     error = "Time Limit Exceeded"
 

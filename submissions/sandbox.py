@@ -27,6 +27,7 @@ import pwd
 import shutil
 import stat
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -504,6 +505,135 @@ def update_judge_container_memory(cid, memory_mb):
         )
 
 
+def run_capture_bounded(cmd, stdin, timeout_sec, limit_bytes, text=True):
+    """Run *cmd* with per-stream byte caps on stdout and stderr.
+
+    Pipes are always opened in binary and drained by reader threads: the
+    first *limit_bytes* bytes of each stream are retained, anything
+    beyond that keeps being read (so the child never blocks on a full
+    pipe / deadlocks) but is discarded. As soon as one stream exceeds
+    the cap the client process is SIGKILLed — the in-container writer
+    then receives SIGPIPE (or is reaped by the in-container deadline),
+    bounding worker CPU/IO as well as RAM.
+
+    Returns a :class:`subprocess.CompletedProcess` with an extra
+    ``output_truncated`` attribute. When *text* is true the retained
+    bytes are UTF-8 decoded (``errors='replace'``), otherwise bytes are
+    returned, matching ``subprocess.run(text=...)`` semantics.
+
+    Raises :class:`subprocess.TimeoutExpired` on *timeout_sec*, same as
+    ``subprocess.run``.
+    """
+    data = stdin
+    if text and data is not None and isinstance(data, str):
+        data = data.encode("utf-8", "replace")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+    )
+    out_holder = {"data": b"", "truncated": False}
+    err_holder = {"data": b"", "truncated": False}
+
+    def feed_stdin():
+        try:
+            if data is not None:
+                proc.stdin.write(data)
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
+    def drain(stream, holder):
+        # Read cap+1 bytes so the overflow is observable, then keep
+        # draining to discard the rest without blocking the producer.
+        kept = bytearray()
+        while True:
+            try:
+                chunk = stream.read(65536)
+            except (OSError, ValueError):
+                break
+            if not chunk:
+                break
+            room = (limit_bytes + 1) - len(kept)
+            if room > 0:
+                kept.extend(chunk[:room])
+            if len(kept) > limit_bytes:
+                # Publish immediately so the main loop kills the
+                # producer without waiting for the whole stream.
+                holder["truncated"] = True
+        try:
+            stream.close()
+        except OSError:
+            pass
+        holder["data"] = bytes(kept)
+        holder["done"] = True
+
+    t_in = threading.Thread(target=feed_stdin, daemon=True)
+    t_out = threading.Thread(
+        target=drain, args=(proc.stdout, out_holder), daemon=True)
+    t_err = threading.Thread(
+        target=drain, args=(proc.stderr, err_holder), daemon=True)
+    t_in.start()
+    t_out.start()
+    t_err.start()
+
+    deadline = time.monotonic() + max(float(timeout_sec), 0.1)
+    killed_for_overflow = False
+    try:
+        while True:
+            try:
+                proc.wait(0.1)
+                break
+            except subprocess.TimeoutExpired:
+                if out_holder.get("truncated") or err_holder.get("truncated"):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    proc.wait()
+                    killed_for_overflow = True
+                    break
+                if time.monotonic() >= deadline:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    proc.wait()
+                    raise
+    finally:
+        t_in.join(1.0)
+        t_out.join(2.0)
+        t_err.join(2.0)
+
+    stdout_bytes = out_holder.get("data", b"")
+    stderr_bytes = err_holder.get("data", b"")
+    truncated = (
+        killed_for_overflow
+        or out_holder.get("truncated", False)
+        or err_holder.get("truncated", False)
+    )
+
+    if text:
+        stdout = stdout_bytes[:limit_bytes].decode("utf-8", "replace")
+        stderr = stderr_bytes[:limit_bytes].decode("utf-8", "replace")
+    else:
+        stdout = stdout_bytes[:limit_bytes]
+        stderr = stderr_bytes[:limit_bytes]
+
+    result = subprocess.CompletedProcess(
+        cmd, proc.returncode, stdout, stderr
+    )
+    result.output_truncated = bool(truncated)
+    return result
+
+
 def docker_exec(cid, command, timeout_sec, stdin=None, workdir=None):
     """Run *command* via ``docker exec`` inside running container *cid*.
 
@@ -513,7 +643,9 @@ def docker_exec(cid, command, timeout_sec, stdin=None, workdir=None):
 
     Returns a :class:`subprocess.CompletedProcess` like object.
     ``stdout`` / ``stderr`` are decoded strings when *stdin* is not bytes,
-    otherwise they are bytes (matching subprocess semantics).
+    otherwise they are bytes (matching subprocess semantics). The result
+    carries an ``output_truncated`` flag, set when stdout/stderr exceeded
+    ``settings.OJ_OUTPUT_LIMIT_BYTES``.
     """
     if not cid:
         raise DockerNotAvailableError("Judge container is not running")
@@ -524,12 +656,19 @@ def docker_exec(cid, command, timeout_sec, stdin=None, workdir=None):
     if workdir:
         full_cmd.extend(["-w", workdir])
     full_cmd.extend([cid, *command])
-    return subprocess.run(
+
+    limit = int(getattr(settings, "OJ_OUTPUT_LIMIT_BYTES", 0) or 0)
+    if limit <= 0:
+        # Cap disabled: keep a very large ceiling so the bounded path is
+        # still used uniformly.
+        limit = 1 << 40
+
+    return run_capture_bounded(
         full_cmd,
-        input=stdin,
-        capture_output=True,
+        stdin,
+        max(float(timeout_sec), 0.1),
+        limit,
         text=text_mode,
-        timeout=max(float(timeout_sec), 0.1),
     )
 
 

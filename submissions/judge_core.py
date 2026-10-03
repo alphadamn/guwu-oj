@@ -55,6 +55,7 @@ from . import container_pool, work_quota
 from .judge import (
     JUDGED_LANGUAGES,
     LANG_IMAGE,
+    OUTPUT_LIMIT_MESSAGE_PREFIX,
     SandboxRunner,
     _case_status_from_error,
     interactive_case_verdict,
@@ -62,6 +63,16 @@ from .judge import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_output_limit_error(error):
+    """True for the ('Runtime Error', 'Output limit exceeded ...') tuple."""
+    return (
+        isinstance(error, tuple)
+        and len(error) > 1
+        and isinstance(error[1], str)
+        and error[1].startswith(OUTPUT_LIMIT_MESSAGE_PREFIX)
+    )
 
 
 class JudgeSpecError(Exception):
@@ -317,6 +328,7 @@ def judge_spec(spec, check_alive=None, global_timeout_sec=None,
                     and elapsed_ms >= time_limit_ms
                     and isinstance(error, tuple)
                     and error[0] == 'Runtime Error'
+                    and not _is_output_limit_error(error)
                 ):
                     error = 'Time Limit Exceeded'
 

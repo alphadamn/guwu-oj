@@ -782,6 +782,14 @@ OJ_WORKDIR_SIZE_LIMIT_MB = int(os.environ.get('OJ_WORKDIR_SIZE_LIMIT_MB', '1024'
 OJ_QUOTA_PROJECT_ID_FILE = os.environ.get(
     'OJ_QUOTA_PROJECT_ID_FILE', '/var/lib/guwu-oj/workdir.prjnext'
 )
+# Maximum stdout/stderr bytes captured from a single compile or execute
+# step. Excess is drained (so the child never blocks on a full pipe) but
+# discarded; an over-limit run is judged Runtime Error ("Output limit
+# exceeded"). Bounds worker RAM regardless of what the sandbox prints.
+# 0 disables the cap. See run_capture_bounded() in submissions/sandbox.py.
+OJ_OUTPUT_LIMIT_BYTES = int(
+    os.environ.get('OJ_OUTPUT_LIMIT_BYTES', str(16 * 1024 * 1024))
+)
 # Soft memory reclaim point as a fraction of the hard --memory cap (0–1).
 # 0 disables; 0.75 means the kernel starts reclaiming at 75 % of the hard
 # limit, giving a softer degradation before the OOM kill.  This is the
