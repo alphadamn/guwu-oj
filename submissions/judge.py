@@ -720,8 +720,12 @@ class SandboxRunner:
         src = Path(self.work_dir) / "main.go"
         src.write_text(code, encoding="utf-8")
         try:
+            # GOMAXPROCS bounds go build's parallel package compilation
+            # (parent keeps 3 pipes per concurrent compile subprocess).
+            # With nofile=64 a cold build on a many-core host exhausts fds
+            # ("pipe2: too many open files"); 2 stays well under the cap.
             res = self._run(
-                ["go", "build", "-o", "main", "main.go"],
+                ["sh", "-c", "GOMAXPROCS=2 exec go build -o main main.go"],
                 COMPILE_TIMEOUT_SEC,
                 is_compile=True,
             )
